@@ -14,13 +14,26 @@ const messageSchema = new mongoose.Schema(
 		},
 		message: {
 			type: String,
-			required: true,
+			required: function() {
+				return !this.audio;
+			},
+		},
+		audio: {
+			type: String, // URL to audio file
+		},
+		repliedMessageId: {
+			type: mongoose.Schema.Types.ObjectId,
+			ref: "Message",
+			default: null,
 		},
 		isSeen: {
 			type: Boolean,
 			default: false,
 		},
-		// createdAt, updatedAt
+		deletedFor: [{
+			type: mongoose.Schema.Types.ObjectId,
+			ref: "User",
+		}],
 	},
 	{ timestamps: true }
 );

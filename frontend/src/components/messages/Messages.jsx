@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import useGetMessages from "../../hooks/useGetMessages";
 import MessageSkeleton from "../skeletons/MessageSkeleton";
 import Message from "./Message";
@@ -11,6 +11,8 @@ import useConversation from "../../zustand/useConversation";
 const Messages = () => {
 	const { messages, loading } = useGetMessages();
 	const { selectedConversation, isTyping } = useConversation();
+	const [contextMenuMessageId, setContextMenuMessageId] = useState(null);
+
 	useListenMessages();
 	useListenTyping();
 	useMarkAsSeen();
@@ -23,15 +25,41 @@ const Messages = () => {
 		}, 100);
 	}, [messages, isTyping]);
 
+	useEffect(() => {
+		const handleClickOutside = () => {
+			setContextMenuMessageId(null);
+		};
+		if (contextMenuMessageId !== null) {
+			document.addEventListener("click", handleClickOutside);
+		} else {
+			document.removeEventListener("click", handleClickOutside);
+		}
+		return () => {
+			document.removeEventListener("click", handleClickOutside);
+		};
+	}, [contextMenuMessageId]);
+
 	return (
 		<div className='px-3 md:px-4 flex-1 overflow-auto'>
 			{!loading &&
 				messages.length > 0 &&
-				messages.map((message) => (
-					<div key={message._id} ref={lastMessageRef}>
-						<Message message={message} />
-					</div>
-				))}
+				messages.map((message) => {
+					// Simulate repliedMessage by finding message with id = message.repliedMessageId
+					const repliedMessage = message.repliedMessageId
+						? messages.find((m) => m._id === message.repliedMessageId)
+						: null;
+					return (
+						<div key={message._id} ref={lastMessageRef}>
+							<Message
+								message={message}
+								repliedMessage={repliedMessage}
+								onDeleteMessage={useConversation.getState().removeMessage}
+								contextMenuMessageId={contextMenuMessageId}
+								setContextMenuMessageId={setContextMenuMessageId}
+							/>
+						</div>
+					);
+				})}
 
 			{loading && [...Array(3)].map((_, idx) => <MessageSkeleton key={idx} />)}
 			{!loading && messages.length === 0 && (

@@ -28,6 +28,25 @@ export const SocketContextProvider = ({ children }) => {
 				setOnlineUsers(users);
 			});
 
+			// Add listener for deleteMessage event to update UI live
+			socket.on("deleteMessage", ({ messageId }) => {
+				// Remove message from zustand store
+				import("../zustand/useConversation").then(({ default: useConversation }) => {
+					useConversation.getState().removeMessage(messageId);
+				});
+			});
+
+			// Add listener for newMessage event to update messages live with repliedMessage data
+			socket.on("newMessage", (newMessage) => {
+				import("../zustand/useConversation").then(({ default: useConversation }) => {
+					const currentMessages = useConversation.getState().messages;
+					// Add new message to messages array
+					useConversation.setState({
+						messages: [...currentMessages, newMessage],
+					});
+				});
+			});
+
 			return () => socket.close();
 		} else {
 			if (socket) {
