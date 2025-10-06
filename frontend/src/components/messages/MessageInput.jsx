@@ -122,7 +122,7 @@ const MessageInput = () => {
 				setRecordingTime(0);
 				setIsPaused(false);
 				setIsRecording(false);
-				setAudioLevel(0);
+				setAudioLevels(new Array(20).fill(0));
 				// Cleanup AudioContext and animation
 				if (animationFrameIdRef.current) {
 					cancelAnimationFrame(animationFrameIdRef.current);
@@ -160,7 +160,7 @@ const MessageInput = () => {
 			recordingIntervalRef.current = setInterval(() => {
 				setRecordingTime(prev => prev + 1);
 			}, 1000);
-			updateAudioLevel();
+			updateAudioLevels();
 		}
 	};
 
@@ -177,7 +177,7 @@ const MessageInput = () => {
 				audioContextRef.current.close();
 				audioContextRef.current = null;
 			}
-			setAudioLevel(0);
+			setAudioLevels(new Array(20).fill(0));
 		}
 	};
 
@@ -200,7 +200,7 @@ const MessageInput = () => {
 					audioContextRef.current.close();
 					audioContextRef.current = null;
 				}
-				setAudioLevel(0);
+				setAudioLevels(new Array(20).fill(0));
 			} catch (err) {
 				console.error(err);
 			}
