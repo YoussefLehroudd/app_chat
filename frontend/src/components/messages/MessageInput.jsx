@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+ import { useState, useEffect, useRef } from "react";
 import { BsSend, BsMic, BsPauseFill, BsTrash } from "react-icons/bs";
 import useSendMessage from "../../hooks/useSendMessage";
 import useConversation from "../../zustand/useConversation";
 import { useSocketContext } from "../../context/SocketContext";
+import { funEmojis } from "../../utils/emojis";
 
 const MessageInput = () => {
 	const [message, setMessage] = useState("");
@@ -10,6 +11,7 @@ const MessageInput = () => {
 	const [isPaused, setIsPaused] = useState(false);
 	const [recordingTime, setRecordingTime] = useState(0);
 	const [audioLevels, setAudioLevels] = useState(new Array(20).fill(0)); // Array for multiple bars
+	const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 	const { loading, sendMessage } = useSendMessage();
 	const { selectedConversation, repliedMessage, setRepliedMessage } = useConversation();
 	const { socket } = useSocketContext();
@@ -265,9 +267,43 @@ const MessageInput = () => {
 								</button>
 
 								<button
+									type='button'
+									className='flex items-center justify-center hover:text-sky-400 transition-colors'
+									onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+								>
+									<span className="text-2xl select-none cursor-pointer">😀</span>
+								</button>
+
+								{showEmojiPicker && (
+									<div className="absolute bottom-10 left-0 bg-gray-800 rounded-lg p-2 grid grid-cols-8 gap-2 max-w-xs max-h-40 overflow-auto z-50">
+										{funEmojis.slice(0, 40).map((emoji, idx) => (
+											<button
+												key={idx}
+												type="button"
+												className="text-2xl"
+												onClick={() => {
+													const textarea = textareaRef.current;
+													const start = textarea.selectionStart;
+													const end = textarea.selectionEnd;
+													const newMessage = message.slice(0, start) + emoji + message.slice(end);
+													setMessage(newMessage);
+													setShowEmojiPicker(false);
+													setTimeout(() => {
+														textarea.focus();
+														textarea.selectionStart = textarea.selectionEnd = start + emoji.length;
+													}, 0);
+												}}
+											>
+												{emoji}
+											</button>
+										))}
+									</div>
+								)}
+
+								<button
 									type='submit'
 									className='flex items-center justify-center hover:text-sky-400 transition-colors'
-									disabled={loading || !message.trim() || isRecording}
+									disabled={loading || (!message.trim() && !isRecording)}
 								>
 									{loading ? (
 										<div className='loading loading-spinner'></div>
@@ -278,8 +314,10 @@ const MessageInput = () => {
 							</>
 						) : (
 							<div className="flex items-center space-x-3 text-white">
-								{/* Red pulsing recording dot */}
-								<span className="w-3 h-3 bg-red-600 rounded-full animate-pulse"></span>
+								{/* Red pulsing recording dot with animation that appears and disappears */}
+								{isRecording && !isPaused && (
+									<span className="w-3 h-3 bg-red-600 rounded-full animate-pulse"></span>
+								)}
 								{/* Recording timer */}
 								<span className="font-mono text-sm select-none">{formatTime(recordingTime)}</span>
 

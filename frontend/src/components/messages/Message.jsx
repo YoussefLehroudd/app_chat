@@ -201,8 +201,6 @@ import { useState, useRef, useEffect } from "react";
 						>
 							{isPlaying ? (
 								<>
-									{/* Red recording dot */}
-									<span className="absolute left-3 top-3 w-4 h-4 bg-red-600 rounded-full animate-pulse"></span>
 									{/* Pause icon */}
 									<svg
 										xmlns="http://www.w3.org/2000/svg"
