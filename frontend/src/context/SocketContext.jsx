@@ -40,10 +40,12 @@ export const SocketContextProvider = ({ children }) => {
 			socket.on("newMessage", (newMessage) => {
 				import("../zustand/useConversation").then(({ default: useConversation }) => {
 					const currentMessages = useConversation.getState().messages;
-					// Add new message to messages array
-					useConversation.setState({
-						messages: [...currentMessages, newMessage],
-					});
+					// Add new message to messages array only if not already present
+					if (!currentMessages.find((msg) => msg._id === newMessage._id)) {
+						useConversation.setState({
+							messages: [...currentMessages, newMessage],
+						});
+					}
 				});
 			});
 

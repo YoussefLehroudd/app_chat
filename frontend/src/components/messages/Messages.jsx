@@ -18,6 +18,7 @@ const Messages = () => {
 	useMarkAsSeen();
 	useListenMessagesSeen();
 	const lastMessageRef = useRef();
+	const scrollContainerRef = useRef();
 
 	useEffect(() => {
 		setTimeout(() => {
@@ -40,14 +41,11 @@ const Messages = () => {
 	}, [contextMenuMessageId]);
 
 	return (
-		<div className='px-3 md:px-4 flex-1 overflow-auto'>
+		<div ref={scrollContainerRef} className='px-3 md:px-4 flex-1 overflow-auto'>
 			{!loading &&
 				messages.length > 0 &&
 				messages.map((message) => {
-					// Simulate repliedMessage by finding message with id = message.repliedMessageId
-					const repliedMessage = message.repliedMessageId
-						? messages.find((m) => m._id === message.repliedMessageId)
-						: null;
+					const repliedMessage = message.repliedMessageId;
 					return (
 						<div key={message._id} ref={lastMessageRef}>
 							<Message
@@ -56,6 +54,7 @@ const Messages = () => {
 								onDeleteMessage={useConversation.getState().removeMessage}
 								contextMenuMessageId={contextMenuMessageId}
 								setContextMenuMessageId={setContextMenuMessageId}
+								scrollContainerRef={scrollContainerRef}
 							/>
 						</div>
 					);

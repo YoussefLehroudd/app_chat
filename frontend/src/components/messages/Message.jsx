@@ -3,7 +3,7 @@ import { extractTime } from "../../utils/extractTime";
 import useConversation from "../../zustand/useConversation";
 import { useState, useRef, useEffect } from "react";
 
-const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageId, setContextMenuMessageId }) => {
+	const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageId, setContextMenuMessageId, scrollContainerRef }) => {
 	const { authUser } = useAuthContext();
 	const { selectedConversation } = useConversation();
 	const fromMe = message.senderId === authUser._id;
@@ -23,6 +23,8 @@ const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageI
 	const [copyMessageText, setCopyMessageText] = useState("");
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
 	const [deleteType, setDeleteType] = useState("me"); // default to "delete for me"
+	const messageRef = useRef(null);
+	const [isMenuAbove, setIsMenuAbove] = useState(true);
 
 	const confirmDelete = async () => {
 		try {
@@ -102,14 +104,33 @@ const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageI
 		return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 	};
 
-	const handleContextMenu = (event) => {
-		event.preventDefault();
-		setShowContextMenu(true);
-		setContextMenuPosition({ x: event.clientX, y: event.clientY });
+	const handleContextMenu = (e) => {
+		e.preventDefault();
+		if (messageRef.current && scrollContainerRef && scrollContainerRef.current) {
+			const messageRect = messageRef.current.getBoundingClientRect();
+			const containerRect = scrollContainerRef.current.getBoundingClientRect();
+			const menuHeight = 150; // approximate height of the menu in pixels
+			const spaceBelow = containerRect.bottom - messageRect.bottom;
+			const spaceAbove = messageRect.top - containerRect.top;
+			console.log("messageRect.top:", messageRect.top, "messageRect.bottom:", messageRect.bottom);
+			console.log("containerRect.top:", containerRect.top, "containerRect.bottom:", containerRect.bottom);
+			console.log("spaceAbove:", spaceAbove, "spaceBelow:", spaceBelow);
+			// If there is not enough space below to show the menu, open above
+			if (spaceBelow < menuHeight && spaceAbove > menuHeight) {
+				console.log("Not enough space below, opening menu above");
+				setIsMenuAbove(true);
+			} else {
+				console.log("Opening menu below");
+				setIsMenuAbove(false);
+			}
+		} else {
+			console.log("messageRef or scrollContainerRef is null");
+		}
+		setContextMenuMessageId(message._id);
 	};
 
 	const handleClickOutside = () => {
-		setShowContextMenu(false);
+		setContextMenuMessageId(null);
 	};
 
 	const handleDeleteMessage = async () => {
@@ -122,7 +143,7 @@ const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageI
 				},
 			});
 			if (response.ok) {
-				setShowContextMenu(false);
+				setContextMenuMessageId(null);
 				if (onDeleteMessage) {
 					onDeleteMessage(message._id);
 				}
@@ -148,6 +169,7 @@ const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageI
 
 	return (
 		<div
+			ref={messageRef}
 			className={`chat ${chatClassName}`}
 			style={{ position: "relative" }}
 		>
@@ -158,13 +180,13 @@ const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageI
 			</div>
 			<div
 				className={`chat-bubble text-white text-sm md:text-base ${bubbleBgColor} ${shakeClass} pb-2 break-words max-w-[75%] sm:max-w-xs md:max-w-md cursor-pointer relative`}
-				onContextMenu={(e) => {
-					e.preventDefault();
-					setContextMenuMessageId(message._id);
-				}}
+				onContextMenu={handleContextMenu}
 			>
 				{repliedMessage && (
-					<div className="mb-1 p-2 rounded border-l-4 border-blue-400 bg-blue-900 text-xs text-gray-300 max-w-[90%] whitespace-normal break-words">
+					<div
+						className="mb-1 p-2 rounded border-l-4 border-blue-400 bg-blue-900 text-xs text-gray-300 max-w-[90%] whitespace-pre-wrap break-words overflow-hidden text-ellipsis"
+						style={{ wordBreak: "break-word", whiteSpace: "pre-wrap", maxHeight: "4.5rem", overflowY: "auto" }}
+					>
 						{repliedMessage.audio ? "Audio message" : repliedMessage.message}
 					</div>
 				)}
@@ -202,11 +224,17 @@ const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageI
 				)}
 				{contextMenuMessageId === message._id && (
 					<ul
-						className={`absolute bg-gray-900 bg-opacity-90 text-white rounded-lg shadow-lg py-2 z-50 bottom-full mb-1 min-w-[180px] max-w-xs sm:max-w-sm space-y-1 ${
+						className={`absolute bg-gray-900 bg-opacity-90 text-white rounded-lg shadow-lg py-2 z-50 min-w-[180px] max-w-xs sm:max-w-sm space-y-1 ${
 							fromMe ? "right-0" : "left-0"
 						}`}
 						onClick={(e) => e.stopPropagation()}
-						style={{ boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)" }}
+						style={{
+							boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+							bottom: isMenuAbove ? "100%" : "auto",
+							top: isMenuAbove ? "auto" : "100%",
+							marginBottom: isMenuAbove ? "0.25rem" : "0",
+							marginTop: isMenuAbove ? "0" : "0.25rem",
+						}}
 					>
 						<li
 							className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded"

@@ -15,6 +15,12 @@ const MessageInput = () => {
 	const mediaRecorderRef = useRef(null);
 	const audioChunksRef = useRef([]);
 
+	useEffect(() => {
+		if (repliedMessage && textareaRef.current) {
+			textareaRef.current.focus();
+		}
+	}, [repliedMessage]);
+
 	const handleTyping = () => {
 		if (!selectedConversation) return;
 
@@ -77,7 +83,10 @@ const MessageInput = () => {
 
 			mediaRecorderRef.current.onstop = async () => {
 				const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-				await sendMessage("", audioBlob);
+				await sendMessage("", audioBlob, repliedMessage ? repliedMessage._id : null);
+				if (repliedMessage) {
+					setRepliedMessage(null);
+				}
 				stream.getTracks().forEach(track => track.stop());
 			};
 

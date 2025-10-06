@@ -22,9 +22,9 @@ const useSendMessage = () => {
 			if (data.error) throw new Error(data.error);
 
 			// Add repliedMessageId to the new message object for frontend simulation
-			if (repliedMessageId) {
-				data.repliedMessageId = repliedMessageId;
-			}
+			// if (repliedMessageId) {
+			// 	data.repliedMessageId = repliedMessageId;
+			// }
 
 			setMessages([...messages, data]);
 		} catch (error) {
