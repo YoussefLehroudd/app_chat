@@ -33,7 +33,16 @@ app.get("*", (req, res) => {
 	res.sendFile(path.join(__dirname, "..", "frontend", "dist", "index.html"));
 });
 
-server.listen(PORT, () => {
-	connectToMongoDB();
-	console.log(`Server Running on port ${PORT}`);
-});
+const startServer = async () => {
+	try {
+		await connectToMongoDB();
+		server.listen(PORT, () => {
+			console.log(`Server Running on port ${PORT}`);
+		});
+	} catch (error) {
+		console.error("Failed to connect to MongoDB", error.message);
+		process.exit(1); // Exit process with failure
+	}
+};
+
+startServer();
