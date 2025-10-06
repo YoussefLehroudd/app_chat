@@ -191,30 +191,69 @@ import { useState, useRef, useEffect } from "react";
 					</div>
 				)}
 				{message.audio ? (
-					<div className="flex items-center space-x-2 select-none relative">
-						<button className="focus:outline-none" onClick={(e) => { e.stopPropagation(); togglePlay(); }}>
+					<div className="flex items-center space-x-2 select-none relative bg-blue-500 rounded-lg p-2 max-w-[75%] sm:max-w-xs md:max-w-md cursor-pointer">
+						<button
+							className="relative flex items-center justify-center w-10 h-10 rounded-full bg-blue-700 hover:bg-blue-600 focus:outline-none"
+							onClick={(e) => {
+								e.stopPropagation();
+								togglePlay();
+							}}
+						>
 							{isPlaying ? (
-								<svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6" />
-								</svg>
+								<>
+									{/* Red recording dot */}
+									<span className="absolute left-3 top-3 w-4 h-4 bg-red-600 rounded-full animate-pulse"></span>
+									{/* Pause icon */}
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										className="h-6 w-6 text-white"
+										fill="currentColor"
+										viewBox="0 0 24 24"
+										stroke="none"
+									>
+										<rect x="6" y="5" width="4" height="14" rx="1" ry="1" />
+										<rect x="14" y="5" width="4" height="14" rx="1" ry="1" />
+									</svg>
+								</>
 							) : (
-								<svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-6.586 3.793A1 1 0 017 13.793V10.207a1 1 0 011.166-.986l6.586 1.947z" />
+								// Play icon
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									className="h-6 w-6 text-white"
+									fill="currentColor"
+									viewBox="0 0 24 24"
+									stroke="none"
+								>
+									<path d="M8 5v14l11-7z" />
 								</svg>
 							)}
 						</button>
-						<div className="flex-1">
-							<div className="h-1 bg-gray-600 rounded">
+						<div className="flex-1 ml-3">
+							{/* Waveform style progress bar */}
+							<div className="relative h-4 bg-blue-600 rounded overflow-hidden">
 								<div
-									className="h-1 bg-white rounded"
-									style={{ width: audioRef.current && audioRef.current.duration ? `${(progress / audioRef.current.duration) * 100}%` : "0%" }}
+									className="absolute top-0 left-0 h-4 bg-white rounded"
+									style={{
+										width:
+											audioRef.current && audioRef.current.duration
+												? `${(progress / audioRef.current.duration) * 100}%`
+												: "0%",
+										transition: "width 0.1s linear",
+									}}
 								/>
+								{/* Optional: Add waveform bars or animation here */}
 							</div>
-							<div className="text-xs text-right mt-1">
+							<div className="text-xs text-right mt-1 text-white select-none">
 								{formatTime(progress)} / {formatTime(duration)}
 							</div>
 						</div>
-						<button className="text-xs text-white bg-gray-700 rounded px-2 py-1" onClick={(e) => { e.stopPropagation(); changePlaybackRate(); }}>
+						<button
+							className="text-xs text-white bg-blue-700 rounded px-2 py-1 ml-3"
+							onClick={(e) => {
+								e.stopPropagation();
+								changePlaybackRate();
+							}}
+						>
 							{playbackRate}x
 						</button>
 						<audio ref={audioRef} src={message.audio} preload="auto" />
