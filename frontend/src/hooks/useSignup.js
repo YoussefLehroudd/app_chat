@@ -1,15 +1,19 @@
 import { useState } from "react";
-import toast from "react-hot-toast";
 import { useAuthContext } from "../context/AuthContext";
 
 const useSignup = () => {
 	const [loading, setLoading] = useState(false);
+	const [errors, setErrors] = useState({});
 	const { setAuthUser } = useAuthContext();
 
 	const signup = async ({ fullName, username, password, confirmPassword, gender }) => {
-		const success = handleInputErrors({ fullName, username, password, confirmPassword, gender });
-		if (!success) return;
+		const validationErrors = validateSignupInputs({ fullName, username, password, confirmPassword, gender });
+		if (Object.keys(validationErrors).length > 0) {
+			setErrors(validationErrors);
+			return false;
+		}
 
+		setErrors({});
 		setLoading(true);
 		try {
 			const res = await fetch("/api/auth/signup", {
@@ -20,36 +24,76 @@ const useSignup = () => {
 
 			const data = await res.json();
 			if (data.error) {
-				throw new Error(data.error);
+				setErrors(mapSignupErrorToFields(data));
+				return false;
 			}
 			localStorage.setItem("chat-user", JSON.stringify(data));
 			setAuthUser(data);
+			setErrors({});
+			return true;
 		} catch (error) {
-			toast.error(error.message);
+			setErrors({ form: "Something went wrong. Please try again." });
+			return false;
 		} finally {
 			setLoading(false);
 		}
 	};
 
-	return { loading, signup };
+	const clearError = (field) => {
+		setErrors((currentErrors) => {
+			if (!currentErrors[field] && !currentErrors.form && !(field === "username" && currentErrors.usernameSuggestion)) {
+				return currentErrors;
+			}
+			const nextErrors = { ...currentErrors };
+			delete nextErrors[field];
+			if (field === "username") {
+				delete nextErrors.usernameSuggestion;
+			}
+			delete nextErrors.form;
+			return nextErrors;
+		});
+	};
+
+	return { loading, signup, errors, clearError };
 };
 export default useSignup;
 
-function handleInputErrors({ fullName, username, password, confirmPassword, gender }) {
+function validateSignupInputs({ fullName, username, password, confirmPassword, gender }) {
+	const errors = {};
+
 	if (!fullName || !username || !password || !confirmPassword || !gender) {
-		toast.error("Please fill in all fields");
-		return false;
+		if (!fullName) errors.fullName = "Full name is required";
+		if (!username) errors.username = "Username is required";
+		if (!password) errors.password = "Password is required";
+		if (!confirmPassword) errors.confirmPassword = "Please confirm your password";
+		if (!gender) errors.gender = "Please choose a gender";
 	}
 
 	if (password !== confirmPassword) {
-		toast.error("Passwords do not match");
-		return false;
+		errors.confirmPassword = "Passwords do not match";
 	}
 
-	if (password.length < 6) {
-		toast.error("Password must be at least 6 characters");
-		return false;
+	if (password && password.length < 6) {
+		errors.password = "Password must be at least 6 characters";
 	}
 
-	return true;
+	return errors;
+}
+
+function mapSignupErrorToFields(response) {
+	const message = response?.error || "";
+	const normalizedMessage = message.toLowerCase();
+
+	if (normalizedMessage.includes("username already exists")) {
+		return {
+			username: "Username already exists",
+			usernameSuggestion: response?.suggestion || "",
+		};
+	}
+
+	if (normalizedMessage.includes("password") && normalizedMessage.includes("match")) {
+		return { confirmPassword: "Passwords do not match" };
+	}
+
+	return { form: message || "Unable to create account" };
 }

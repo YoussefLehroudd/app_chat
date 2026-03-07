@@ -1,32 +1,167 @@
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import toast from "react-hot-toast";
+import { BsCopy, BsReply, BsTrash } from "react-icons/bs";
 import { useAuthContext } from "../../context/AuthContext";
 import { extractTime } from "../../utils/extractTime";
 import useConversation from "../../zustand/useConversation";
-import { useState, useRef, useEffect } from "react";
+import getDefaultAvatar from "../../utils/defaultAvatar";
+import { getAvatarUrl } from "../../utils/avatar";
+import { CHAT_AUDIO_CONTROL_EVENT, stopAllChatAudio } from "../../utils/audioPlayback";
 
-	const Message = ({ message, onDeleteMessage, repliedMessage, contextMenuMessageId, setContextMenuMessageId, scrollContainerRef }) => {
+const getEmojiOnlyState = (value) => {
+	const trimmedValue = typeof value === "string" ? value.trim() : "";
+	if (!trimmedValue) return false;
+
+	const emojiCount = (trimmedValue.match(/\p{Extended_Pictographic}/gu) || []).length;
+	const strippedValue = trimmedValue
+		.replace(/\p{Extended_Pictographic}/gu, "")
+		.replace(/\p{Emoji_Component}/gu, "")
+		.replace(/\u200D/gu, "")
+		.replace(/\uFE0F/gu, "")
+		.replace(/\s/gu, "");
+
+	return emojiCount > 0 && strippedValue.length === 0;
+};
+
+const getSafeAudioValue = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
+
+const Message = ({
+	message,
+	onDeleteMessage,
+	onJumpToMessage,
+	isHighlighted,
+	repliedMessage,
+	contextMenuMessageId,
+	setContextMenuMessageId,
+	scrollContainerRef,
+}) => {
+	const MENU_WIDTH = 208;
+	const MENU_HEIGHT = 164;
+	const MENU_GAP = 12;
 	const { authUser } = useAuthContext();
 	const { selectedConversation } = useConversation();
 	const fromMe = message.senderId === authUser._id;
 	const formattedTime = extractTime(message.createdAt);
 	const chatClassName = fromMe ? "chat-end" : "chat-start";
-	const profilePic = fromMe ? authUser.profilePic : selectedConversation?.profilePic;
-	const bubbleBgColor = fromMe ? "bg-blue-500" : "";
-
-	const shakeClass = message.shouldShake ? "shake" : "";
-
-	const audioRef = useRef(null);
+	const profilePic = fromMe ? authUser?.profilePic : selectedConversation?.profilePic;
+	const isEmojiOnlyMessage = getEmojiOnlyState(message.message);
+	const fallbackAvatar = getDefaultAvatar(fromMe ? authUser?.gender : selectedConversation?.gender);
+	const resolvedProfilePic = getAvatarUrl(profilePic, 64);
+	const [avatarSrc, setAvatarSrc] = useState(resolvedProfilePic || fallbackAvatar);
+	const [avatarLoaded, setAvatarLoaded] = useState(!resolvedProfilePic);
+	const [showDeleteModal, setShowDeleteModal] = useState(false);
+	const [deleteType, setDeleteType] = useState("me");
+	const [isDeleting, setIsDeleting] = useState(false);
+	const [menuPosition, setMenuPosition] = useState(null);
 	const [isPlaying, setIsPlaying] = useState(false);
 	const [progress, setProgress] = useState(0);
 	const [duration, setDuration] = useState(0);
 	const [playbackRate, setPlaybackRate] = useState(1);
-	const [copyMessageVisible, setCopyMessageVisible] = useState(false);
-	const [copyMessageText, setCopyMessageText] = useState("");
-	const [showDeleteModal, setShowDeleteModal] = useState(false);
-	const [deleteType, setDeleteType] = useState("me"); // default to "delete for me"
+	const fallbackAudioDuration = getSafeAudioValue(message.audioDurationSeconds);
+
+	const avatarImgRef = useRef(null);
 	const messageRef = useRef(null);
-	const [isMenuAbove, setIsMenuAbove] = useState(true);
+	const audioRef = useRef(null);
+
+	useEffect(() => {
+		setAvatarSrc(resolvedProfilePic || fallbackAvatar);
+		setAvatarLoaded(!resolvedProfilePic);
+	}, [resolvedProfilePic, fallbackAvatar]);
+
+	useEffect(() => {
+		const img = avatarImgRef.current;
+		if (img?.complete && img.naturalWidth > 0) {
+			setAvatarLoaded(true);
+		}
+	}, [avatarSrc]);
+
+	useEffect(() => {
+		if (contextMenuMessageId !== message._id) {
+			setMenuPosition(null);
+		}
+	}, [contextMenuMessageId, message._id]);
+
+	useEffect(() => {
+		setIsPlaying(false);
+		setProgress(0);
+		setDuration(0);
+	}, [message.audio]);
+
+	useEffect(() => {
+		const handleAudioControl = (event) => {
+			const audio = audioRef.current;
+			if (!audio) return;
+
+			const { type, exceptId, reset } = event.detail ?? {};
+			if (type !== "stop-all" || exceptId === message._id) {
+				return;
+			}
+
+			audio.pause();
+			if (reset) {
+				audio.currentTime = 0;
+				setProgress(0);
+			}
+			setIsPlaying(false);
+		};
+
+		window.addEventListener(CHAT_AUDIO_CONTROL_EVENT, handleAudioControl);
+		return () => window.removeEventListener(CHAT_AUDIO_CONTROL_EVENT, handleAudioControl);
+	}, [message._id]);
+
+	useEffect(() => {
+		const audio = audioRef.current;
+		if (!audio) return undefined;
+
+		const updateProgress = () => {
+			setProgress(getSafeAudioValue(audio.currentTime));
+		};
+
+		const setAudioDuration = () => {
+			setDuration(getSafeAudioValue(audio.duration));
+		};
+
+		const handleEnded = () => {
+			setIsPlaying(false);
+			setProgress(0);
+		};
+
+		const handlePause = () => {
+			setIsPlaying(false);
+		};
+
+		setAudioDuration();
+		audio.addEventListener("timeupdate", updateProgress);
+		audio.addEventListener("loadedmetadata", setAudioDuration);
+		audio.addEventListener("loadeddata", setAudioDuration);
+		audio.addEventListener("durationchange", setAudioDuration);
+		audio.addEventListener("canplay", setAudioDuration);
+		audio.addEventListener("ended", handleEnded);
+		audio.addEventListener("pause", handlePause);
+
+		return () => {
+			audio.removeEventListener("timeupdate", updateProgress);
+			audio.removeEventListener("loadedmetadata", setAudioDuration);
+			audio.removeEventListener("loadeddata", setAudioDuration);
+			audio.removeEventListener("durationchange", setAudioDuration);
+			audio.removeEventListener("canplay", setAudioDuration);
+			audio.removeEventListener("ended", handleEnded);
+			audio.removeEventListener("pause", handlePause);
+		};
+	}, [message.audio]);
 
 	const confirmDelete = async () => {
+		if (isDeleting) return;
+
+		const { messages, removeMessage, restoreMessage } = useConversation.getState();
+		const messageIndex = messages.findIndex((currentMessage) => currentMessage._id === message._id);
+
+		setIsDeleting(true);
+		setShowDeleteModal(false);
+		setDeleteType("me");
+		(onDeleteMessage || removeMessage)?.(message._id);
+
 		try {
 			const response = await fetch(`/api/messages/${message._id}?deleteType=${deleteType}`, {
 				method: "DELETE",
@@ -35,42 +170,19 @@ import { useState, useRef, useEffect } from "react";
 					Authorization: `Bearer ${localStorage.getItem("token")}`,
 				},
 			});
-			if (response.ok) {
-				setShowDeleteModal(false);
-				if (onDeleteMessage) {
-					onDeleteMessage(message._id);
-				}
-			} else {
-				alert("Failed to delete message");
+
+			if (!response.ok) {
+				throw new Error("Failed to delete message");
 			}
+
+			window.dispatchEvent(new Event("chat:conversations-refresh"));
 		} catch (error) {
-			console.error("Error deleting message:", error);
-			alert("Error deleting message");
+			restoreMessage(message, messageIndex);
+			toast.error(error.message);
+		} finally {
+			setIsDeleting(false);
 		}
 	};
-
-	useEffect(() => {
-		const audio = audioRef.current;
-		if (!audio) return;
-
-		const updateProgress = () => {
-			setProgress(audio.currentTime);
-		};
-
-		const setAudioDuration = () => {
-			setDuration(audio.duration);
-		};
-
-		audio.addEventListener("timeupdate", updateProgress);
-		audio.addEventListener("ended", () => setIsPlaying(false));
-		audio.addEventListener("loadedmetadata", setAudioDuration);
-
-		return () => {
-			audio.removeEventListener("timeupdate", updateProgress);
-			audio.removeEventListener("ended", () => setIsPlaying(false));
-			audio.removeEventListener("loadedmetadata", setAudioDuration);
-		};
-	}, []);
 
 	const togglePlay = () => {
 		const audio = audioRef.current;
@@ -79,368 +191,358 @@ import { useState, useRef, useEffect } from "react";
 		if (isPlaying) {
 			audio.pause();
 			setIsPlaying(false);
-		} else {
-			audio.play();
-			setIsPlaying(true);
+			return;
 		}
+
+		stopAllChatAudio({ exceptId: message._id, reset: true });
+		audio
+			.play()
+			.then(() => {
+				setIsPlaying(true);
+			})
+			.catch(() => {
+				setIsPlaying(false);
+			});
 	};
 
 	const changePlaybackRate = () => {
 		const audio = audioRef.current;
 		if (!audio) return;
 
-		let newRate;
-		if (playbackRate === 1) newRate = 1.5;
-		else if (playbackRate === 1.5) newRate = 2;
-		else newRate = 1;
-
-		audio.playbackRate = newRate;
-		setPlaybackRate(newRate);
+		const nextRate = playbackRate === 1 ? 1.5 : playbackRate === 1.5 ? 2 : 1;
+		audio.playbackRate = nextRate;
+		setPlaybackRate(nextRate);
 	};
 
-	const formatTime = (seconds) => {
-		const mins = Math.floor(seconds / 60);
-		const secs = Math.floor(seconds % 60);
-		return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
-	};
+	const handleContextMenu = (event) => {
+		event.preventDefault();
+		event.stopPropagation();
 
-	const handleContextMenu = (e) => {
-		e.preventDefault();
-		if (messageRef.current && scrollContainerRef && scrollContainerRef.current) {
-			const messageRect = messageRef.current.getBoundingClientRect();
-			const containerRect = scrollContainerRef.current.getBoundingClientRect();
-			const menuHeight = 150; // approximate height of the menu in pixels
-			const spaceBelow = containerRect.bottom - messageRect.bottom;
-			const spaceAbove = messageRect.top - containerRect.top;
-			console.log("messageRect.top:", messageRect.top, "messageRect.bottom:", messageRect.bottom);
-			console.log("containerRect.top:", containerRect.top, "containerRect.bottom:", containerRect.bottom);
-			console.log("spaceAbove:", spaceAbove, "spaceBelow:", spaceBelow);
-			// If there is not enough space below to show the menu, open above
-			if (spaceBelow < menuHeight && spaceAbove > menuHeight) {
-				console.log("Not enough space below, opening menu above");
-				setIsMenuAbove(true);
-			} else {
-				console.log("Opening menu below");
-				setIsMenuAbove(false);
-			}
+		const containerRect = scrollContainerRef?.current?.getBoundingClientRect() ?? {
+			top: 12,
+			left: 12,
+			right: window.innerWidth - 12,
+			bottom: window.innerHeight - 12,
+		};
+
+		const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+		const minTop = Math.max(12, containerRect.top + 8);
+		const maxTop = Math.max(minTop, Math.min(window.innerHeight - MENU_HEIGHT - 12, containerRect.bottom - MENU_HEIGHT - 8));
+		const top = clamp(event.clientY - MENU_HEIGHT / 2, minTop, maxTop);
+
+		const spaceLeft = event.clientX - containerRect.left;
+		const spaceRight = containerRect.right - event.clientX;
+		const canOpenLeft = spaceLeft >= MENU_WIDTH + MENU_GAP;
+		const canOpenRight = spaceRight >= MENU_WIDTH + MENU_GAP;
+
+		let left;
+		if (fromMe && canOpenLeft) {
+			left = event.clientX - MENU_WIDTH - MENU_GAP;
+		} else if (!fromMe && canOpenRight) {
+			left = event.clientX + MENU_GAP;
+		} else if (canOpenLeft) {
+			left = event.clientX - MENU_WIDTH - MENU_GAP;
+		} else if (canOpenRight) {
+			left = event.clientX + MENU_GAP;
 		} else {
-			console.log("messageRef or scrollContainerRef is null");
+			const minLeft = Math.max(12, containerRect.left + 8);
+			const maxLeft = Math.max(minLeft, Math.min(window.innerWidth - MENU_WIDTH - 12, containerRect.right - MENU_WIDTH - 8));
+			left = clamp(event.clientX - MENU_WIDTH / 2, minLeft, maxLeft);
 		}
+
+		setMenuPosition({ top, left });
+
 		setContextMenuMessageId(message._id);
 	};
 
-	const handleClickOutside = () => {
-		setContextMenuMessageId(null);
-	};
-
-	const handleDeleteMessage = async () => {
+	const handleCopy = async () => {
 		try {
-			const response = await fetch(`/api/messages/${message._id}`, {
-				method: "DELETE",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${localStorage.getItem("token")}`, // Assuming token is stored in localStorage
-				},
-			});
-			if (response.ok) {
-				setContextMenuMessageId(null);
-				if (onDeleteMessage) {
-					onDeleteMessage(message._id);
-				}
-			} else {
-				alert("Failed to delete message");
-			}
-		} catch (error) {
-			console.error("Error deleting message:", error);
-			alert("Error deleting message");
+			await navigator.clipboard.writeText(message.audio ? message.audio : message.message || "");
+			toast.success(message.audio ? "Audio link copied" : "Message copied", { duration: 1400 });
+			setContextMenuMessageId(null);
+			setMenuPosition(null);
+		} catch {
+			toast.error("Copy failed");
 		}
 	};
 
-	useEffect(() => {
-		if (contextMenuMessageId !== null) {
-			document.addEventListener("click", handleClickOutside);
-		} else {
-			document.removeEventListener("click", handleClickOutside);
-		}
-		return () => {
-			document.removeEventListener("click", handleClickOutside);
-		};
-	}, [contextMenuMessageId]);
+	const formatAudioTime = (seconds) => {
+		const safeSeconds = getSafeAudioValue(seconds);
+		const mins = Math.floor(safeSeconds / 60);
+		const secs = Math.floor(safeSeconds % 60);
+		return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+	};
+
+	const displayedAudioDuration = duration > 0 ? duration : fallbackAudioDuration;
+	const progressPercentage =
+		displayedAudioDuration > 0
+			? Math.min(100, (getSafeAudioValue(progress) / displayedAudioDuration) * 100)
+			: 0;
+
+	const bubbleClassName = fromMe
+		? "border border-sky-300/20 bg-[linear-gradient(135deg,rgba(14,165,233,0.92),rgba(59,130,246,0.92))] text-white shadow-[0_16px_32px_rgba(14,165,233,0.2)]"
+		: "border border-white/8 bg-slate-900/80 text-slate-100 shadow-[0_14px_28px_rgba(2,6,23,0.18)]";
+
+	const replyClassName = fromMe
+		? "border-l-white/70 bg-white/12 text-sky-50"
+		: "border-l-sky-400/70 bg-slate-950/35 text-slate-300";
+
+	const metaClassName = fromMe ? "text-sky-50/85" : "text-slate-400";
+	const shakeClass = message.shouldShake ? "shake" : "";
+	const highlightClassName = isHighlighted
+		? fromMe
+			? "ring-2 ring-white/80 ring-offset-2 ring-offset-sky-500/20"
+			: "ring-2 ring-sky-300/80 ring-offset-2 ring-offset-slate-950/40"
+		: "";
 
 	return (
 		<div
+			id={`message-${message._id}`}
+			data-message-id={message._id}
 			ref={messageRef}
-			className={`chat ${chatClassName}`}
+			className={`chat ${chatClassName} ${shakeClass} scroll-mt-24`}
 			style={{ position: "relative" }}
 		>
 			<div className='chat-image avatar'>
-				<div className='w-8 md:w-10 rounded-full'>
-					<img alt='Tailwind CSS chat bubble component' src={profilePic} />
+				<div className='relative w-9 rounded-full overflow-hidden ring-1 ring-white/10 md:w-10'>
+					<div
+						className={`absolute inset-0 bg-slate-700/60 transition-opacity duration-200 ${
+							avatarLoaded ? "opacity-0" : "opacity-100"
+						}`}
+					></div>
+					<img
+						alt='user avatar'
+						ref={avatarImgRef}
+						src={avatarSrc}
+						className={`h-full w-full object-cover transition-opacity duration-200 ${
+							avatarLoaded ? "opacity-100" : "opacity-0"
+						}`}
+						loading='eager'
+						decoding='async'
+						onLoad={() => setAvatarLoaded(true)}
+						onError={() => {
+							setAvatarSrc(fallbackAvatar);
+							setAvatarLoaded(true);
+						}}
+					/>
 				</div>
 			</div>
+
 			<div
-				className={`chat-bubble text-white text-sm md:text-base ${bubbleBgColor} ${shakeClass} pb-2 break-words max-w-[75%] sm:max-w-xs md:max-w-md cursor-pointer relative`}
+				className={`chat-bubble before:hidden after:hidden overflow-visible max-w-[85%] cursor-pointer px-3 py-3 text-sm transition-shadow duration-300 md:max-w-[72%] md:px-4 md:py-3.5 lg:max-w-[68%] xl:max-w-[62%] ${bubbleClassName} ${highlightClassName} ${
+					fromMe ? "rounded-[24px] rounded-br-[10px]" : "rounded-[24px] rounded-bl-[10px]"
+				}`}
 				onContextMenu={handleContextMenu}
 			>
-				{repliedMessage && (
-					<div
-						className="mb-1 p-2 rounded border-l-4 border-blue-400 bg-blue-900 text-xs text-gray-300 max-w-[90%] whitespace-pre-wrap break-words overflow-hidden text-ellipsis"
-						style={{ wordBreak: "break-word", whiteSpace: "pre-wrap", maxHeight: "4.5rem", overflowY: "auto" }}
+				{repliedMessage ? (
+					<button
+						type='button'
+						className={`custom-scrollbar mb-2 block max-h-[78px] w-full overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words rounded-[18px] border-l-4 px-3 py-2 text-left text-xs leading-5 transition [overflow-wrap:anywhere] hover:opacity-90 ${replyClassName}`}
+						onClick={(event) => {
+							event.stopPropagation();
+							onJumpToMessage?.(repliedMessage._id);
+						}}
+						title='Go to original message'
 					>
 						{repliedMessage.audio ? "Audio message" : repliedMessage.message}
-					</div>
-				)}
+					</button>
+				) : null}
+
 				{message.audio ? (
-					<div className="flex items-center space-x-2 select-none relative bg-blue-500 rounded-lg p-2 max-w-[75%] sm:max-w-xs md:max-w-md cursor-pointer">
-						<button
-							className="relative flex items-center justify-center w-10 h-10 rounded-full bg-blue-700 hover:bg-blue-600 focus:outline-none"
-							onClick={(e) => {
-								e.stopPropagation();
-								togglePlay();
-							}}
+					<div className='w-full min-w-0 max-w-full sm:min-w-[220px]'>
+						<div
+							className={`flex w-full min-w-0 max-w-full items-center gap-2 rounded-[20px] border px-2.5 py-2.5 sm:gap-3 sm:px-3 sm:py-3 ${
+								fromMe ? "border-white/15 bg-white/10" : "border-white/8 bg-white/[0.03]"
+							}`}
 						>
-							{isPlaying ? (
-								<>
-									{/* Pause icon */}
-									<svg
-										xmlns="http://www.w3.org/2000/svg"
-										className="h-6 w-6 text-white"
-										fill="currentColor"
-										viewBox="0 0 24 24"
-										stroke="none"
-									>
-										<rect x="6" y="5" width="4" height="14" rx="1" ry="1" />
-										<rect x="14" y="5" width="4" height="14" rx="1" ry="1" />
-									</svg>
-								</>
-							) : (
-								// Play icon
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									className="h-6 w-6 text-white"
-									fill="currentColor"
-									viewBox="0 0 24 24"
-									stroke="none"
-								>
-									<path d="M8 5v14l11-7z" />
-								</svg>
-							)}
-						</button>
-						<div className="flex-1 ml-3">
-							{/* Waveform style progress bar */}
-							<div className="relative h-4 bg-blue-600 rounded overflow-hidden">
-								<div
-									className="absolute top-0 left-0 h-4 bg-white rounded"
-									style={{
-										width:
-											audioRef.current && audioRef.current.duration
-												? `${(progress / audioRef.current.duration) * 100}%`
-												: "0%",
-										transition: "width 0.1s linear",
-									}}
-								/>
-								{/* Optional: Add waveform bars or animation here */}
-							</div>
-							<div className="text-xs text-right mt-1 text-white select-none">
-								{formatTime(progress)} / {formatTime(duration)}
-							</div>
-						</div>
-						<button
-							className="text-xs text-white bg-blue-700 rounded px-2 py-1 ml-3"
-							onClick={(e) => {
-								e.stopPropagation();
-								changePlaybackRate();
-							}}
-						>
-							{playbackRate}x
-						</button>
-						{/* Delete icon */}
-						{/* Removed delete icon button as per user request */}
-						{/*
-						<button
-							className="text-white ml-3 focus:outline-none"
-							onClick={(e) => {
-								e.stopPropagation();
-								setShowDeleteModal(true);
-							}}
-							title="Delete audio message"
-						>
-							<svg
-								xmlns="http://www.w3.org/2000/svg"
-								className="h-6 w-6"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-								strokeWidth={2}
+							<button
+								type='button'
+								className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full sm:h-10 sm:w-10 ${
+									fromMe ? "bg-white/15 hover:bg-white/20" : "bg-slate-800 hover:bg-slate-700"
+								}`}
+								onClick={(event) => {
+									event.stopPropagation();
+									togglePlay();
+								}}
 							>
-								<path
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5-4h4m-4 0a1 1 0 00-1 1v1h6V4a1 1 0 00-1-1m-4 0h4"
-								/>
-							</svg>
-						</button>
-						*/}
-						<audio ref={audioRef} src={message.audio} preload="auto" />
+								{isPlaying ? (
+									<svg xmlns='http://www.w3.org/2000/svg' className='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'>
+										<rect x='6' y='5' width='4' height='14' rx='1' ry='1' />
+										<rect x='14' y='5' width='4' height='14' rx='1' ry='1' />
+									</svg>
+								) : (
+									<svg xmlns='http://www.w3.org/2000/svg' className='h-4 w-4' fill='currentColor' viewBox='0 0 24 24'>
+										<path d='M8 5v14l11-7z' />
+									</svg>
+								)}
+							</button>
+
+							<div className='min-w-0 flex-1'>
+								<div className={`relative h-2 overflow-hidden rounded-full ${fromMe ? "bg-white/20" : "bg-slate-700"}`}>
+									<div
+										className={`absolute inset-y-0 left-0 rounded-full ${fromMe ? "bg-white" : "bg-sky-400"}`}
+										style={{
+											width: `${progressPercentage}%`,
+										}}
+									></div>
+								</div>
+								<div className={`mt-2 grid grid-cols-2 items-center gap-2 text-[10px] tabular-nums sm:text-[11px] ${metaClassName}`}>
+									<span className='min-w-[2.5rem] text-left'>{formatAudioTime(progress)}</span>
+									<span className='min-w-[2.5rem] text-right'>{formatAudioTime(displayedAudioDuration)}</span>
+								</div>
+							</div>
+
+							<button
+								type='button'
+								className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold sm:px-2.5 sm:text-[11px] ${
+									fromMe ? "bg-white/15 text-white" : "bg-slate-800 text-slate-200"
+								}`}
+								onClick={(event) => {
+									event.stopPropagation();
+									changePlaybackRate();
+								}}
+							>
+								{playbackRate}x
+							</button>
+
+							<audio ref={audioRef} src={message.audio} preload='auto' />
+						</div>
 					</div>
 				) : (
-					message.message
-				)}
-				{contextMenuMessageId === message._id && (
-					<ul
-						className={`absolute bg-gray-900 bg-opacity-90 text-white rounded-lg shadow-lg py-2 z-50 min-w-[180px] max-w-xs sm:max-w-sm space-y-1 ${
-							fromMe ? "right-0" : "left-0"
+					<p
+						className={`w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
+							isEmojiOnlyMessage
+								? "text-[28px] leading-[1.35] tracking-[0.08em] sm:text-[32px]"
+								: "leading-6"
 						}`}
-						onClick={(e) => e.stopPropagation()}
-						style={{
-							boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
-							bottom: isMenuAbove ? "100%" : "auto",
-							top: isMenuAbove ? "auto" : "100%",
-							marginBottom: isMenuAbove ? "0.25rem" : "0",
-							marginTop: isMenuAbove ? "0" : "0.25rem",
-						}}
 					>
-						<li
-							className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded"
-							onClick={(e) => {
-								e.stopPropagation();
-								useConversation.getState().setRepliedMessage(message);
-								setContextMenuMessageId(null);
-							}}
-						>
-							<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M3 10h4l3 8 4-16 3 8h4" />
-							</svg>
-							<span>Reply</span>
-						</li>
-						<li
-							className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded"
-							onClick={(e) => {
-								e.stopPropagation();
-								if (message.audio) {
-									navigator.clipboard.writeText(message.audio);
-									alert("Audio URL copied to clipboard");
-								} else {
-									navigator.clipboard.writeText(message.message);
-									alert("Message copied to clipboard");
-								}
-								setContextMenuMessageId(null);
-							}}
-						>
-							<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M8 16h8M8 12h8m-8-4h8M4 6h16M4 18h16" />
-							</svg>
-							<span>Copy</span>
-						</li>
-						{message.audio && (
-							<li className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded">
-								<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-									<path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-								</svg>
-								<span>Save as...</span>
-							</li>
-						)}
-						<li className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded">
-							<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M4 4v16h16" />
-							</svg>
-							<span>Forward</span>
-						</li>
-						<li className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded">
-							<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-							</svg>
-							<span>Star</span>
-						</li>
-						<li className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded">
-							<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-							</svg>
-							<span>Pin</span>
-						</li>
-						<li
-							className="flex items-center px-4 py-2 cursor-pointer hover:bg-red-600 rounded"
-							onClick={(e) => {
-								e.stopPropagation();
-								setContextMenuMessageId(null);
-								setShowDeleteModal(true);
-							}}
-						>
-							<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5-4h4m-4 0a1 1 0 00-1 1v1h6V4a1 1 0 00-1-1m-4 0h4" />
-							</svg>
-							<span>Delete</span>
-						</li>
-						<li className="flex items-center px-4 py-2 cursor-pointer hover:bg-gray-700 rounded">
-							<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-								<path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 4H7a2 2 0 01-2-2V6a2 2 0 012-2h5l5 6v10a2 2 0 01-2 2z" />
-							</svg>
-							<span>Select</span>
-						</li>
-					</ul>
+						{message.message}
+					</p>
 				)}
-			</div>
-			<div className='chat-footer opacity-50 text-xs flex gap-1 items-center'>
-				{formattedTime}
-				{fromMe && (
-					<span className='text-xs'>
-						{message.isSeen ? (
-							<span className='text-blue-400'>✓✓</span>
-						) : (
-							<span className='text-gray-400'>✓</span>
-						)}
-					</span>
-				)}
-			</div>
-			{showDeleteModal && (
-				<div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
-					<div className="bg-gray-900 rounded-lg p-6 w-80">
-						<h2 className="text-white text-lg mb-4">Delete message?</h2>
-						<p className="text-gray-300 mb-4">You can delete messages for everyone or just for yourself.</p>
-						<div className="mb-4">
-							<label className="inline-flex items-center mr-4">
-								<input
-									type="radio"
-									name="deleteType"
-									value="me"
-									checked={deleteType === "me"}
-									onChange={() => setDeleteType("me")}
-									className="form-radio"
-								/>
-								<span className="ml-2 text-gray-300">Delete for me</span>
-							</label>
-							{message.senderId === authUser._id && (
-								<label className="inline-flex items-center">
-									<input
-										type="radio"
-										name="deleteType"
-										value="everyone"
-										checked={deleteType === "everyone"}
-										onChange={() => setDeleteType("everyone")}
-										className="form-radio"
-									/>
-									<span className="ml-2 text-gray-300">Delete for everyone</span>
-								</label>
-							)}
-						</div>
-						<div className="flex justify-end space-x-4">
-							<button
-								className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
-								onClick={confirmDelete}
-							>
-								Delete
-							</button>
-							<button
-								className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded"
-								onClick={() => setShowDeleteModal(false)}
-							>
-								Cancel
-							</button>
-						</div>
-					</div>
+
+				<div className={`mt-2 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
+					<span>{message.isPending ? "Sending..." : formattedTime}</span>
+					{fromMe && !message.isPending ? <span>{message.isSeen ? <span className='text-blue-200'>✓✓</span> : "✓"}</span> : null}
 				</div>
-			)}
+
+				{contextMenuMessageId === message._id && menuPosition
+					? createPortal(
+						<ul
+							className='fixed z-[120] w-52 overflow-hidden rounded-[20px] border border-white/10 bg-slate-950/95 p-1 shadow-[0_20px_42px_rgba(2,6,23,0.45)]'
+							style={{ top: `${menuPosition.top}px`, left: `${menuPosition.left}px` }}
+							onClick={(event) => event.stopPropagation()}
+							onMouseDown={(event) => event.stopPropagation()}
+						>
+						<li>
+							<button
+								type='button'
+								className='flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-slate-100 transition hover:bg-white/[0.06]'
+								onClick={(event) => {
+									event.stopPropagation();
+									useConversation.getState().setRepliedMessage(message);
+									setContextMenuMessageId(null);
+									setMenuPosition(null);
+								}}
+							>
+								<BsReply className='h-4 w-4' />
+								<span>Reply</span>
+							</button>
+						</li>
+						<li>
+							<button
+								type='button'
+								className='flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-slate-100 transition hover:bg-white/[0.06]'
+								onClick={(event) => {
+									event.stopPropagation();
+									handleCopy();
+								}}
+							>
+								<BsCopy className='h-4 w-4' />
+								<span>{message.audio ? "Copy audio link" : "Copy message"}</span>
+							</button>
+						</li>
+						<li>
+							<button
+								type='button'
+								className='flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-rose-200 transition hover:bg-rose-500/12'
+								onClick={(event) => {
+									event.stopPropagation();
+									setContextMenuMessageId(null);
+									setMenuPosition(null);
+									setShowDeleteModal(true);
+								}}
+							>
+								<BsTrash className='h-4 w-4' />
+								<span>Delete</span>
+							</button>
+						</li>
+						</ul>,
+						document.body
+					)
+					: null}
+			</div>
+
+			{showDeleteModal
+				? createPortal(
+					<div className='fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-sm'>
+						<div className='w-full max-w-sm rounded-[28px] border border-white/10 bg-slate-950/95 p-6 shadow-[0_32px_80px_rgba(2,6,23,0.55)]'>
+							<h2 className='text-lg font-semibold text-white'>Delete message?</h2>
+							<p className='mt-2 text-sm leading-6 text-slate-400'>
+								Choose whether to remove this message only from your chat or from everyone.
+							</p>
+
+							<div className='mt-5 space-y-3'>
+								<label className='flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200'>
+									<input
+										type='radio'
+										name='deleteType'
+										value='me'
+										checked={deleteType === "me"}
+										onChange={() => setDeleteType("me")}
+										className='radio radio-sm radio-primary'
+									/>
+									<span>Delete for me</span>
+								</label>
+
+								{message.senderId === authUser._id ? (
+									<label className='flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200'>
+										<input
+											type='radio'
+											name='deleteType'
+											value='everyone'
+											checked={deleteType === "everyone"}
+											onChange={() => setDeleteType("everyone")}
+											className='radio radio-sm radio-primary'
+										/>
+										<span>Delete for everyone</span>
+									</label>
+								) : null}
+							</div>
+
+							<div className='mt-6 flex justify-end gap-3'>
+								<button
+									type='button'
+									className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/[0.08]'
+									onClick={() => setShowDeleteModal(false)}
+								>
+									Cancel
+								</button>
+								<button
+									type='button'
+									className='rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-400'
+									onClick={confirmDelete}
+									disabled={isDeleting}
+								>
+									{isDeleting ? "Deleting..." : "Delete"}
+								</button>
+							</div>
+						</div>
+					</div>,
+					document.body
+				)
+				: null}
 		</div>
 	);
 };
+
 export default Message;

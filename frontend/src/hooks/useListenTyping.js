@@ -7,23 +7,28 @@ const useListenTyping = () => {
 	const { setIsTyping, selectedConversation } = useConversation();
 
 	useEffect(() => {
-		socket?.on("userTyping", (userId) => {
+		if (!socket) return undefined;
+
+		const handleUserTyping = (userId) => {
 			// Only show typing indicator if it's from the selected conversation
 			if (selectedConversation?._id === userId) {
 				setIsTyping(true);
 			}
-		});
+		};
 
-		socket?.on("userStopTyping", (userId) => {
+		const handleUserStopTyping = (userId) => {
 			// Only hide typing indicator if it's from the selected conversation
 			if (selectedConversation?._id === userId) {
 				setIsTyping(false);
 			}
-		});
+		};
+
+		socket.on("userTyping", handleUserTyping);
+		socket.on("userStopTyping", handleUserStopTyping);
 
 		return () => {
-			socket?.off("userTyping");
-			socket?.off("userStopTyping");
+			socket.off("userTyping", handleUserTyping);
+			socket.off("userStopTyping", handleUserStopTyping);
 		};
 	}, [socket, setIsTyping, selectedConversation]);
 };

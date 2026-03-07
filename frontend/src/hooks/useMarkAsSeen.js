@@ -1,16 +1,21 @@
 import { useEffect } from "react";
+import { useAuthContext } from "../context/AuthContext";
 import useConversation from "../zustand/useConversation";
 
 const useMarkAsSeen = () => {
 	const { selectedConversation, messages } = useConversation();
+	const { authUser } = useAuthContext();
 
 	useEffect(() => {
 		const markAsSeen = async () => {
-			if (!selectedConversation?._id) return;
+			if (!selectedConversation?._id || !authUser?._id) return;
 
 			// Check if there are any unseen messages from the other user
 			const hasUnseenMessages = messages.some(
-				(msg) => msg.receiverId === selectedConversation._id && !msg.isSeen
+				(msg) =>
+					msg.senderId === selectedConversation._id &&
+					msg.receiverId === authUser._id &&
+					!msg.isSeen
 			);
 
 			if (hasUnseenMessages) {

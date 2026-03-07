@@ -10,12 +10,6 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, '..', '..', '.env') });
 
-console.log("Cloudinary env variables:", {
-  CLOUDINARY_NAME: process.env.CLOUDINARY_NAME,
-  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
-  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
-});
-
 cloudinary.config({
 	cloud_name: process.env.CLOUDINARY_NAME,
 	api_key: process.env.CLOUDINARY_API_KEY,
@@ -26,9 +20,29 @@ const storage = new CloudinaryStorage({
 	cloudinary,
 	params: {
 		folder: "chat_audios",
-		resource_type: "auto", // audio/video/image
+		resource_type: "video",
 	},
 });
 
+const avatarStorage = new CloudinaryStorage({
+	cloudinary,
+	params: {
+		folder: "chat_avatars",
+		resource_type: "image",
+	},
+});
+
+const imageFileFilter = (req, file, cb) => {
+	if (!file.mimetype.startsWith("image/")) {
+		return cb(new Error("Only image files are allowed"), false);
+	}
+	cb(null, true);
+};
+
 export const upload = multer({ storage });
+export const avatarUpload = multer({
+	storage: avatarStorage,
+	fileFilter: imageFileFilter,
+	limits: { fileSize: 5 * 1024 * 1024 },
+});
 export { cloudinary };

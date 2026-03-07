@@ -1,7 +1,8 @@
-import { Link } from "react-router-dom";
 import GenderCheckbox from "./GenderCheckbox";
 import { useState } from "react";
 import useSignup from "../../hooks/useSignup";
+import AuthShell from "../../components/auth/AuthShell";
+import { FiArrowRight, FiAtSign, FiLock, FiUser } from "react-icons/fi";
 
 const SignUp = () => {
 	const [inputs, setInputs] = useState({
@@ -12,10 +13,21 @@ const SignUp = () => {
 		gender: "",
 	});
 
-	const { loading, signup } = useSignup();
+	const { loading, signup, errors, clearError } = useSignup();
 
 	const handleCheckboxChange = (gender) => {
+		clearError("gender");
 		setInputs({ ...inputs, gender });
+	};
+
+	const handleChange = (field) => (e) => {
+		const value = e.target.value;
+		clearError(field);
+		if (field === "password" || field === "confirmPassword") {
+			clearError("password");
+			clearError("confirmPassword");
+		}
+		setInputs((currentInputs) => ({ ...currentInputs, [field]: value }));
 	};
 
 	const handleSubmit = async (e) => {
@@ -23,83 +35,123 @@ const SignUp = () => {
 		await signup(inputs);
 	};
 
+	const applySuggestedUsername = () => {
+		if (!errors.usernameSuggestion) return;
+		clearError("username");
+		setInputs((currentInputs) => ({
+			...currentInputs,
+			username: errors.usernameSuggestion,
+		}));
+	};
+
 	return (
-		<div className='flex flex-col items-center justify-center w-full max-w-md mx-auto px-4'>
-			<div className='w-full p-4 md:p-6 rounded-lg shadow-md bg-gray-400 bg-clip-padding backdrop-filter backdrop-blur-lg bg-opacity-0'>
-				<h1 className='text-2xl md:text-3xl font-semibold text-center text-gray-300'>
-					Sign Up <span className='text-blue-500'> ChatApp</span>
-				</h1>
+		<div className='w-full max-w-6xl'>
+			<AuthShell
+				eyebrow='Create account'
+				title='Join the flow'
+				accent='Start on ChatApp'
+				description='Create your account with a tighter layout that stays fully visible on screen.'
+				footerPrompt='Already have an account?'
+				footerLinkLabel='Login'
+				footerTo='/login'
+			>
+				<form onSubmit={handleSubmit} className='auth-form-stack flex flex-col gap-4'>
+					<div className='auth-form-grid grid gap-4 lg:grid-cols-2'>
+						<div className='space-y-2'>
+							<label className='auth-label'>Full Name</label>
+							<div className={`auth-input-wrap ${errors.fullName ? "auth-input-wrap--error" : ""}`}>
+								<FiUser className='auth-input-icon' />
+								<input
+									type='text'
+									placeholder='John Doe'
+									className='auth-input'
+									value={inputs.fullName}
+									onChange={handleChange("fullName")}
+									autoComplete='name'
+									aria-invalid={Boolean(errors.fullName)}
+								/>
+							</div>
+							{errors.fullName ? <p className='auth-error-text'>{errors.fullName}</p> : null}
+						</div>
 
-				<form onSubmit={handleSubmit}>
-					<div>
-						<label className='label p-2'>
-							<span className='text-sm md:text-base label-text text-white font-semibold'>Full Name</span>
-						</label>
-						<input
-							type='text'
-							placeholder='John Doe'
-							className='w-full input input-bordered h-10 text-sm md:text-base'
-							value={inputs.fullName}
-							onChange={(e) => setInputs({ ...inputs, fullName: e.target.value })}
-						/>
+						<div className='space-y-2'>
+							<label className='auth-label'>Username</label>
+							<div className={`auth-input-wrap ${errors.username ? "auth-input-wrap--error" : ""}`}>
+								<FiAtSign className='auth-input-icon' />
+								<input
+									type='text'
+									placeholder='johndoe'
+									className='auth-input'
+									value={inputs.username}
+									onChange={handleChange("username")}
+									autoComplete='username'
+									aria-invalid={Boolean(errors.username)}
+								/>
+							</div>
+							{errors.username || errors.usernameSuggestion ? (
+								<div className='auth-inline-feedback'>
+									{errors.username ? <p className='auth-error-text'>{errors.username}</p> : null}
+									{errors.usernameSuggestion ? (
+										<button type='button' className='auth-suggestion-chip' onClick={applySuggestedUsername}>
+											Try `@{errors.usernameSuggestion}`
+										</button>
+									) : null}
+								</div>
+							) : null}
+						</div>
 					</div>
 
-					<div>
-						<label className='label p-2 '>
-							<span className='text-sm md:text-base label-text text-white font-semibold'>Username</span>
-						</label>
-						<input
-							type='text'
-							placeholder='johndoe'
-							className='w-full input input-bordered h-10 text-sm md:text-base'
-							value={inputs.username}
-							onChange={(e) => setInputs({ ...inputs, username: e.target.value })}
-						/>
+					<div className='auth-form-grid grid gap-4 md:grid-cols-2'>
+						<div className='space-y-2'>
+							<label className='auth-label'>Password</label>
+							<div className={`auth-input-wrap ${errors.password ? "auth-input-wrap--error" : ""}`}>
+								<FiLock className='auth-input-icon' />
+								<input
+									type='password'
+									placeholder='Enter password'
+									className='auth-input'
+									value={inputs.password}
+									onChange={handleChange("password")}
+									autoComplete='new-password'
+									aria-invalid={Boolean(errors.password)}
+								/>
+							</div>
+							{errors.password ? <p className='auth-error-text'>{errors.password}</p> : null}
+						</div>
+
+						<div className='space-y-2'>
+							<label className='auth-label'>Confirm Password</label>
+							<div className={`auth-input-wrap ${errors.confirmPassword ? "auth-input-wrap--error" : ""}`}>
+								<FiLock className='auth-input-icon' />
+								<input
+									type='password'
+									placeholder='Confirm password'
+									className='auth-input'
+									value={inputs.confirmPassword}
+									onChange={handleChange("confirmPassword")}
+									autoComplete='new-password'
+									aria-invalid={Boolean(errors.confirmPassword)}
+								/>
+							</div>
+							{errors.confirmPassword ? <p className='auth-error-text'>{errors.confirmPassword}</p> : null}
+						</div>
 					</div>
 
-					<div>
-						<label className='label'>
-							<span className='text-sm md:text-base label-text text-white font-semibold'>Password</span>
-						</label>
-						<input
-							type='password'
-							placeholder='Enter Password'
-							className='w-full input input-bordered h-10 text-sm md:text-base'
-							value={inputs.password}
-							onChange={(e) => setInputs({ ...inputs, password: e.target.value })}
-						/>
-					</div>
+					<GenderCheckbox onCheckboxChange={handleCheckboxChange} selectedGender={inputs.gender} error={errors.gender} />
 
-					<div>
-						<label className='label'>
-							<span className='text-sm md:text-base label-text text-white font-semibold'>Confirm Password</span>
-						</label>
-						<input
-							type='password'
-							placeholder='Confirm Password'
-							className='w-full input input-bordered h-10 text-sm md:text-base'
-							value={inputs.confirmPassword}
-							onChange={(e) => setInputs({ ...inputs, confirmPassword: e.target.value })}
-						/>
-					</div>
-
-					<GenderCheckbox onCheckboxChange={handleCheckboxChange} selectedGender={inputs.gender} />
-
-					<Link
-						to={"/login"}
-						className='text-xs md:text-sm hover:underline hover:text-blue-400 mt-2 inline-block text-gray-200'
-						href='#'
-					>
-						Already have an account?
-					</Link>
-
-					<div>
-						<button className='btn btn-block btn-sm md:btn-md mt-2 border border-slate-700' disabled={loading}>
-							{loading ? <span className='loading loading-spinner'></span> : "Sign Up"}
-						</button>
-					</div>
+					<button className='auth-button' disabled={loading}>
+						{loading ? (
+							<span className='loading loading-spinner'></span>
+						) : (
+							<>
+								<span>Create account</span>
+								<FiArrowRight size={18} />
+							</>
+						)}
+					</button>
+					{errors.form ? <p className='auth-error-text'>{errors.form}</p> : null}
 				</form>
-			</div>
+			</AuthShell>
 		</div>
 	);
 };

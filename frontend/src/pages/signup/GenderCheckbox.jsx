@@ -1,28 +1,26 @@
-const GenderCheckbox = ({ onCheckboxChange, selectedGender }) => {
+const GenderCheckbox = ({ onCheckboxChange, selectedGender, error }) => {
 	return (
-		<div className='flex'>
-			<div className='form-control'>
-				<label className={`label gap-2 cursor-pointer ${selectedGender === "male" ? "selected" : ""} `}>
-					<span className='label-text text-white font-semibold'>Male</span>
-					<input
-						type='checkbox'
-						className='checkbox border-slate-900'
-						checked={selectedGender === "male"}
-						onChange={() => onCheckboxChange("male")}
-					/>
-				</label>
+		<div className='space-y-3'>
+			<p className='auth-label'>Gender</p>
+			<div className={`grid grid-cols-2 gap-3 ${error ? "auth-gender-error" : ""}`}>
+				<button
+					type='button'
+					className={`auth-gender-pill ${selectedGender === "male" ? "auth-gender-pill--active" : ""}`}
+					onClick={() => onCheckboxChange("male")}
+				>
+					<span className='text-base'>Male</span>
+					<span className='text-xs text-slate-400'>Default avatar: blue</span>
+				</button>
+				<button
+					type='button'
+					className={`auth-gender-pill ${selectedGender === "female" ? "auth-gender-pill--active" : ""}`}
+					onClick={() => onCheckboxChange("female")}
+				>
+					<span className='text-base'>Female</span>
+					<span className='text-xs text-slate-400'>Default avatar: pink</span>
+				</button>
 			</div>
-			<div className='form-control'>
-				<label className={`label gap-2 cursor-pointer  ${selectedGender === "female" ? "selected" : ""}`}>
-					<span className='label-text text-white font-semibold'>Female</span>
-					<input
-						type='checkbox'
-						className='checkbox border-slate-900'
-						checked={selectedGender === "female"}
-						onChange={() => onCheckboxChange("female")}
-					/>
-				</label>
-			</div>
+			{error ? <p className='auth-error-text'>{error}</p> : null}
 		</div>
 	);
 };

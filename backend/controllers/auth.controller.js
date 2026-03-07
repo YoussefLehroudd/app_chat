@@ -1,6 +1,49 @@
 import bcrypt from "bcryptjs";
-import User from "../models/user.model.js";
+import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import generateTokenAndSetCookie from "../utils/generateToken.js";
+import { toUserDto } from "../utils/formatters.js";
+import {
+	DEVELOPER_ROLE,
+	getRoleForNewAccount,
+	isPrimaryDeveloperUsername,
+	shouldBootstrapDeveloper,
+} from "../utils/roles.js";
+
+const buildUsernameBase = (username) => {
+	return (
+		username
+			?.trim()
+			.replace(/\s+/g, "")
+			.replace(/[^a-zA-Z0-9_]/g, "")
+			.slice(0, 20) || "user"
+	);
+};
+
+const generateUsernameSuggestion = async (username) => {
+	const baseUsername = buildUsernameBase(username);
+	const relatedUsers = await prisma.user.findMany({
+		where: {
+			username: {
+				startsWith: baseUsername,
+			},
+		},
+		select: {
+			username: true,
+		},
+	});
+
+	const takenUsernames = new Set(relatedUsers.map((user) => user.username));
+	if (!takenUsernames.has(baseUsername)) {
+		return baseUsername;
+	}
+
+	let suffix = 1;
+	while (takenUsernames.has(`${baseUsername}${suffix}`)) {
+		suffix += 1;
+	}
+
+	return `${baseUsername}${suffix}`;
+};
 
 export const signup = async (req, res) => {
 	try {
@@ -10,10 +53,14 @@ export const signup = async (req, res) => {
 			return res.status(400).json({ error: "Passwords don't match" });
 		}
 
-		const user = await User.findOne({ username });
+		const user = await prisma.user.findUnique({ where: { username } });
 
 		if (user) {
-			return res.status(400).json({ error: "Username already exists" });
+			const suggestion = await generateUsernameSuggestion(username);
+			return res.status(400).json({
+				error: "Username already exists",
+				suggestion,
+			});
 		}
 
 		// HASH PASSWORD HERE
@@ -22,33 +69,39 @@ export const signup = async (req, res) => {
 
 		// https://avatar-placeholder.iran.liara.run/
 
-		const boyProfilePic = `https://avatar.iran.liara.run/public/boy?username=${username}`;
-		const girlProfilePic = `https://avatar.iran.liara.run/public/girl?username=${username}`;
+		const boyProfilePic = `/avatars/male.svg`;
+		const girlProfilePic = `/avatars/female.svg`;
+		const usernameMatchesPrimary = isPrimaryDeveloperUsername(username);
+		const existingPrimaryDeveloper = usernameMatchesPrimary
+			? await prisma.user.findFirst({
+					where: { isPrimaryDeveloper: true },
+					select: { id: true },
+			  })
+			: null;
+		const isPrimaryDeveloper = usernameMatchesPrimary && !existingPrimaryDeveloper;
+		const role = isPrimaryDeveloper ? DEVELOPER_ROLE : getRoleForNewAccount(username);
 
-		const newUser = new User({
-			fullName,
-			username,
-			password: hashedPassword,
-			gender,
-			profilePic: gender === "male" ? boyProfilePic : girlProfilePic,
+		const newUser = await prisma.user.create({
+			data: {
+				fullName,
+				username,
+				password: hashedPassword,
+				gender,
+				role,
+				isPrimaryDeveloper,
+				profilePic: gender === "male" ? boyProfilePic : girlProfilePic,
+			},
 		});
 
-		if (newUser) {
-			// Generate JWT token here
-			generateTokenAndSetCookie(newUser._id, res);
-			await newUser.save();
+		// Generate JWT token here
+		generateTokenAndSetCookie(newUser.id, res);
 
-			res.status(201).json({
-				_id: newUser._id,
-				fullName: newUser.fullName,
-				username: newUser.username,
-				profilePic: newUser.profilePic,
-			});
-		} else {
-			res.status(400).json({ error: "Invalid user data" });
-		}
+		res.status(201).json(toUserDto(newUser));
 	} catch (error) {
 		console.log("Error in signup controller", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
 		res.status(500).json({ error: "Internal Server Error" });
 	}
 };
@@ -56,7 +109,7 @@ export const signup = async (req, res) => {
 export const login = async (req, res) => {
 	try {
 		const { username, password } = req.body;
-		const user = await User.findOne({ username });
+		let user = await prisma.user.findUnique({ where: { username } });
 
 		if (!user) {
 			return res.status(400).json({ error: "Invalid username or password" });
@@ -68,16 +121,61 @@ export const login = async (req, res) => {
 			return res.status(400).json({ error: "Invalid username or password" });
 		}
 
-		generateTokenAndSetCookie(user._id, res);
+		if (user.isArchived) {
+			return res.status(403).json({
+				error: "Your account has been banned",
+			});
+		}
 
-		res.status(200).json({
-			_id: user._id,
-			fullName: user.fullName,
-			username: user.username,
-			profilePic: user.profilePic,
-		});
+		if (user.isBanned) {
+			return res.status(403).json({
+				error: "Your account has been banned",
+			});
+		}
+
+		const existingPrimaryDeveloper = user.isPrimaryDeveloper
+			? null
+			: await prisma.user.findFirst({
+					where: {
+						isPrimaryDeveloper: true,
+						id: { not: user.id },
+					},
+					select: { id: true },
+			  });
+		const shouldBePrimaryDeveloper =
+			user.isPrimaryDeveloper || (isPrimaryDeveloperUsername(user.username) && !existingPrimaryDeveloper);
+		const shouldBeDeveloper = user.role === DEVELOPER_ROLE || shouldBootstrapDeveloper(user.username) || shouldBePrimaryDeveloper;
+
+		if (
+			shouldBeDeveloper &&
+			(user.role !== DEVELOPER_ROLE || user.isPrimaryDeveloper !== shouldBePrimaryDeveloper)
+		) {
+			user = await prisma.user.update({
+				where: { id: user.id },
+				data: {
+					role: DEVELOPER_ROLE,
+					isPrimaryDeveloper: shouldBePrimaryDeveloper,
+				},
+			});
+		}
+
+		generateTokenAndSetCookie(user.id, res);
+
+		res.status(200).json(toUserDto(user));
 	} catch (error) {
 		console.log("Error in login controller", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		res.status(500).json({ error: "Internal Server Error" });
+	}
+};
+
+export const getCurrentUser = (req, res) => {
+	try {
+		res.status(200).json(req.user);
+	} catch (error) {
+		console.log("Error in getCurrentUser controller", error.message);
 		res.status(500).json({ error: "Internal Server Error" });
 	}
 };

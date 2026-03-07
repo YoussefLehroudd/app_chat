@@ -1,6 +1,17 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
+import { preloadAvatar } from "../utils/avatar";
 
 export const AuthContext = createContext();
+
+const normalizeAuthUser = (user) => {
+	if (!user) return null;
+	return {
+		...user,
+		role: user.role || "USER",
+		isPrimaryDeveloper: user.isPrimaryDeveloper || false,
+		isVerified: user.isVerified || false,
+	};
+};
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const useAuthContext = () => {
@@ -8,7 +19,49 @@ export const useAuthContext = () => {
 };
 
 export const AuthContextProvider = ({ children }) => {
-	const [authUser, setAuthUser] = useState(JSON.parse(localStorage.getItem("chat-user")) || null);
+	const [authUser, setAuthUser] = useState(normalizeAuthUser(JSON.parse(localStorage.getItem("chat-user")) || null));
+
+	useEffect(() => {
+		let isCancelled = false;
+
+		const syncSessionUser = async () => {
+			try {
+				const res = await fetch("/api/auth/me");
+
+				if (res.status === 401 || res.status === 403 || res.status === 404) {
+					if (isCancelled) return;
+					localStorage.removeItem("chat-user");
+					localStorage.removeItem("chat-conversations");
+					setAuthUser(null);
+					return;
+				}
+
+				if (!res.ok) {
+					return;
+				}
+
+				const data = normalizeAuthUser(await res.json());
+				if (isCancelled) return;
+
+				localStorage.setItem("chat-user", JSON.stringify(data));
+				setAuthUser(data);
+			} catch {
+				// Keep the locally restored session if the network request fails.
+			}
+		};
+
+		syncSessionUser();
+
+		return () => {
+			isCancelled = true;
+		};
+	}, []);
+
+	useEffect(() => {
+		if (authUser?.profilePic) {
+			preloadAvatar(authUser.profilePic, 96);
+		}
+	}, [authUser?.profilePic]);
 
 	return <AuthContext.Provider value={{ authUser, setAuthUser }}>{children}</AuthContext.Provider>;
 };

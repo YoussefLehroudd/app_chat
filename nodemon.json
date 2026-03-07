@@ -1,0 +1,5 @@
+{
+  "watch": ["backend", "prisma", ".env"],
+  "ext": "js,mjs,cjs,json,prisma,env",
+  "ignore": ["frontend/**", "node_modules/**", ".git/**"]
+}

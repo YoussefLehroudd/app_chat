@@ -1,21 +1,97 @@
- import { useState, useEffect, useRef } from "react";
-import { BsSend, BsMic, BsPauseFill, BsTrash } from "react-icons/bs";
+import { useEffect, useRef, useState } from "react";
+import data from "@emoji-mart/data";
+import { BsMic, BsPauseFill, BsSend, BsTrash } from "react-icons/bs";
+import { HiMagnifyingGlass, HiOutlineFaceSmile, HiOutlinePaperAirplane, HiOutlineXMark } from "react-icons/hi2";
+import { IoPulseOutline, IoRadioOutline } from "react-icons/io5";
 import useSendMessage from "../../hooks/useSendMessage";
+import { stopAllChatAudio } from "../../utils/audioPlayback";
 import useConversation from "../../zustand/useConversation";
 import { useSocketContext } from "../../context/SocketContext";
-import { funEmojis } from "../../utils/emojis";
+
+const EMOJI_CATEGORY_META = [
+	{ id: "people", label: "Smileys & People", icon: "😀" },
+	{ id: "nature", label: "Animals & Nature", icon: "🌿" },
+	{ id: "foods", label: "Food & Drink", icon: "🍔" },
+	{ id: "activity", label: "Activity", icon: "⚽" },
+	{ id: "places", label: "Travel & Places", icon: "🚗" },
+	{ id: "objects", label: "Objects", icon: "💡" },
+	{ id: "symbols", label: "Symbols", icon: "💯" },
+	{ id: "flags", label: "Flags", icon: "🚩" },
+];
+
+const EMOJI_CATEGORIES = EMOJI_CATEGORY_META.map((categoryMeta) => {
+	const sourceCategory = data.categories.find((category) => category.id === categoryMeta.id);
+	const emojis = (sourceCategory?.emojis || [])
+		.map((emojiId) => {
+			const emoji = data.emojis[emojiId];
+			const primarySkin = emoji?.skins?.[0];
+			if (!emoji || !primarySkin?.native) return null;
+
+			return {
+				id: emoji.id,
+				name: emoji.name || emojiId,
+				keywords: emoji.keywords || [],
+				native: primarySkin.native,
+			};
+		})
+		.filter(Boolean);
+
+	return {
+		...categoryMeta,
+		emojis,
+	};
+});
+
+const ALL_EMOJIS = EMOJI_CATEGORIES.flatMap((category) =>
+	category.emojis.map((emoji) => ({
+		...emoji,
+		categoryId: category.id,
+		categoryLabel: category.label,
+	}))
+);
+
+const findEmojiCategory = (categoryId) =>
+	EMOJI_CATEGORIES.find((category) => category.id === categoryId) || EMOJI_CATEGORIES[0];
+
+const emojiMatchesSearch = (emoji, query) => {
+	if (!query) return true;
+
+	const searchableText = [emoji.id, emoji.name, ...(emoji.keywords || [])].join(" ").toLowerCase();
+	return searchableText.includes(query);
+};
+
+const getSupportedAudioMimeType = () => {
+	if (typeof window === "undefined" || typeof MediaRecorder === "undefined") {
+		return "";
+	}
+
+	const preferredMimeTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+	return preferredMimeTypes.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
+};
 
 const MessageInput = () => {
+	const MOBILE_TEXTAREA_HEIGHT = 44;
+	const DESKTOP_TEXTAREA_HEIGHT = 52;
 	const [message, setMessage] = useState("");
 	const [isRecording, setIsRecording] = useState(false);
 	const [isPaused, setIsPaused] = useState(false);
 	const [recordingTime, setRecordingTime] = useState(0);
-	const [audioLevels, setAudioLevels] = useState(new Array(20).fill(0)); // Array for multiple bars
+	const [audioLevels, setAudioLevels] = useState(new Array(20).fill(0));
 	const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+	const [emojiSearch, setEmojiSearch] = useState("");
+	const [activeEmojiCategory, setActiveEmojiCategory] = useState(EMOJI_CATEGORIES[0].id);
+	const [isCompactViewport, setIsCompactViewport] = useState(
+		typeof window !== "undefined" ? window.innerWidth < 640 : false
+	);
+
 	const { loading, sendMessage } = useSendMessage();
 	const { selectedConversation, repliedMessage, setRepliedMessage } = useConversation();
 	const { socket } = useSocketContext();
+
 	const typingTimeoutRef = useRef(null);
+	const emojiButtonRef = useRef(null);
+	const emojiPanelRef = useRef(null);
+	const emojiScrollRef = useRef(null);
 	const textareaRef = useRef(null);
 	const mediaRecorderRef = useRef(null);
 	const audioChunksRef = useRef([]);
@@ -24,12 +100,125 @@ const MessageInput = () => {
 	const analyserRef = useRef(null);
 	const dataArrayRef = useRef(null);
 	const animationFrameIdRef = useRef(null);
+	const audioMimeTypeRef = useRef(getSupportedAudioMimeType());
+	const recordingTimeRef = useRef(0);
+	const recordingStartedAtRef = useRef(null);
+	const accumulatedRecordingMsRef = useRef(0);
+	const finalRecordingDurationSecondsRef = useRef(0);
+
+	useEffect(() => {
+		if (typeof window === "undefined") {
+			return undefined;
+		}
+
+		const updateViewportState = () => {
+			setIsCompactViewport(window.innerWidth < 640);
+		};
+
+		updateViewportState();
+		window.addEventListener("resize", updateViewportState);
+		window.addEventListener("orientationchange", updateViewportState);
+
+		return () => {
+			window.removeEventListener("resize", updateViewportState);
+			window.removeEventListener("orientationchange", updateViewportState);
+		};
+	}, []);
 
 	useEffect(() => {
 		if (repliedMessage && textareaRef.current) {
 			textareaRef.current.focus();
 		}
 	}, [repliedMessage]);
+
+	useEffect(() => {
+		if (!showEmojiPicker) {
+			setEmojiSearch("");
+		}
+	}, [showEmojiPicker]);
+
+	useEffect(() => {
+		if (!showEmojiPicker) {
+			return undefined;
+		}
+
+		const handleOutsideEmojiPickerClick = (event) => {
+			const eventTarget = event.target;
+			if (
+				emojiPanelRef.current?.contains(eventTarget) ||
+				emojiButtonRef.current?.contains(eventTarget)
+			) {
+				return;
+			}
+
+			setShowEmojiPicker(false);
+		};
+
+		document.addEventListener("mousedown", handleOutsideEmojiPickerClick);
+		document.addEventListener("touchstart", handleOutsideEmojiPickerClick);
+
+		return () => {
+			document.removeEventListener("mousedown", handleOutsideEmojiPickerClick);
+			document.removeEventListener("touchstart", handleOutsideEmojiPickerClick);
+		};
+	}, [showEmojiPicker]);
+
+	useEffect(() => {
+		if (!showEmojiPicker) {
+			return undefined;
+		}
+
+		const handleEmojiEscape = (event) => {
+			if (event.key === "Escape") {
+				setShowEmojiPicker(false);
+			}
+		};
+
+		window.addEventListener("keydown", handleEmojiEscape);
+
+		return () => {
+			window.removeEventListener("keydown", handleEmojiEscape);
+		};
+	}, [showEmojiPicker]);
+
+	useEffect(() => {
+		if (emojiScrollRef.current) {
+			emojiScrollRef.current.scrollTop = 0;
+		}
+	}, [showEmojiPicker, emojiSearch, activeEmojiCategory]);
+
+	const adjustTextareaHeight = () => {
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+
+		const height = isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT;
+		textarea.style.height = `${height}px`;
+	};
+
+	const getElapsedRecordingMs = () => {
+		const activeSegmentMs = recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0;
+		return accumulatedRecordingMsRef.current + activeSegmentMs;
+	};
+
+	const syncRecordingTime = () => {
+		const nextRecordingTime = Math.max(0, Math.floor(getElapsedRecordingMs() / 1000));
+		recordingTimeRef.current = nextRecordingTime;
+		setRecordingTime(nextRecordingTime);
+	};
+
+	const getFinalRecordingDurationSeconds = () => {
+		const elapsedMs = getElapsedRecordingMs();
+		if (elapsedMs <= 0) return 0;
+		return Math.floor(elapsedMs / 1000);
+	};
+
+	const resetRecordingTracking = () => {
+		recordingStartedAtRef.current = null;
+		accumulatedRecordingMsRef.current = 0;
+		recordingTimeRef.current = 0;
+		finalRecordingDurationSecondsRef.current = 0;
+		setRecordingTime(0);
+	};
 
 	const handleTyping = () => {
 		if (!selectedConversation) return;
@@ -45,17 +234,29 @@ const MessageInput = () => {
 		}, 2000);
 	};
 
-	const adjustTextareaHeight = () => {
+	const insertEmojiAtCursor = (emoji) => {
 		const textarea = textareaRef.current;
-		if (textarea) {
-			textarea.style.height = 'auto';
-			const newHeight = Math.min(textarea.scrollHeight, 120);
-			textarea.style.height = `${newHeight}px`;
+		if (!textarea) {
+			setMessage((currentMessage) => `${currentMessage}${emoji}`);
+			setShowEmojiPicker(false);
+			return;
 		}
+
+		const start = textarea.selectionStart;
+		const end = textarea.selectionEnd;
+		const newMessage = message.slice(0, start) + emoji + message.slice(end);
+		setMessage(newMessage);
+		setShowEmojiPicker(false);
+
+		setTimeout(() => {
+			textarea.focus();
+			textarea.selectionStart = textarea.selectionEnd = start + emoji.length;
+			adjustTextareaHeight();
+		}, 0);
 	};
 
-	const handleSubmit = async (e) => {
-		e.preventDefault();
+	const handleSubmit = async (event) => {
+		event.preventDefault();
 		if (!message.trim()) return;
 
 		socket?.emit("stopTyping", selectedConversation._id);
@@ -66,48 +267,51 @@ const MessageInput = () => {
 
 		await sendMessage(message, null, repliedMessage ? repliedMessage._id : null);
 		setMessage("");
-		if (repliedMessage) {
-			setRepliedMessage(null);
-		}
+		setRepliedMessage(null);
 
 		if (textareaRef.current) {
-			textareaRef.current.style.height = 'auto';
+			const height = isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT;
+			textareaRef.current.style.height = `${height}px`;
 		}
 	};
 
 	const updateAudioLevels = () => {
 		if (!analyserRef.current) return;
+
 		analyserRef.current.getByteFrequencyData(dataArrayRef.current);
 		const levels = [];
 		const step = Math.floor(dataArrayRef.current.length / 20);
-		for (let i = 0; i < 20; i++) {
+
+		for (let i = 0; i < 20; i += 1) {
 			let sum = 0;
-			for (let j = 0; j < step; j++) {
+			for (let j = 0; j < step; j += 1) {
 				sum += dataArrayRef.current[i * step + j];
 			}
-			const avg = sum / step;
-			levels[i] = avg;
+			levels[i] = sum / step;
 		}
+
 		setAudioLevels(levels);
 		animationFrameIdRef.current = requestAnimationFrame(updateAudioLevels);
 	};
 
 	const startRecording = async () => {
 		try {
+			setShowEmojiPicker(false);
+			stopAllChatAudio({ reset: true });
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-			mediaRecorderRef.current = new MediaRecorder(stream);
+			const recorderOptions = audioMimeTypeRef.current
+				? { mimeType: audioMimeTypeRef.current, audioBitsPerSecond: 24000 }
+				: { audioBitsPerSecond: 24000 };
+			mediaRecorderRef.current = new MediaRecorder(stream, recorderOptions);
 			audioChunksRef.current = [];
 
-			// Setup AudioContext and AnalyserNode for audio level detection
 			audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
 			const source = audioContextRef.current.createMediaStreamSource(stream);
 			analyserRef.current = audioContextRef.current.createAnalyser();
 			analyserRef.current.fftSize = 256;
-			const bufferLength = analyserRef.current.frequencyBinCount;
-			dataArrayRef.current = new Uint8Array(bufferLength);
+			dataArrayRef.current = new Uint8Array(analyserRef.current.frequencyBinCount);
 			source.connect(analyserRef.current);
 
-			// Start animation loop
 			updateAudioLevels();
 
 			mediaRecorderRef.current.shouldSendAudio = true;
@@ -115,97 +319,112 @@ const MessageInput = () => {
 				audioChunksRef.current.push(event.data);
 			};
 
-			mediaRecorderRef.current.onstop = async () => {
-				if (mediaRecorderRef.current.shouldSendAudio && audioChunksRef.current.length > 0) {
-					const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-					await sendMessage("", audioBlob, repliedMessage ? repliedMessage._id : null);
-				}
-				mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-				setRecordingTime(0);
+			mediaRecorderRef.current.onstop = () => {
+				const shouldSendAudio = Boolean(mediaRecorderRef.current?.shouldSendAudio);
+				const nextAudioChunks = [...audioChunksRef.current];
+				const mimeType = mediaRecorderRef.current?.mimeType || audioMimeTypeRef.current || "audio/webm";
+				const recordedDurationSeconds = finalRecordingDurationSecondsRef.current;
+
+				mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
 				setIsPaused(false);
 				setIsRecording(false);
 				setAudioLevels(new Array(20).fill(0));
-				// Cleanup AudioContext and animation
-				if (animationFrameIdRef.current) {
-					cancelAnimationFrame(animationFrameIdRef.current);
-				}
+				audioChunksRef.current = [];
+				resetRecordingTracking();
+
+				if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
 				if (audioContextRef.current) {
 					audioContextRef.current.close();
 					audioContextRef.current = null;
 				}
+
+				if (shouldSendAudio && nextAudioChunks.length > 0) {
+					const audioBlob = new Blob(nextAudioChunks, { type: mimeType });
+					void sendMessage(
+						"",
+						audioBlob,
+						repliedMessage ? repliedMessage._id : null,
+						recordedDurationSeconds
+					);
+					if (repliedMessage) {
+						setRepliedMessage(null);
+					}
+				}
 			};
 
-			mediaRecorderRef.current.start();
+			resetRecordingTracking();
+			recordingStartedAtRef.current = Date.now();
+			mediaRecorderRef.current.start(250);
 			setIsRecording(true);
 			setIsPaused(false);
-			recordingIntervalRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
+			recordingIntervalRef.current = setInterval(syncRecordingTime, 250);
 		} catch (error) {
 			console.error("Error starting recording:", error);
 		}
 	};
 
 	const pauseRecording = () => {
-		if (mediaRecorderRef.current && isRecording && !isPaused) {
-			mediaRecorderRef.current.pause();
-			setIsPaused(true);
-			clearInterval(recordingIntervalRef.current);
-			if (animationFrameIdRef.current) {
-				cancelAnimationFrame(animationFrameIdRef.current);
-			}
-		}
+		if (!mediaRecorderRef.current || !isRecording || isPaused) return;
+
+		mediaRecorderRef.current.pause();
+		accumulatedRecordingMsRef.current = getElapsedRecordingMs();
+		recordingStartedAtRef.current = null;
+		syncRecordingTime();
+		setIsPaused(true);
+		clearInterval(recordingIntervalRef.current);
+		if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
 	};
 
 	const resumeRecording = () => {
-		if (mediaRecorderRef.current && isRecording && isPaused) {
-			mediaRecorderRef.current.resume();
-			setIsPaused(false);
-			recordingIntervalRef.current = setInterval(() => {
-				setRecordingTime(prev => prev + 1);
-			}, 1000);
-			updateAudioLevels();
-		}
+		if (!mediaRecorderRef.current || !isRecording || !isPaused) return;
+
+		mediaRecorderRef.current.resume();
+		recordingStartedAtRef.current = Date.now();
+		setIsPaused(false);
+		recordingIntervalRef.current = setInterval(syncRecordingTime, 250);
+		updateAudioLevels();
 	};
 
 	const stopRecording = () => {
-		if (mediaRecorderRef.current && isRecording) {
-			mediaRecorderRef.current.stop();
-			setIsRecording(false);
-			setIsPaused(false);
-			clearInterval(recordingIntervalRef.current);
-			if (animationFrameIdRef.current) {
-				cancelAnimationFrame(animationFrameIdRef.current);
-			}
-			if (audioContextRef.current) {
-				audioContextRef.current.close();
-				audioContextRef.current = null;
-			}
-			setAudioLevels(new Array(20).fill(0));
+		if (!mediaRecorderRef.current || !isRecording) return;
+
+		finalRecordingDurationSecondsRef.current = getFinalRecordingDurationSeconds();
+		accumulatedRecordingMsRef.current = getElapsedRecordingMs();
+		recordingStartedAtRef.current = null;
+		mediaRecorderRef.current.stop();
+		clearInterval(recordingIntervalRef.current);
+		if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
+
+		if (audioContextRef.current) {
+			audioContextRef.current.close();
+			audioContextRef.current = null;
 		}
 	};
 
 	const deleteRecording = () => {
-		if (mediaRecorderRef.current) {
-			try {
-				mediaRecorderRef.current.shouldSendAudio = false;
-				if (mediaRecorderRef.current.state !== "inactive") {
-					mediaRecorderRef.current.stop();
-				}
-				clearInterval(recordingIntervalRef.current);
-				audioChunksRef.current = [];
-				setRecordingTime(0);
-				setIsRecording(false);
-				setIsPaused(false);
-				if (animationFrameIdRef.current) {
-					cancelAnimationFrame(animationFrameIdRef.current);
-				}
-				if (audioContextRef.current) {
-					audioContextRef.current.close();
-					audioContextRef.current = null;
-				}
-				setAudioLevels(new Array(20).fill(0));
-			} catch (err) {
-				console.error(err);
+		if (!mediaRecorderRef.current) return;
+
+		try {
+			finalRecordingDurationSecondsRef.current = 0;
+			mediaRecorderRef.current.shouldSendAudio = false;
+			if (mediaRecorderRef.current.state !== "inactive") {
+				mediaRecorderRef.current.stop();
 			}
+
+			clearInterval(recordingIntervalRef.current);
+			audioChunksRef.current = [];
+			setIsRecording(false);
+			setIsPaused(false);
+			setAudioLevels(new Array(20).fill(0));
+			resetRecordingTracking();
+
+			if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
+			if (audioContextRef.current) {
+				audioContextRef.current.close();
+				audioContextRef.current = null;
+			}
+		} catch (error) {
+			console.error(error);
 		}
 	};
 
@@ -215,165 +434,321 @@ const MessageInput = () => {
 		return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 	};
 
+	const audioPeak = audioLevels.reduce((maxLevel, currentLevel) => Math.max(maxLevel, currentLevel), 0);
+	const inputStrengthLabel = isPaused
+		? "Monitoring paused"
+		: audioPeak > 120
+			? "High input"
+			: audioPeak > 65
+				? "Clean signal"
+				: audioPeak > 24
+					? "Listening"
+					: "Stand by";
+
+	const actionButtonClassName =
+		"inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60 sm:h-10 sm:w-10";
+	const emojiPanelStyle = {
+		maxHeight: isCompactViewport ? "min(22rem, calc(100dvh - 8rem))" : "min(26rem, calc(100dvh - 10rem))",
+	};
+	const emojiGridStyle = {
+		maxHeight: isCompactViewport ? "min(13rem, calc(100dvh - 13rem))" : "min(17rem, calc(100dvh - 15rem))",
+	};
+	const normalizedEmojiSearch = emojiSearch.trim().toLowerCase();
+	const currentEmojiCategory = findEmojiCategory(activeEmojiCategory);
+	const visibleEmojis = normalizedEmojiSearch
+		? ALL_EMOJIS.filter((emoji) => emojiMatchesSearch(emoji, normalizedEmojiSearch)).slice(0, 360)
+		: currentEmojiCategory.emojis;
+	const emojiSectionTitle = normalizedEmojiSearch ? "Search results" : currentEmojiCategory.label;
+
 	return (
-		<form className='px-3 md:px-4 my-2 md:my-3' onSubmit={handleSubmit}>
-			<div className='w-full relative flex flex-col'>
-				{repliedMessage && (
-					<div className="bg-gray-700 rounded-t-lg p-2 mb-1 relative">
-						<div className="text-xs text-gray-300 mb-1">Replying to</div>
-						<div className="text-sm text-white truncate max-w-full">
-							{repliedMessage.message || (repliedMessage.audio ? "Audio message" : "")}
+		<form className='shrink-0 px-2 pb-2 pt-1.5 sm:px-3 sm:pb-3 sm:pt-2 md:px-5 md:pb-4 lg:px-6' onSubmit={handleSubmit}>
+			<div className='relative rounded-[22px] border border-white/10 bg-[#0b1428]/90 p-2 shadow-[0_22px_52px_rgba(2,6,23,0.24)] backdrop-blur-xl sm:rounded-[26px] sm:p-2.5 md:p-3'>
+				<div>
+					{repliedMessage ? (
+						<div className='mb-2 flex items-start justify-between gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] px-3 py-2 sm:mb-2.5 sm:rounded-[22px] sm:px-3.5 sm:py-2.5'>
+							<div className='min-w-0 flex-1'>
+								<p className='text-[10px] font-semibold uppercase tracking-[0.24em] text-sky-300/75 sm:text-[11px] sm:tracking-[0.28em]'>
+									Replying to message
+								</p>
+								<p className='custom-scrollbar mt-1 max-h-[44px] overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words text-xs text-slate-200 [overflow-wrap:anywhere] sm:mt-1.5 sm:max-h-[52px] sm:text-sm'>
+									{repliedMessage.message || (repliedMessage.audio ? "Audio message" : "")}
+								</p>
+							</div>
+							<button
+								type='button'
+								className='inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-300 transition hover:bg-white/[0.08] hover:text-white sm:h-8 sm:w-8'
+								onClick={() => setRepliedMessage(null)}
+								aria-label='Cancel reply'
+							>
+								<HiOutlineXMark className='h-5 w-5' />
+							</button>
 						</div>
-						<button
-							type="button"
-							className="absolute top-1 right-1 text-gray-400 hover:text-gray-200"
-							onClick={() => setRepliedMessage(null)}
-						>
-							&times;
-						</button>
-					</div>
-				)}
-				<div className='relative flex items-end'>
-					<textarea
-						ref={textareaRef}
-						rows='1'
-						className='border text-sm md:text-base rounded-b-lg block w-full p-2.5 md:p-3 bg-gray-700 border-gray-600 text-white pr-20 resize-none overflow-y-auto'
-						placeholder='Send a message'
-						value={message}
-						onChange={(e) => {
-							setMessage(e.target.value);
-							handleTyping();
-							adjustTextareaHeight();
-						}}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' && !e.shiftKey) {
-								e.preventDefault();
-								handleSubmit(e);
-							}
-						}}
-						style={{ minHeight: '44px', maxHeight: '120px' }}
-						disabled={isRecording}
-					/>
-					<div className='absolute bottom-2 md:bottom-3 end-3 md:end-4 flex items-center space-x-2'>
-						{!isRecording ? (
-							<>
-								<button
-									type='button'
-									className='flex items-center justify-center hover:text-sky-400 transition-colors'
-									onClick={startRecording}
-									disabled={loading || isRecording}
-								>
-									<BsMic className='w-5 h-5 md:w-6 md:h-6' />
-								</button>
+					) : null}
 
-								<button
-									type='button'
-									className='flex items-center justify-center hover:text-sky-400 transition-colors'
-									onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-								>
-									<span className="text-2xl select-none cursor-pointer">😀</span>
-								</button>
+					{!isRecording ? (
+						<>
+							<div className='relative flex items-end gap-2 sm:gap-3'>
+								<div className='flex h-[58px] flex-1 items-center gap-2 rounded-[18px] border border-white/10 bg-slate-950/35 px-2.5 py-2 sm:h-[68px] sm:gap-2.5 sm:rounded-[22px] sm:px-3 sm:py-2.5'>
+									<div className='flex shrink-0 items-center gap-2 self-center'>
+										<button
+											type='button'
+											ref={emojiButtonRef}
+											className={actionButtonClassName}
+											onClick={() => setShowEmojiPicker((currentValue) => !currentValue)}
+											aria-label={showEmojiPicker ? "Close emoji picker" : "Open emoji picker"}
+											aria-expanded={showEmojiPicker}
+										>
+											<HiOutlineFaceSmile className='h-5 w-5' />
+										</button>
 
-								{showEmojiPicker && (
-									<div className="absolute bottom-10 left-0 bg-gray-800 rounded-lg p-2 grid grid-cols-8 gap-2 max-w-xs max-h-40 overflow-auto z-50">
-										{funEmojis.slice(0, 40).map((emoji, idx) => (
-											<button
-												key={idx}
-												type="button"
-												className="text-2xl"
-												onClick={() => {
-													const textarea = textareaRef.current;
-													const start = textarea.selectionStart;
-													const end = textarea.selectionEnd;
-													const newMessage = message.slice(0, start) + emoji + message.slice(end);
-													setMessage(newMessage);
-													setShowEmojiPicker(false);
-													setTimeout(() => {
-														textarea.focus();
-														textarea.selectionStart = textarea.selectionEnd = start + emoji.length;
-													}, 0);
-												}}
-											>
-												{emoji}
-											</button>
-										))}
+										<button
+											type='button'
+											className={actionButtonClassName}
+											onClick={startRecording}
+											disabled={loading || isRecording}
+											aria-label='Record voice note'
+										>
+											<BsMic className='h-4 w-4' />
+										</button>
 									</div>
-								)}
+
+									<textarea
+										ref={textareaRef}
+										rows='1'
+										className='custom-scrollbar h-11 w-full resize-none overflow-y-auto bg-transparent py-2 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500 md:text-[15px] sm:h-[52px] sm:py-3'
+										placeholder={isCompactViewport ? "Message..." : "Write a message..."}
+										value={message}
+										onChange={(event) => {
+											setMessage(event.target.value);
+											handleTyping();
+											adjustTextareaHeight();
+										}}
+										onKeyDown={(event) => {
+											if (event.key === "Enter" && !event.shiftKey) {
+												event.preventDefault();
+												handleSubmit(event);
+											}
+										}}
+										style={{
+											height: `${isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT}px`,
+											maxHeight: `${isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT}px`,
+											overflowWrap: "anywhere",
+										}}
+									/>
+								</div>
+
+								{showEmojiPicker ? (
+									<div
+										ref={emojiPanelRef}
+										className='absolute bottom-full left-0 right-0 z-50 mb-3 overflow-hidden rounded-[22px] border border-white/10 bg-slate-900 shadow-[0_24px_48px_rgba(2,6,23,0.45)] sm:right-auto sm:w-[23rem]'
+										style={emojiPanelStyle}
+									>
+										<div className='border-b border-white/10 p-3'>
+											<div className='relative'>
+												<HiMagnifyingGlass className='pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400' />
+												<input
+													type='text'
+													value={emojiSearch}
+													onChange={(event) => setEmojiSearch(event.target.value)}
+													placeholder='Search emoji'
+													className='w-full rounded-2xl border border-white/10 bg-white/[0.06] py-2.5 pl-10 pr-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-400 focus:border-sky-400/40 focus:bg-white/[0.08]'
+												/>
+											</div>
+										</div>
+
+										<div
+											ref={emojiScrollRef}
+											className='custom-scrollbar overflow-y-auto px-3 pb-3 pt-2'
+											style={emojiGridStyle}
+										>
+											<div className='mb-3 flex items-center justify-between'>
+												<p className='text-sm font-semibold text-slate-100'>{emojiSectionTitle}</p>
+												<p className='text-xs text-slate-400'>{visibleEmojis.length}</p>
+											</div>
+
+											{visibleEmojis.length ? (
+												<div className='grid grid-cols-7 gap-2 sm:grid-cols-8'>
+													{visibleEmojis.map((emoji) => (
+														<button
+															key={`${emoji.categoryId || activeEmojiCategory}-${emoji.id}`}
+															type='button'
+															className='inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/6 bg-white/[0.04] text-[1.35rem] transition hover:border-white/14 hover:bg-white/[0.1] sm:h-11 sm:w-11 sm:text-[1.5rem]'
+															onClick={() => insertEmojiAtCursor(emoji.native)}
+															title={emoji.name}
+														>
+															<span className='leading-none'>{emoji.native}</span>
+														</button>
+													))}
+												</div>
+											) : (
+												<div className='rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-center text-sm text-slate-400'>
+													No emoji found for "{emojiSearch}"
+												</div>
+											)}
+										</div>
+
+										<div className='border-t border-white/10 px-2 py-2'>
+											<div className='custom-scrollbar flex items-center gap-1 overflow-x-auto'>
+												{EMOJI_CATEGORIES.map((category) => {
+													const isActive = !normalizedEmojiSearch && activeEmojiCategory === category.id;
+													return (
+														<button
+															key={category.id}
+															type='button'
+															className={`inline-flex h-10 min-w-10 items-center justify-center rounded-2xl px-2 text-lg transition ${
+																isActive
+																	? "bg-sky-500/18 text-sky-200 shadow-[inset_0_0_0_1px_rgba(56,189,248,0.35)]"
+																	: "text-slate-300 hover:bg-white/[0.06] hover:text-white"
+															}`}
+															onClick={() => {
+																setEmojiSearch("");
+																setActiveEmojiCategory(category.id);
+															}}
+															title={category.label}
+															aria-label={category.label}
+														>
+															{category.icon}
+														</button>
+													);
+												})}
+											</div>
+										</div>
+									</div>
+								) : null}
 
 								<button
 									type='submit'
-									className='flex items-center justify-center hover:text-sky-400 transition-colors'
-									disabled={loading || (!message.trim() && !isRecording)}
+									className='inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-500 text-white shadow-[0_16px_34px_rgba(14,165,233,0.24)] transition hover:translate-y-[-1px] hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70 sm:h-[52px] sm:w-[52px] sm:rounded-[18px]'
+									disabled={loading || !message.trim()}
+									aria-label='Send message'
 								>
-									{loading ? (
-										<div className='loading loading-spinner'></div>
-									) : (
-										<BsSend className='w-5 h-5 md:w-6 md:h-6' />
-									)}
-								</button>
-							</>
-						) : (
-							<div className="flex items-center space-x-3 text-white">
-								{/* Red pulsing recording dot with animation that appears and disappears */}
-								{isRecording && !isPaused && (
-									<span className="w-3 h-3 bg-red-600 rounded-full animate-pulse"></span>
-								)}
-								{/* Recording timer */}
-								<span className="font-mono text-sm select-none">{formatTime(recordingTime)}</span>
-
-								{/* Audio level bars */}
-								<div className="flex space-x-0.5 w-20 h-4 items-end">
-									{audioLevels.map((level, index) => (
-										<div
-											key={index}
-											className="bg-green-400 rounded-sm transition-all duration-100"
-											style={{ height: `${Math.min(level / 2, 20)}px`, width: '3px' }}
-										></div>
-									))}
-								</div>
-
-								{/* Pause/Resume button */}
-								<button
-									type="button"
-									className="focus:outline-none"
-									onClick={() => (isPaused ? resumeRecording() : pauseRecording())}
-								>
-									{isPaused ? (
-										<BsMic className="w-5 h-5 md:w-6 md:h-6" />
-									) : (
-										<BsPauseFill className="w-5 h-5 md:w-6 md:h-6" />
-									)}
-								</button>
-
-								{/* Delete button */}
-								<button
-									type="button"
-									className="focus:outline-none"
-									onClick={(e) => {
-										e.preventDefault();
-										e.stopPropagation();
-										deleteRecording();
-									}}
-								>
-									<BsTrash className="w-5 h-5 md:w-6 md:h-6" />
-								</button>
-
-								{/* Send button */}
-								<button
-									type="button"
-									className="focus:outline-none"
-									onClick={() => {
-										stopRecording();
-									}}
-								>
-									<svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 md:w-6 md:h-6" fill="currentColor" viewBox="0 0 16 16">
-										<path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576 6.636 10.07Zm6.787-8.201L1.591 6.602l4.339 2.76 7.494-7.493Z" />
-									</svg>
+									{loading ? <span className='loading loading-spinner loading-sm'></span> : <HiOutlinePaperAirplane className='h-5 w-5 sm:h-6 sm:w-6' />}
 								</button>
 							</div>
-						)}
-					</div>
+
+						</>
+					) : (
+						<div className='overflow-hidden rounded-[22px] border border-white/10 bg-[linear-gradient(135deg,rgba(8,16,33,0.98),rgba(4,11,25,0.94))] px-3 py-3 shadow-[0_22px_48px_rgba(2,6,23,0.28)] sm:px-4 sm:py-4'>
+						<div className='flex justify-end'>
+							<div className='inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 font-mono text-xs text-slate-100 sm:text-sm'>
+								<IoRadioOutline className={`h-4 w-4 ${isPaused ? "text-amber-300" : "text-emerald-300"}`} />
+								{formatTime(recordingTime)}
+							</div>
+						</div>
+
+						<div className='mt-3 space-y-3'>
+							<div className='relative overflow-hidden rounded-[20px] border border-white/10 bg-slate-950/38 px-3 py-3'>
+								<div className='pointer-events-none absolute inset-x-3 top-1/2 h-px -translate-y-1/2 bg-white/6'></div>
+
+								<div className='relative flex h-[44px] items-center justify-between gap-[3px] sm:h-[48px]'>
+									{audioLevels.map((level, index) => {
+										const normalizedLevel = Math.max(0.16, Math.min(level / 120, 1));
+										const barHeight = Math.round((isCompactViewport ? 8 : 10) + normalizedLevel * (isCompactViewport ? 18 : 22));
+										const barOpacity = isPaused ? 0.4 : 0.42 + normalizedLevel * 0.52;
+										const isStrongPeak = normalizedLevel > 0.72;
+
+										return (
+											<span
+												key={index}
+												className={`rounded-full transition-all duration-150 ${
+													isPaused
+														? "bg-amber-200/70"
+														: isStrongPeak
+															? "bg-cyan-200 shadow-[0_0_12px_rgba(103,232,249,0.22)]"
+															: "bg-sky-100/90"
+												}`}
+												style={{
+													height: `${barHeight}px`,
+													width: isCompactViewport ? "4px" : "5px",
+													opacity: barOpacity,
+												}}
+											></span>
+										);
+									})}
+								</div>
+
+								<div className='mt-2 flex items-center justify-between text-[10px] text-slate-400 sm:text-[11px]'>
+									<span className='inline-flex items-center gap-1.5 text-slate-300'>
+										<IoPulseOutline className='h-3.5 w-3.5 text-cyan-200' />
+										Waveform
+									</span>
+									<span>{isPaused ? "Paused" : "Live"}</span>
+								</div>
+							</div>
+
+							<div className='flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'>
+								<div className='flex flex-wrap items-center gap-2'>
+									<div
+										className={`relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[18px] border border-white/10 ${
+											isPaused ? "bg-amber-400/10" : "bg-rose-500/10"
+										}`}
+									>
+										<div
+											className={`absolute inset-2 rounded-full blur-xl ${
+												isPaused ? "bg-amber-300/18" : "bg-rose-400/22"
+											}`}
+										></div>
+										<BsMic className={`relative h-3.5 w-3.5 ${isPaused ? "text-amber-100" : "text-rose-100"}`} />
+									</div>
+
+									<span
+										className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+											isPaused
+												? "border-amber-300/20 bg-amber-400/10 text-amber-50"
+												: "border-rose-400/20 bg-rose-500/10 text-rose-50"
+										}`}
+									>
+										<span
+											className={`h-2 w-2 rounded-full ${
+												isPaused ? "bg-amber-300" : "bg-rose-400 animate-pulse"
+											}`}
+										></span>
+										{isPaused ? "Paused" : "Live capture"}
+									</span>
+
+									<span className='inline-flex items-center gap-1.5 rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2.5 py-1 text-[10px] font-medium text-cyan-100 sm:text-[11px]'>
+										<IoPulseOutline className='h-3.5 w-3.5' />
+										{inputStrengthLabel}
+									</span>
+								</div>
+
+								<div className='flex flex-col gap-2 sm:flex-row'>
+									<button
+										type='button'
+										className='inline-flex items-center justify-center gap-2 rounded-full border border-rose-400/18 bg-rose-500/10 px-4 py-2.5 text-sm font-semibold text-rose-50 transition hover:bg-rose-500/16'
+										onClick={(event) => {
+											event.preventDefault();
+											deleteRecording();
+										}}
+									>
+										<BsTrash className='h-4 w-4' />
+										Delete
+									</button>
+
+									<button
+										type='button'
+										className='inline-flex items-center justify-center gap-2 rounded-full border border-amber-300/18 bg-amber-400/10 px-4 py-2.5 text-sm font-semibold text-amber-50 transition hover:bg-amber-400/16'
+										onClick={() => (isPaused ? resumeRecording() : pauseRecording())}
+									>
+										{isPaused ? <BsMic className='h-4 w-4' /> : <BsPauseFill className='h-4 w-4' />}
+										{isPaused ? "Resume" : "Pause"}
+									</button>
+
+									<button
+										type='button'
+										className='inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_18px_38px_rgba(14,165,233,0.28)] transition hover:from-sky-400 hover:to-cyan-400'
+										onClick={stopRecording}
+									>
+										<BsSend className='h-4 w-4' />
+										Send voice note
+									</button>
+								</div>
+							</div>
+						</div>
+						</div>
+					)}
 				</div>
+
 			</div>
 		</form>
 	);

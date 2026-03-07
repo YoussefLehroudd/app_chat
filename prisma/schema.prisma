@@ -1,0 +1,86 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Gender {
+  male
+  female
+}
+
+enum Role {
+  USER
+  DEVELOPER
+}
+
+model User {
+  id          String   @id @default(uuid())
+  fullName    String
+  username    String   @unique
+  password    String
+  gender      Gender
+  role        Role     @default(USER)
+  isPrimaryDeveloper Boolean @default(false)
+  isArchived  Boolean  @default(false)
+  archivedAt  DateTime?
+  isBanned    Boolean  @default(false)
+  bannedAt    DateTime?
+  bannedReason String?
+  isVerified  Boolean  @default(false)
+  verifiedAt  DateTime?
+  profilePic  String   @default("")
+  bio         String?  @default("")
+  lastSeen    DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  conversationsAsUserOne Conversation[] @relation("UserOne")
+  conversationsAsUserTwo Conversation[] @relation("UserTwo")
+  sentMessages     Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
+}
+
+model Conversation {
+  id        String   @id @default(uuid())
+  userOneId String
+  userTwoId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userOne  User     @relation("UserOne", fields: [userOneId], references: [id])
+  userTwo  User     @relation("UserTwo", fields: [userTwoId], references: [id])
+  messages Message[]
+
+  @@unique([userOneId, userTwoId])
+  @@index([userOneId])
+  @@index([userTwoId])
+}
+
+model Message {
+  id               String   @id @default(uuid())
+  conversationId   String
+  senderId         String
+  receiverId       String
+  message          String?
+  audio            String?
+  audioDurationSeconds Int?
+  repliedMessageId String?
+  isSeen           Boolean  @default(false)
+  deletedFor       String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User         @relation("SentMessages", fields: [senderId], references: [id])
+  receiver        User         @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  repliedMessage  Message?     @relation("MessageReplies", fields: [repliedMessageId], references: [id], onDelete: SetNull)
+  replies         Message[]    @relation("MessageReplies")
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([receiverId])
+}

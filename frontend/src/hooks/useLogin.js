@@ -1,14 +1,19 @@
 import { useState } from "react";
-import toast from "react-hot-toast";
 import { useAuthContext } from "../context/AuthContext";
 
 const useLogin = () => {
 	const [loading, setLoading] = useState(false);
+	const [errors, setErrors] = useState({});
 	const { setAuthUser } = useAuthContext();
 
 	const login = async (username, password) => {
-		const success = handleInputErrors(username, password);
-		if (!success) return;
+		const validationErrors = validateLoginInputs(username, password);
+		if (Object.keys(validationErrors).length > 0) {
+			setErrors(validationErrors);
+			return false;
+		}
+
+		setErrors({});
 		setLoading(true);
 		try {
 			const res = await fetch("/api/auth/login", {
@@ -19,27 +24,53 @@ const useLogin = () => {
 
 			const data = await res.json();
 			if (data.error) {
-				throw new Error(data.error);
+				setErrors(mapLoginErrorToFields(data.error));
+				return false;
 			}
 
 			localStorage.setItem("chat-user", JSON.stringify(data));
 			setAuthUser(data);
+			setErrors({});
+			return true;
 		} catch (error) {
-			toast.error(error.message);
+			setErrors({ form: "Something went wrong. Please try again." });
+			return false;
 		} finally {
 			setLoading(false);
 		}
 	};
 
-	return { loading, login };
+	const clearError = (field) => {
+		setErrors((currentErrors) => {
+			if (!currentErrors[field] && !currentErrors.form) return currentErrors;
+			const nextErrors = { ...currentErrors };
+			delete nextErrors[field];
+			delete nextErrors.form;
+			return nextErrors;
+		});
+	};
+
+	return { loading, login, errors, clearError };
 };
 export default useLogin;
 
-function handleInputErrors(username, password) {
+function validateLoginInputs(username, password) {
+	const errors = {};
+
 	if (!username || !password) {
-		toast.error("Please fill in all fields");
-		return false;
+		if (!username) errors.username = "Username is required";
+		if (!password) errors.password = "Password is required";
 	}
 
-	return true;
+	return errors;
+}
+
+function mapLoginErrorToFields(message) {
+	const normalizedMessage = message?.toLowerCase() || "";
+
+	if (normalizedMessage.includes("invalid username or password")) {
+		return { password: "Invalid username or password" };
+	}
+
+	return { form: message || "Unable to login" };
 }

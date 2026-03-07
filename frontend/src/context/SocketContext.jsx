@@ -1,6 +1,8 @@
 import { createContext, useState, useEffect, useContext } from "react";
 import { useAuthContext } from "./AuthContext";
 import io from "socket.io-client";
+import toast from "react-hot-toast";
+import useConversation from "../zustand/useConversation";
 
 const SocketContext = createContext();
 
@@ -11,7 +13,8 @@ export const useSocketContext = () => {
 export const SocketContextProvider = ({ children }) => {
 	const [socket, setSocket] = useState(null);
 	const [onlineUsers, setOnlineUsers] = useState([]);
-	const { authUser } = useAuthContext();
+	const [lastSeenByUser, setLastSeenByUser] = useState({});
+	const { authUser, setAuthUser } = useAuthContext();
 
 	useEffect(() => {
 		if (authUser) {
@@ -28,35 +31,47 @@ export const SocketContextProvider = ({ children }) => {
 				setOnlineUsers(users);
 			});
 
+			socket.on("userLastSeen", ({ userId, lastSeen }) => {
+				setLastSeenByUser((currentState) => ({
+					...currentState,
+					[userId]: lastSeen,
+				}));
+			});
+
 			// Add listener for deleteMessage event to update UI live
 			socket.on("deleteMessage", ({ messageId }) => {
-				// Remove message from zustand store
-				import("../zustand/useConversation").then(({ default: useConversation }) => {
-					useConversation.getState().removeMessage(messageId);
-				});
+				useConversation.getState().removeMessage(messageId);
 			});
 
-			// Add listener for newMessage event to update messages live with repliedMessage data
-			socket.on("newMessage", (newMessage) => {
-				import("../zustand/useConversation").then(({ default: useConversation }) => {
-					const currentMessages = useConversation.getState().messages;
-					// Add new message to messages array only if not already present
-					if (!currentMessages.find((msg) => msg._id === newMessage._id)) {
-						useConversation.setState({
-							messages: [...currentMessages, newMessage],
-						});
-					}
-				});
+			socket.on("accountRemoved", ({ reason } = {}) => {
+				if (reason === "archived") {
+					toast.error("Your account has been banned.");
+				} else if (reason === "banned") {
+					toast.error("Your account has been banned.");
+				} else {
+					toast.error("Your account is no longer available.");
+				}
+				localStorage.removeItem("chat-user");
+				localStorage.removeItem("chat-conversations");
+				setAuthUser(null);
 			});
 
-			return () => socket.close();
+			return () => {
+				socket.off("getOnlineUsers");
+				socket.off("userLastSeen");
+				socket.off("deleteMessage");
+				socket.off("accountRemoved");
+				socket.close();
+			};
 		} else {
 			if (socket) {
 				socket.close();
 				setSocket(null);
 			}
+			setOnlineUsers([]);
+			setLastSeenByUser({});
 		}
-	}, [authUser]);
+	}, [authUser, setAuthUser]);
 
-	return <SocketContext.Provider value={{ socket, onlineUsers }}>{children}</SocketContext.Provider>;
+	return <SocketContext.Provider value={{ socket, onlineUsers, lastSeenByUser }}>{children}</SocketContext.Provider>;
 };

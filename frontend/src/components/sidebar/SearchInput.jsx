@@ -1,56 +1,40 @@
-import { useState } from "react";
-import { IoSearchSharp } from "react-icons/io5";
-import useConversation from "../../zustand/useConversation";
-import useGetConversations from "../../hooks/useGetConversations";
-import toast from "react-hot-toast";
+import { IoClose, IoSearchSharp } from "react-icons/io5";
 
-const SearchInput = () => {
-	const [search, setSearch] = useState("");
-	const { setSelectedConversation } = useConversation();
-	const { conversations } = useGetConversations();
+const SearchInput = ({ value, onChange, onClear, totalCount, visibleCount, activeFilter }) => {
+	const summaryLabel =
+		activeFilter === "online"
+			? `${visibleCount} online contact${visibleCount === 1 ? "" : "s"}`
+			: `${visibleCount} of ${totalCount} contact${totalCount === 1 ? "" : "s"}`;
 
-	const handleSubmit = (e) => {
-		e.preventDefault();
-		if (!search) return;
-		if (search.length < 3) {
-			return toast.error("Search term must be at least 3 characters long");
-		}
-
-		const conversation = conversations.find((c) => c.fullName.toLowerCase().includes(search.toLowerCase()));
-
-		if (conversation) {
-			setSelectedConversation(conversation);
-			setSearch("");
-		} else toast.error("No such user found!");
-	};
 	return (
-		<form onSubmit={handleSubmit} className='flex items-center gap-2'>
-			<input
-				type='text'
-				placeholder='Search…'
-				className='input input-bordered rounded-full'
-				value={search}
-				onChange={(e) => setSearch(e.target.value)}
-			/>
-			<button type='submit' className='btn btn-circle bg-sky-500 text-white'>
-				<IoSearchSharp className='w-6 h-6 outline-none' />
-			</button>
-		</form>
+		<div className='space-y-3'>
+			<div className='flex items-center gap-3 rounded-[24px] border border-white/10 bg-slate-950/45 px-4 py-3 shadow-[0_18px_32px_rgba(2,6,23,0.22)] backdrop-blur-xl transition focus-within:border-sky-400/45 focus-within:bg-slate-950/65'>
+				<IoSearchSharp className='h-5 w-5 shrink-0 text-slate-400' />
+				<input
+					type='text'
+					placeholder='Search people, usernames or bios'
+					className='w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500'
+					value={value}
+					onChange={(event) => onChange(event.target.value)}
+				/>
+				{value ? (
+					<button
+						type='button'
+						onClick={onClear}
+						className='inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white'
+						aria-label='Clear search'
+					>
+						<IoClose className='h-4 w-4' />
+					</button>
+				) : null}
+			</div>
+
+			<div className='flex items-center justify-between gap-3 text-xs text-slate-400'>
+				<p>{summaryLabel}</p>
+				{value ? <p className='truncate text-slate-500'>Filtering for "{value}"</p> : null}
+			</div>
+		</div>
 	);
 };
+
 export default SearchInput;
-
-// STARTER CODE SNIPPET
-// import { IoSearchSharp } from "react-icons/io5";
-
-// const SearchInput = () => {
-// 	return (
-// 		<form className='flex items-center gap-2'>
-// 			<input type='text' placeholder='Search…' className='input input-bordered rounded-full' />
-// 			<button type='submit' className='btn btn-circle bg-sky-500 text-white'>
-// 				<IoSearchSharp className='w-6 h-6 outline-none' />
-// 			</button>
-// 		</form>
-// 	);
-// };
-// export default SearchInput;

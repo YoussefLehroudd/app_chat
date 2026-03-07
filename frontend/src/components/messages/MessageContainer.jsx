@@ -1,83 +1,332 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
+import { BsReply } from "react-icons/bs";
+import { HiOutlineFaceSmile, HiOutlineMicrophone, HiOutlineTrash } from "react-icons/hi2";
+import { IoArrowBack, IoInformationCircleOutline } from "react-icons/io5";
+import { TiMessages } from "react-icons/ti";
+import toast from "react-hot-toast";
 import useConversation from "../../zustand/useConversation";
 import MessageInput from "./MessageInput";
 import Messages from "./Messages";
-import { TiMessages } from "react-icons/ti";
-import { IoArrowBack } from "react-icons/io5";
 import { useAuthContext } from "../../context/AuthContext";
+import { useSocketContext } from "../../context/SocketContext";
+import formatLastSeen from "../../utils/lastSeen";
+import getDefaultAvatar from "../../utils/defaultAvatar";
+import { getAvatarUrl } from "../../utils/avatar";
+import UserInfoModal from "../UserInfoModal";
+import DeveloperBadge from "../common/DeveloperBadge";
+import VerifiedBadge from "../common/VerifiedBadge";
+
+const capabilityCards = [
+	{
+		icon: HiOutlineMicrophone,
+		title: "Voice notes",
+		description: "Record and send audio quickly from the composer.",
+	},
+	{
+		icon: HiOutlineFaceSmile,
+		title: "Emoji ready",
+		description: "Open the picker without leaving the conversation flow.",
+	},
+	{
+		icon: BsReply,
+		title: "Reply focus",
+		description: "Right-click a message to reply, copy or delete it.",
+	},
+];
 
 const MessageContainer = () => {
-	const { selectedConversation, setSelectedConversation, setShowSidebar } = useConversation();
+	const { selectedConversation, setMessages, setSelectedConversation, setShowSidebar } = useConversation();
+	const { onlineUsers, lastSeenByUser } = useSocketContext();
+	const [showUserInfo, setShowUserInfo] = useState(false);
+	const [showDeleteConversationModal, setShowDeleteConversationModal] = useState(false);
+	const [isDeletingConversation, setIsDeletingConversation] = useState(false);
+	const imgRef = useRef(null);
+
+	const fallbackAvatar = getDefaultAvatar(selectedConversation?.gender);
+	const resolvedProfilePic = getAvatarUrl(selectedConversation?.profilePic, 96);
+	const [avatarSrc, setAvatarSrc] = useState(resolvedProfilePic || fallbackAvatar);
+	const [avatarLoaded, setAvatarLoaded] = useState(!resolvedProfilePic);
 
 	useEffect(() => {
-		// cleanup function (unmounts)
 		return () => setSelectedConversation(null);
 	}, [setSelectedConversation]);
+
+	useEffect(() => {
+		setAvatarSrc(resolvedProfilePic || fallbackAvatar);
+		setAvatarLoaded(!resolvedProfilePic);
+	}, [resolvedProfilePic, fallbackAvatar]);
+
+	useEffect(() => {
+		const img = imgRef.current;
+		if (img?.complete && img.naturalWidth > 0) {
+			setAvatarLoaded(true);
+		}
+	}, [avatarSrc]);
 
 	const handleBackClick = () => {
 		setShowSidebar(true);
 		setSelectedConversation(null);
 	};
 
+	const handleDeleteConversation = async () => {
+		if (!selectedConversation?._id || isDeletingConversation) return;
+
+		const { messages } = useConversation.getState();
+		setIsDeletingConversation(true);
+		setShowDeleteConversationModal(false);
+		setMessages([]);
+
+		try {
+			const response = await fetch(`/api/messages/conversation/${selectedConversation._id}`, {
+				method: "DELETE",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${localStorage.getItem("token")}`,
+				},
+			});
+
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to delete conversation");
+			}
+
+			window.dispatchEvent(new Event("chat:conversations-refresh"));
+			toast.success("Conversation deleted");
+		} catch (error) {
+			setMessages(messages);
+			toast.error(error.message);
+		} finally {
+			setIsDeletingConversation(false);
+		}
+	};
+
+	const isSelectedUserOnline = selectedConversation ? onlineUsers.includes(selectedConversation._id) : false;
+	const selectedUserLastSeen = selectedConversation
+		? lastSeenByUser[selectedConversation._id] || selectedConversation.lastSeen
+		: null;
+	const selectedUserStatus = isSelectedUserOnline ? "En ligne maintenant" : formatLastSeen(selectedUserLastSeen);
+	const mobileSelectedUserStatus = [
+		isSelectedUserOnline ? "En ligne" : selectedUserStatus,
+		selectedConversation?.isVerified ? "Verified" : null,
+		selectedConversation?.role === "DEVELOPER" ? "Dev" : null,
+	]
+		.filter(Boolean)
+		.join(" · ");
+	const desktopSelectedUserStatus = [
+		selectedUserStatus,
+		selectedConversation?.isVerified ? "Verified account" : null,
+		selectedConversation?.role === "DEVELOPER" ? "Official developer account" : null,
+	]
+		.filter(Boolean)
+		.join(" · ");
+
 	return (
-		<div className='w-full flex flex-col'>
+		<section className='flex h-full min-h-0 w-full flex-col bg-[linear-gradient(180deg,rgba(7,12,24,0.52),rgba(3,7,18,0.4))]'>
 			{!selectedConversation ? (
 				<NoChatSelected />
 			) : (
 				<>
-					{/* Header */}
-					<div className='bg-slate-500 px-3 md:px-4 py-2 md:py-3 mb-2 flex items-center gap-2'>
-						{/* Back button for mobile */}
-						<button
-							onClick={handleBackClick}
-							className='md:hidden text-gray-900 hover:text-gray-700 transition-colors'
-						>
-							<IoArrowBack size={24} />
-						</button>
-						<div className='flex-1'>
-							<span className='label-text text-sm md:text-base'>To:</span>{" "}
-							<span className='text-gray-900 font-bold text-sm md:text-base'>{selectedConversation.fullName}</span>
+					<div className='shrink-0 px-2 pb-2 pt-2 sm:px-3 sm:pb-3 sm:pt-3 md:px-5 md:pb-4 md:pt-4 lg:px-6'>
+						<div className='flex items-center gap-2.5 rounded-[22px] border border-white/10 bg-[linear-gradient(135deg,rgba(15,23,42,0.72),rgba(30,41,59,0.5))] px-2.5 py-2.5 shadow-[0_20px_42px_rgba(2,6,23,0.22)] backdrop-blur-xl sm:gap-3 sm:rounded-[28px] sm:px-3 sm:py-3 md:px-4'>
+							<button
+								type='button'
+								onClick={handleBackClick}
+								className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-white/20 hover:bg-white/[0.08] sm:h-11 sm:w-11'
+								aria-label='Exit conversation'
+								title='Exit conversation'
+							>
+								<IoArrowBack className='h-5 w-5' />
+							</button>
+
+							<button
+								type='button'
+								onClick={() => setShowUserInfo(true)}
+								className='relative inline-flex shrink-0 rounded-full ring-1 ring-white/10'
+								title='Open user info'
+							>
+								<div className='relative h-11 w-11 overflow-hidden rounded-full md:h-14 md:w-14'>
+									<div
+										className={`absolute inset-0 bg-slate-700/60 transition-opacity duration-200 ${
+											avatarLoaded ? "opacity-0" : "opacity-100"
+										}`}
+									></div>
+									<img
+										ref={imgRef}
+										src={avatarSrc}
+										alt={`${selectedConversation.fullName} avatar`}
+										className={`h-full w-full object-cover transition-opacity duration-200 ${
+											avatarLoaded ? "opacity-100" : "opacity-0"
+										}`}
+										loading='eager'
+										decoding='async'
+										fetchPriority='high'
+										onLoad={() => setAvatarLoaded(true)}
+										onError={() => {
+											setAvatarSrc(fallbackAvatar);
+											setAvatarLoaded(true);
+										}}
+									/>
+								</div>
+								<span
+									className={`absolute bottom-0 right-0 h-3.5 w-3.5 translate-x-[14%] translate-y-[14%] rounded-full border-2 border-slate-950 shadow-[0_0_0_1px_rgba(15,23,42,0.45)] ${
+										isSelectedUserOnline ? "bg-emerald-400" : "bg-slate-500"
+									}`}
+								></span>
+							</button>
+
+							<div className='min-w-0 flex-1'>
+								<div className='flex flex-wrap items-center gap-2'>
+									<p className='truncate text-[15px] font-semibold text-slate-50 md:text-lg'>
+										{selectedConversation.fullName}
+									</p>
+									<VerifiedBadge user={selectedConversation} compact />
+									<DeveloperBadge user={selectedConversation} compact />
+									<span className='hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-300 sm:inline-flex'>
+										@{selectedConversation.username}
+									</span>
+								</div>
+								<p className='mt-0.5 truncate pr-1 text-[11px] leading-4 text-slate-400 sm:hidden'>
+									{mobileSelectedUserStatus}
+								</p>
+								<p className='mt-0.5 hidden truncate pr-0 text-sm leading-5 text-slate-400 sm:block'>
+									{desktopSelectedUserStatus}
+								</p>
+							</div>
+
+							<div className='hidden items-center gap-2 xl:flex'>
+								{capabilityCards.map(({ title }) => (
+									<span
+										key={title}
+										className='rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-slate-300'
+									>
+										{title}
+									</span>
+								))}
+							</div>
+
+							<button
+								type='button'
+								onClick={() => setShowDeleteConversationModal(true)}
+								className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-rose-400/25 hover:bg-rose-500/10 hover:text-rose-100 sm:h-11 sm:w-11'
+								aria-label='Delete conversation'
+								title='Delete conversation'
+							>
+								<HiOutlineTrash className='h-5 w-5' />
+							</button>
+
+							<button
+								type='button'
+								onClick={() => setShowUserInfo(true)}
+								className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-sky-400/25 hover:bg-white/[0.08] sm:h-11 sm:w-11'
+								aria-label='Conversation info'
+								title='Conversation info'
+							>
+								<IoInformationCircleOutline className='h-5 w-5' />
+							</button>
 						</div>
 					</div>
+
 					<Messages />
 					<MessageInput />
+					<UserInfoModal user={selectedConversation} open={showUserInfo} onClose={() => setShowUserInfo(false)} />
+					{showDeleteConversationModal
+						? createPortal(
+								<div className='fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/72 px-4 backdrop-blur-sm'>
+									<div className='w-full max-w-md rounded-[28px] border border-white/10 bg-slate-950/95 p-6 shadow-[0_32px_80px_rgba(2,6,23,0.55)]'>
+										<h2 className='text-xl font-semibold text-white'>Delete conversation?</h2>
+										<p className='mt-3 text-sm leading-7 text-slate-400'>
+											This will remove every message in this chat from your side. The other user keeps their copy.
+										</p>
+
+										<div className='mt-6 rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300'>
+											<span className='font-medium text-white'>{selectedConversation.fullName}</span>
+											<span className='text-slate-500'> · </span>
+											<span>@{selectedConversation.username}</span>
+										</div>
+
+										<div className='mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end'>
+											<button
+												type='button'
+												className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-white/[0.08]'
+												onClick={() => setShowDeleteConversationModal(false)}
+											>
+												Cancel
+											</button>
+											<button
+												type='button'
+												className='rounded-full bg-rose-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-400'
+												onClick={handleDeleteConversation}
+												disabled={isDeletingConversation}
+											>
+												{isDeletingConversation ? "Deleting..." : "Delete chat"}
+											</button>
+										</div>
+									</div>
+								</div>,
+								document.body
+						  )
+						: null}
 				</>
 			)}
-		</div>
+		</section>
 	);
 };
+
 export default MessageContainer;
 
 const NoChatSelected = () => {
 	const { authUser } = useAuthContext();
+	const { setShowSidebar } = useConversation();
+
 	return (
-		<div className='flex items-center justify-center w-full h-full'>
-			<div className='px-4 text-center sm:text-lg md:text-xl text-gray-200 font-semibold flex flex-col items-center gap-2'>
-				<p>Welcome 👋 {authUser.fullName} ❄</p>
-				<p>Select a chat to start messaging</p>
-				<TiMessages className='text-3xl md:text-6xl text-center' />
+		<div className='flex h-full items-center justify-center px-4 py-6 md:px-6 lg:px-8'>
+			<div className='w-full max-w-3xl rounded-[34px] border border-white/10 bg-[linear-gradient(135deg,rgba(9,14,28,0.78),rgba(17,24,39,0.56))] p-6 text-center shadow-[0_26px_70px_rgba(2,6,23,0.34)] backdrop-blur-xl md:p-8'>
+				<div className='mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-sky-500/15 text-sky-300'>
+					<TiMessages className='h-8 w-8' />
+				</div>
+
+				<p className='mt-6 text-[11px] font-semibold uppercase tracking-[0.34em] text-sky-300/70'>Ready to chat</p>
+				<h2 className='mt-3 text-3xl font-semibold tracking-tight text-white md:text-4xl'>
+					Welcome back, {authUser.fullName}
+				</h2>
+				<p className='mx-auto mt-4 max-w-xl text-sm leading-7 text-slate-400 md:text-base'>
+					Choose a conversation to start messaging. Voice notes, emoji, quick replies, user info, and seen
+					status are all already built into the chat flow.
+				</p>
+
+				<div className='mt-8 grid gap-3 md:grid-cols-3'>
+					{capabilityCards.map(({ icon: Icon, title, description }) => (
+						<div
+							key={title}
+							className='rounded-[24px] border border-white/10 bg-white/[0.035] px-4 py-4 text-left'
+						>
+							<div className='inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white/[0.05] text-sky-300'>
+								<Icon className='h-5 w-5' />
+							</div>
+							<h3 className='mt-4 text-lg font-semibold text-slate-100'>{title}</h3>
+							<p className='mt-2 text-sm leading-6 text-slate-400'>{description}</p>
+						</div>
+					))}
+				</div>
+
+				<div className='mt-8 flex flex-wrap items-center justify-center gap-3'>
+					<button
+						type='button'
+						onClick={() => setShowSidebar(true)}
+						className='inline-flex items-center justify-center rounded-full bg-sky-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(14,165,233,0.25)] transition hover:bg-sky-400'
+					>
+						Open conversations
+					</button>
+					<Link
+						to='/profile'
+						className='inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:border-white/20 hover:bg-white/[0.08]'
+					>
+						Open profile
+					</Link>
+				</div>
 			</div>
 		</div>
 	);
 };
-
-// STARTER CODE SNIPPET
-// import MessageInput from "./MessageInput";
-// import Messages from "./Messages";
-
-// const MessageContainer = () => {
-// 	return (
-// 		<div className='md:min-w-[450px] flex flex-col'>
-// 			<>
-// 				{/* Header */}
-// 				<div className='bg-slate-500 px-4 py-2 mb-2'>
-// 					<span className='label-text'>To:</span> <span className='text-gray-900 font-bold'>John doe</span>
-// 				</div>
-
-// 				<Messages />
-// 				<MessageInput />
-// 			</>
-// 		</div>
-// 	);
-// };
-// export default MessageContainer;
