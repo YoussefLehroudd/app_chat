@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { useSocketContext } from "../../context/SocketContext";
 import useConversation from "../../zustand/useConversation";
-import getDefaultAvatar from "../../utils/defaultAvatar";
+import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
 import UserInfoModal from "../UserInfoModal";
 import { extractTime } from "../../utils/extractTime";
 import DeveloperBadge from "../common/DeveloperBadge";
 import VerifiedBadge from "../common/VerifiedBadge";
+import FlagText from "../common/FlagText";
 
 const Conversation = ({ conversation }) => {
 	const { selectedConversation, setSelectedConversation, setShowSidebar } = useConversation();
 	const { onlineUsers } = useSocketContext();
 	const isSelected = selectedConversation?._id === conversation._id;
-	const isOnline = onlineUsers.includes(conversation._id);
+	const isGroupConversation = conversation?.type === "GROUP";
+	const isOnline = !isGroupConversation && onlineUsers.includes(conversation._id);
 
-	const fallbackAvatar = getDefaultAvatar(conversation?.gender);
+	const fallbackAvatar = getConversationFallbackAvatar(conversation);
 	const resolvedProfilePic = getAvatarUrl(conversation?.profilePic, 96);
 	const [avatarSrc, setAvatarSrc] = useState(resolvedProfilePic || fallbackAvatar);
 	const [avatarLoaded, setAvatarLoaded] = useState(!resolvedProfilePic);
@@ -25,6 +27,11 @@ const Conversation = ({ conversation }) => {
 	const lastMessageTime = conversation?.lastMessageAt ? extractTime(conversation.lastMessageAt) : "";
 	const unreadCount = Number.isFinite(conversation?.unreadCount) ? conversation.unreadCount : 0;
 	const hasUnread = unreadCount > 0;
+	const secondaryLine = isGroupConversation
+		? `${conversation.isPrivate ? "Private" : "Public"} group · ${conversation.memberCount || 1} members${
+				conversation.isMember === false ? " · Join available" : ""
+		  }`
+		: `@${conversation.username}${isOnline ? " · online" : ""}`;
 	const nameClassName = isSelected ? "text-white" : "text-slate-100";
 	const usernameClassName = isSelected ? "text-sky-100/85" : "text-slate-500";
 	const previewClassName = isSelected
@@ -98,7 +105,7 @@ const Conversation = ({ conversation }) => {
 					<span
 						className={`absolute right-0 top-0 h-3.5 w-3.5 -translate-y-[6%] translate-x-[6%] rounded-full border-2 ${
 							isSelected ? "border-cyan-400 bg-emerald-300" : "border-slate-950 bg-emerald-400"
-						} ${isOnline ? "opacity-100" : "opacity-35"}`}
+						} ${isOnline ? "opacity-100" : "opacity-0"}`}
 					></span>
 				</div>
 
@@ -108,18 +115,26 @@ const Conversation = ({ conversation }) => {
 							<p className={`min-w-0 truncate text-sm font-semibold md:text-[15px] ${nameClassName}`}>
 								{conversation.fullName}
 							</p>
-							<DeveloperBadge
-								user={conversation}
-								compact
-								className='shrink-0 gap-0.5 px-1.5 py-0.5 text-[8px] tracking-[0.1em]'
-							/>
-							<VerifiedBadge user={conversation} compact className='shrink-0' />
+							{isGroupConversation ? (
+								<span className='shrink-0 rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.12em] text-cyan-100'>
+									{conversation.isPrivate ? "Private" : "Group"}
+								</span>
+							) : (
+								<>
+									<DeveloperBadge
+										user={conversation}
+										compact
+										className='shrink-0 gap-0.5 px-1.5 py-0.5 text-[8px] tracking-[0.1em]'
+									/>
+									<VerifiedBadge user={conversation} compact className='shrink-0' />
+								</>
+							)}
 						</div>
 						<p className={`mt-0.5 truncate text-[11px] ${usernameClassName}`}>
-							@{conversation.username} {isOnline ? "· online" : ""}
+							{secondaryLine}
 						</p>
 						<p className={`mt-2 truncate pr-2 text-xs leading-5 md:text-sm ${previewClassName}`}>
-							{lastMessagePreview}
+							<FlagText text={lastMessagePreview} />
 						</p>
 					</div>
 

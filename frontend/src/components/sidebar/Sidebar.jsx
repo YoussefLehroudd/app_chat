@@ -1,26 +1,36 @@
 import { Link } from "react-router-dom";
 import { IoChevronDownOutline, IoChevronUpOutline, IoCodeSlashOutline } from "react-icons/io5";
+import { HiOutlineUserGroup } from "react-icons/hi2";
 import { useMemo, useState } from "react";
+import toast from "react-hot-toast";
+import CallDirectory from "./CallDirectory";
 import Conversations from "./Conversations";
+import CreateGroupModal from "./CreateGroupModal";
 import LogoutButton from "./LogoutButton";
 import SearchInput from "./SearchInput";
 import ProfileButton from "./ProfileButton";
+import useCallDirectory from "../../hooks/useCallDirectory";
 import useGetConversations from "../../hooks/useGetConversations";
 import { useSocketContext } from "../../context/SocketContext";
 import { useAuthContext } from "../../context/AuthContext";
+import useConversation from "../../zustand/useConversation";
 
 const FILTERS = [
 	{ id: "all", label: "All" },
 	{ id: "online", label: "Online" },
+	{ id: "calls", label: "Calls" },
 ];
 
 const Sidebar = () => {
 	const [searchValue, setSearchValue] = useState("");
 	const [activeFilter, setActiveFilter] = useState("all");
 	const [showQuickActions, setShowQuickActions] = useState(false);
+	const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
 	const { loading, conversations } = useGetConversations();
+	const { loading: loadingCalls, calls } = useCallDirectory();
 	const { onlineUsers } = useSocketContext();
 	const { authUser } = useAuthContext();
+	const { setSelectedConversation, setShowSidebar } = useConversation();
 	const isDeveloper = authUser?.role === "DEVELOPER";
 
 	const onlineCount = useMemo(
@@ -32,7 +42,7 @@ const Sidebar = () => {
 		const normalizedSearch = searchValue.trim().toLowerCase();
 
 		return conversations.filter((conversation) => {
-			const matchesFilter = activeFilter === "all" || onlineUsers.includes(conversation._id);
+			const matchesFilter = activeFilter === "all" || (activeFilter === "online" && onlineUsers.includes(conversation._id));
 			if (!matchesFilter) return false;
 			if (!normalizedSearch) return true;
 
@@ -42,17 +52,53 @@ const Sidebar = () => {
 		});
 	}, [activeFilter, conversations, onlineUsers, searchValue]);
 
+	const filteredCalls = useMemo(() => {
+		const normalizedSearch = searchValue.trim().toLowerCase();
+		if (!normalizedSearch) return calls;
+
+		return calls.filter((call) =>
+			[
+				call.title,
+				call.previewText,
+				call.initiator?.fullName,
+				...(Array.isArray(call.participants) ? call.participants.map((participant) => participant.user?.fullName) : []),
+			]
+				.filter(Boolean)
+				.some((value) => value.toLowerCase().includes(normalizedSearch))
+		);
+	}, [calls, searchValue]);
+
 	const emptyTitle = searchValue
 		? "No match found"
+		: activeFilter === "calls"
+			? "No calls yet"
 		: activeFilter === "online"
 			? "Nobody is online right now"
 			: "No conversations yet";
 
 	const emptyDescription = searchValue
 		? "Try another name, username or keyword from the last message preview."
+		: activeFilter === "calls"
+			? "Every live and recent call will appear here, with quick join access while a call is active."
 		: activeFilter === "online"
 			? "Switch back to all conversations or wait for someone to come online."
 			: "Your contacts will appear here as soon as the sidebar data loads.";
+
+	const handleOpenCallConversation = (call) => {
+		const relatedConversation = conversations.find((conversation) =>
+			conversation.type === "GROUP"
+				? conversation._id === call.conversationId
+				: conversation.conversationId === call.conversationId
+		);
+
+		if (!relatedConversation) {
+			toast.error("Conversation not available");
+			return;
+		}
+
+		setSelectedConversation(relatedConversation);
+		setShowSidebar(false);
+	};
 
 	return (
 		<aside className='flex h-full min-h-0 w-full flex-col border-r border-white/10 bg-[linear-gradient(180deg,rgba(7,12,25,0.92),rgba(3,8,20,0.84))] p-4 md:w-[360px] lg:w-[390px] lg:p-5'>
@@ -77,8 +123,8 @@ const Sidebar = () => {
 				value={searchValue}
 				onChange={setSearchValue}
 				onClear={() => setSearchValue("")}
-				totalCount={conversations.length}
-				visibleCount={filteredConversations.length}
+				totalCount={activeFilter === "calls" ? calls.length : conversations.length}
+				visibleCount={activeFilter === "calls" ? filteredCalls.length : filteredConversations.length}
 				activeFilter={activeFilter}
 			/>
 
@@ -101,19 +147,41 @@ const Sidebar = () => {
 						</button>
 					);
 				})}
+				<button
+					type='button'
+					onClick={() => setShowCreateGroupModal(true)}
+					className='inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16'
+				>
+					<HiOutlineUserGroup className='h-4 w-4' />
+					<span>New group</span>
+				</button>
 			</div>
 
 			<div className='mb-3 mt-5 flex items-center justify-between gap-3'>
-				<p className='text-xs font-semibold uppercase tracking-[0.28em] text-slate-500'>Recent chats</p>
-				<p className='text-xs text-slate-500'>{filteredConversations.length} visible</p>
+				<p className='text-xs font-semibold uppercase tracking-[0.28em] text-slate-500'>
+					{activeFilter === "calls" ? "Calls" : "Recent chats"}
+				</p>
+				<p className='text-xs text-slate-500'>
+					{activeFilter === "calls" ? filteredCalls.length : filteredConversations.length} visible
+				</p>
 			</div>
 
-			<Conversations
-				loading={loading}
-				conversations={filteredConversations}
-				emptyTitle={emptyTitle}
-				emptyDescription={emptyDescription}
-			/>
+			{activeFilter === "calls" ? (
+				<CallDirectory
+					loading={loadingCalls}
+					calls={filteredCalls}
+					emptyTitle={emptyTitle}
+					emptyDescription={emptyDescription}
+					onOpenConversation={handleOpenCallConversation}
+				/>
+			) : (
+				<Conversations
+					loading={loading}
+					conversations={filteredConversations}
+					emptyTitle={emptyTitle}
+					emptyDescription={emptyDescription}
+				/>
+			)}
 
 			<div className='mt-4'>
 				<div className='flex justify-end'>
@@ -169,6 +237,20 @@ const Sidebar = () => {
 					</div>
 				</div>
 			</div>
+
+			<CreateGroupModal
+				open={showCreateGroupModal}
+				onClose={() => setShowCreateGroupModal(false)}
+				onCreated={(conversation) => {
+					window.dispatchEvent(
+						new CustomEvent("chat:conversation-restored", {
+							detail: { conversation },
+						})
+					);
+					setSelectedConversation(conversation);
+					setShowSidebar(false);
+				}}
+			/>
 		</aside>
 	);
 };

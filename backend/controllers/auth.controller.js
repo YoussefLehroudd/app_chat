@@ -96,7 +96,7 @@ export const signup = async (req, res) => {
 		// Generate JWT token here
 		generateTokenAndSetCookie(newUser.id, res);
 
-		res.status(201).json(toUserDto(newUser));
+		res.status(201).json(toUserDto(newUser, { includeDeveloperPermissions: true }));
 	} catch (error) {
 		console.log("Error in signup controller", error.message);
 		if (isPrismaConnectionError(error)) {
@@ -161,7 +161,7 @@ export const login = async (req, res) => {
 
 		generateTokenAndSetCookie(user.id, res);
 
-		res.status(200).json(toUserDto(user));
+		res.status(200).json(toUserDto(user, { includeDeveloperPermissions: true }));
 	} catch (error) {
 		console.log("Error in login controller", error.message);
 		if (isPrismaConnectionError(error)) {

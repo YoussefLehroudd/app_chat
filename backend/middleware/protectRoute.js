@@ -38,7 +38,7 @@ const protectRoute = async (req, res, next) => {
 			});
 		}
 
-		req.user = toUserDto(user);
+		req.user = toUserDto(user, { includeDeveloperPermissions: true });
 
 		next();
 	} catch (error) {

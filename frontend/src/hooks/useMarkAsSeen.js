@@ -9,18 +9,25 @@ const useMarkAsSeen = () => {
 	useEffect(() => {
 		const markAsSeen = async () => {
 			if (!selectedConversation?._id || !authUser?._id) return;
+			if (selectedConversation.type === "GROUP" && selectedConversation.isMember === false) return;
 
-			// Check if there are any unseen messages from the other user
-			const hasUnseenMessages = messages.some(
-				(msg) =>
-					msg.senderId === selectedConversation._id &&
-					msg.receiverId === authUser._id &&
-					!msg.isSeen
-			);
+			const hasUnseenMessages =
+				selectedConversation.type === "GROUP"
+					? messages.some((message) => message.senderId !== authUser._id)
+					: messages.some(
+							(msg) =>
+								msg.senderId === selectedConversation._id &&
+								msg.receiverId === authUser._id &&
+								!msg.isSeen
+					  );
 
 			if (hasUnseenMessages) {
 				try {
-					await fetch(`/api/messages/seen/${selectedConversation._id}`, {
+					const endpoint =
+						selectedConversation.type === "GROUP"
+							? `/api/messages/seen/group/${selectedConversation._id}`
+							: `/api/messages/seen/${selectedConversation._id}`;
+					await fetch(endpoint, {
 						method: "POST",
 						headers: {
 							"Content-Type": "application/json",
@@ -34,7 +41,7 @@ const useMarkAsSeen = () => {
 
 		// Mark messages as seen when conversation is opened or messages change
 		markAsSeen();
-	}, [selectedConversation, messages]);
+	}, [selectedConversation, messages, authUser?._id]);
 };
 
 export default useMarkAsSeen;

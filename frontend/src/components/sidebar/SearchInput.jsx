@@ -4,7 +4,9 @@ const SearchInput = ({ value, onChange, onClear, totalCount, visibleCount, activ
 	const summaryLabel =
 		activeFilter === "online"
 			? `${visibleCount} online contact${visibleCount === 1 ? "" : "s"}`
-			: `${visibleCount} of ${totalCount} contact${totalCount === 1 ? "" : "s"}`;
+			: activeFilter === "calls"
+				? `${visibleCount} of ${totalCount} call${totalCount === 1 ? "" : "s"}`
+				: `${visibleCount} of ${totalCount} contact${totalCount === 1 ? "" : "s"}`;
 
 	return (
 		<div className='space-y-3'>
@@ -12,7 +14,7 @@ const SearchInput = ({ value, onChange, onClear, totalCount, visibleCount, activ
 				<IoSearchSharp className='h-5 w-5 shrink-0 text-slate-400' />
 				<input
 					type='text'
-					placeholder='Search people, usernames or bios'
+					placeholder={activeFilter === "calls" ? "Search calls, people or live sessions" : "Search people, usernames or bios"}
 					className='w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500'
 					value={value}
 					onChange={(event) => onChange(event.target.value)}

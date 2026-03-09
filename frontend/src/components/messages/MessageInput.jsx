@@ -2,11 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import data from "@emoji-mart/data";
 import { BsMic, BsPauseFill, BsSend, BsTrash } from "react-icons/bs";
 import { HiMagnifyingGlass, HiOutlineFaceSmile, HiOutlinePaperAirplane, HiOutlineXMark } from "react-icons/hi2";
-import { IoPulseOutline, IoRadioOutline } from "react-icons/io5";
+import { IoAttachOutline, IoDocumentOutline, IoImageOutline, IoPulseOutline, IoRadioOutline, IoVideocamOutline } from "react-icons/io5";
 import useSendMessage from "../../hooks/useSendMessage";
 import { stopAllChatAudio } from "../../utils/audioPlayback";
+import { unifiedToNativeEmoji } from "../../utils/flagEmoji";
 import useConversation from "../../zustand/useConversation";
 import { useSocketContext } from "../../context/SocketContext";
+import FlagText, { FlagEmoji } from "../common/FlagText";
+import {
+	formatAttachmentSize,
+	getAttachmentKindLabel,
+	getAttachmentTypeFromMimeType,
+	getMessageSummaryText,
+	isImageAttachment,
+	isVideoAttachment,
+} from "../../utils/messageAttachments";
 
 const EMOJI_CATEGORY_META = [
 	{ id: "people", label: "Smileys & People", icon: "😀" },
@@ -25,13 +35,20 @@ const EMOJI_CATEGORIES = EMOJI_CATEGORY_META.map((categoryMeta) => {
 		.map((emojiId) => {
 			const emoji = data.emojis[emojiId];
 			const primarySkin = emoji?.skins?.[0];
-			if (!emoji || !primarySkin?.native) return null;
+			const normalizedNative =
+				categoryMeta.id === "flags" && primarySkin?.unified
+					? unifiedToNativeEmoji(primarySkin.unified)
+					: primarySkin?.native;
+
+			if (!emoji || !normalizedNative) return null;
 
 			return {
 				id: emoji.id,
+				categoryId: categoryMeta.id,
 				name: emoji.name || emojiId,
 				keywords: emoji.keywords || [],
-				native: primarySkin.native,
+				native: normalizedNative,
+				unified: primarySkin?.unified?.toLowerCase() || "",
 			};
 		})
 		.filter(Boolean);
@@ -77,6 +94,8 @@ const MessageInput = () => {
 	const [isPaused, setIsPaused] = useState(false);
 	const [recordingTime, setRecordingTime] = useState(0);
 	const [audioLevels, setAudioLevels] = useState(new Array(20).fill(0));
+	const [attachmentFile, setAttachmentFile] = useState(null);
+	const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState("");
 	const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 	const [emojiSearch, setEmojiSearch] = useState("");
 	const [activeEmojiCategory, setActiveEmojiCategory] = useState(EMOJI_CATEGORIES[0].id);
@@ -93,6 +112,7 @@ const MessageInput = () => {
 	const emojiPanelRef = useRef(null);
 	const emojiScrollRef = useRef(null);
 	const textareaRef = useRef(null);
+	const attachmentInputRef = useRef(null);
 	const mediaRecorderRef = useRef(null);
 	const audioChunksRef = useRef([]);
 	const recordingIntervalRef = useRef(null);
@@ -105,6 +125,7 @@ const MessageInput = () => {
 	const recordingStartedAtRef = useRef(null);
 	const accumulatedRecordingMsRef = useRef(0);
 	const finalRecordingDurationSecondsRef = useRef(0);
+	const attachmentPreviewUrlRef = useRef(null);
 
 	useEffect(() => {
 		if (typeof window === "undefined") {
@@ -130,6 +151,14 @@ const MessageInput = () => {
 			textareaRef.current.focus();
 		}
 	}, [repliedMessage]);
+
+	useEffect(() => {
+		return () => {
+			if (attachmentPreviewUrlRef.current) {
+				URL.revokeObjectURL(attachmentPreviewUrlRef.current);
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!showEmojiPicker) {
@@ -221,7 +250,7 @@ const MessageInput = () => {
 	};
 
 	const handleTyping = () => {
-		if (!selectedConversation) return;
+		if (!selectedConversation || selectedConversation.type !== "DIRECT") return;
 
 		socket?.emit("typing", selectedConversation._id);
 
@@ -238,7 +267,6 @@ const MessageInput = () => {
 		const textarea = textareaRef.current;
 		if (!textarea) {
 			setMessage((currentMessage) => `${currentMessage}${emoji}`);
-			setShowEmojiPicker(false);
 			return;
 		}
 
@@ -246,7 +274,6 @@ const MessageInput = () => {
 		const end = textarea.selectionEnd;
 		const newMessage = message.slice(0, start) + emoji + message.slice(end);
 		setMessage(newMessage);
-		setShowEmojiPicker(false);
 
 		setTimeout(() => {
 			textarea.focus();
@@ -255,18 +282,60 @@ const MessageInput = () => {
 		}, 0);
 	};
 
+	const clearSelectedAttachment = () => {
+		if (attachmentPreviewUrlRef.current) {
+			URL.revokeObjectURL(attachmentPreviewUrlRef.current);
+			attachmentPreviewUrlRef.current = null;
+		}
+
+		setAttachmentFile(null);
+		setAttachmentPreviewUrl("");
+		if (attachmentInputRef.current) {
+			attachmentInputRef.current.value = "";
+		}
+	};
+
+	const handleAttachmentSelect = (event) => {
+		const nextFile = event.target.files?.[0];
+		if (!nextFile) return;
+
+		if (attachmentPreviewUrlRef.current) {
+			URL.revokeObjectURL(attachmentPreviewUrlRef.current);
+			attachmentPreviewUrlRef.current = null;
+		}
+
+		const nextAttachmentType = getAttachmentTypeFromMimeType(nextFile.type, nextFile.name);
+		const shouldPreview = nextAttachmentType === "IMAGE" || nextAttachmentType === "VIDEO";
+		const nextPreviewUrl = shouldPreview ? URL.createObjectURL(nextFile) : "";
+
+		if (nextPreviewUrl) {
+			attachmentPreviewUrlRef.current = nextPreviewUrl;
+		}
+
+		setAttachmentFile(nextFile);
+		setAttachmentPreviewUrl(nextPreviewUrl);
+		setShowEmojiPicker(false);
+	};
+
 	const handleSubmit = async (event) => {
 		event.preventDefault();
-		if (!message.trim()) return;
+		if (!message.trim() && !attachmentFile) return;
 
-		socket?.emit("stopTyping", selectedConversation._id);
+		if (selectedConversation?.type === "DIRECT") {
+			socket?.emit("stopTyping", selectedConversation._id);
+		}
 
 		if (typingTimeoutRef.current) {
 			clearTimeout(typingTimeoutRef.current);
 		}
 
-		await sendMessage(message, null, repliedMessage ? repliedMessage._id : null);
+		await sendMessage({
+			message,
+			attachmentFile,
+			repliedMessageId: repliedMessage ? repliedMessage._id : null,
+		});
 		setMessage("");
+		clearSelectedAttachment();
 		setRepliedMessage(null);
 
 		if (textareaRef.current) {
@@ -296,6 +365,9 @@ const MessageInput = () => {
 
 	const startRecording = async () => {
 		try {
+			if (attachmentFile) {
+				return;
+			}
 			setShowEmojiPicker(false);
 			stopAllChatAudio({ reset: true });
 			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -340,12 +412,12 @@ const MessageInput = () => {
 
 				if (shouldSendAudio && nextAudioChunks.length > 0) {
 					const audioBlob = new Blob(nextAudioChunks, { type: mimeType });
-					void sendMessage(
-						"",
+					void sendMessage({
+						message: "",
 						audioBlob,
-						repliedMessage ? repliedMessage._id : null,
-						recordedDurationSeconds
-					);
+						repliedMessageId: repliedMessage ? repliedMessage._id : null,
+						audioDurationSeconds: recordedDurationSeconds,
+					});
 					if (repliedMessage) {
 						setRepliedMessage(null);
 					}
@@ -459,6 +531,18 @@ const MessageInput = () => {
 		? ALL_EMOJIS.filter((emoji) => emojiMatchesSearch(emoji, normalizedEmojiSearch)).slice(0, 360)
 		: currentEmojiCategory.emojis;
 	const emojiSectionTitle = normalizedEmojiSearch ? "Search results" : currentEmojiCategory.label;
+	const selectedAttachmentType = attachmentFile
+		? getAttachmentTypeFromMimeType(attachmentFile.type, attachmentFile.name)
+		: null;
+	const selectedAttachmentPreview = attachmentFile
+		? {
+				type: selectedAttachmentType,
+				mimeType: attachmentFile.type,
+				fileName: attachmentFile.name,
+				fileSize: attachmentFile.size,
+		  }
+		: null;
+	const canPreviewSelectedAttachment = isImageAttachment(selectedAttachmentPreview) || isVideoAttachment(selectedAttachmentPreview);
 
 	return (
 		<form className='shrink-0 px-2 pb-2 pt-1.5 sm:px-3 sm:pb-3 sm:pt-2 md:px-5 md:pb-4 lg:px-6' onSubmit={handleSubmit}>
@@ -471,7 +555,7 @@ const MessageInput = () => {
 									Replying to message
 								</p>
 								<p className='custom-scrollbar mt-1 max-h-[44px] overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words text-xs text-slate-200 [overflow-wrap:anywhere] sm:mt-1.5 sm:max-h-[52px] sm:text-sm'>
-									{repliedMessage.message || (repliedMessage.audio ? "Audio message" : "")}
+									<FlagText text={getMessageSummaryText(repliedMessage)} />
 								</p>
 							</div>
 							<button
@@ -479,6 +563,47 @@ const MessageInput = () => {
 								className='inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-300 transition hover:bg-white/[0.08] hover:text-white sm:h-8 sm:w-8'
 								onClick={() => setRepliedMessage(null)}
 								aria-label='Cancel reply'
+							>
+								<HiOutlineXMark className='h-5 w-5' />
+							</button>
+						</div>
+					) : null}
+
+					{attachmentFile ? (
+						<div className='mb-2 flex items-start gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] px-3 py-2.5 sm:mb-2.5 sm:rounded-[22px] sm:px-3.5 sm:py-3'>
+							<div className='flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-[16px] border border-white/10 bg-slate-950/45 text-slate-200'>
+								{canPreviewSelectedAttachment && attachmentPreviewUrl ? (
+									isImageAttachment(selectedAttachmentPreview) ? (
+										<img src={attachmentPreviewUrl} alt={attachmentFile.name} className='h-full w-full object-cover' />
+									) : (
+										<video src={attachmentPreviewUrl} className='h-full w-full object-cover' muted playsInline />
+									)
+								) : isVideoAttachment(selectedAttachmentPreview) ? (
+									<IoVideocamOutline className='h-6 w-6' />
+								) : selectedAttachmentType === "IMAGE" ? (
+									<IoImageOutline className='h-6 w-6' />
+								) : (
+									<IoDocumentOutline className='h-6 w-6' />
+								)}
+							</div>
+
+							<div className='min-w-0 flex-1'>
+								<p className='text-[10px] font-semibold uppercase tracking-[0.24em] text-sky-300/75 sm:text-[11px] sm:tracking-[0.28em]'>
+									{getAttachmentKindLabel(selectedAttachmentPreview)} ready
+								</p>
+								<p className='mt-1 truncate text-sm font-medium text-slate-100'>{attachmentFile.name}</p>
+								<p className='mt-1 text-xs text-slate-400'>
+									{[getAttachmentKindLabel(selectedAttachmentPreview), formatAttachmentSize(attachmentFile.size)]
+										.filter(Boolean)
+										.join(" · ")}
+								</p>
+							</div>
+
+							<button
+								type='button'
+								className='inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-300 transition hover:bg-white/[0.08] hover:text-white sm:h-8 sm:w-8'
+								onClick={clearSelectedAttachment}
+								aria-label='Remove attachment'
 							>
 								<HiOutlineXMark className='h-5 w-5' />
 							</button>
@@ -501,40 +626,75 @@ const MessageInput = () => {
 											<HiOutlineFaceSmile className='h-5 w-5' />
 										</button>
 
+										<input
+											ref={attachmentInputRef}
+											type='file'
+											className='hidden'
+											onChange={handleAttachmentSelect}
+										/>
+
+										<button
+											type='button'
+											className={actionButtonClassName}
+											onClick={() => attachmentInputRef.current?.click()}
+											disabled={loading || isRecording}
+											aria-label='Attach image, video, PDF, or file'
+											title='Attach image, video, PDF, or file'
+										>
+											<IoAttachOutline className='h-5 w-5' />
+										</button>
+
 										<button
 											type='button'
 											className={actionButtonClassName}
 											onClick={startRecording}
-											disabled={loading || isRecording}
+											disabled={loading || isRecording || Boolean(attachmentFile)}
 											aria-label='Record voice note'
 										>
 											<BsMic className='h-4 w-4' />
 										</button>
 									</div>
 
-									<textarea
-										ref={textareaRef}
-										rows='1'
-										className='custom-scrollbar h-11 w-full resize-none overflow-y-auto bg-transparent py-2 text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500 md:text-[15px] sm:h-[52px] sm:py-3'
-										placeholder={isCompactViewport ? "Message..." : "Write a message..."}
-										value={message}
-										onChange={(event) => {
-											setMessage(event.target.value);
-											handleTyping();
-											adjustTextareaHeight();
-										}}
-										onKeyDown={(event) => {
-											if (event.key === "Enter" && !event.shiftKey) {
-												event.preventDefault();
-												handleSubmit(event);
-											}
-										}}
-										style={{
-											height: `${isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT}px`,
-											maxHeight: `${isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT}px`,
-											overflowWrap: "anywhere",
-										}}
-									/>
+									<div className='relative h-11 flex-1 sm:h-[52px]'>
+										<div className='pointer-events-none absolute inset-0 flex items-center overflow-hidden py-2 text-sm leading-6 md:text-[15px] sm:py-3'>
+											{message ? (
+												<div className='w-full overflow-hidden whitespace-pre-wrap break-words text-slate-100 [overflow-wrap:anywhere]'>
+													<FlagText
+														text={message}
+														imgClassName='inline-block h-[1.05em] w-[1.05em] align-[-0.12em] object-contain'
+													/>
+												</div>
+											) : (
+												<span className='text-slate-500'>
+													{isCompactViewport ? "Message..." : "Write a message..."}
+												</span>
+											)}
+										</div>
+
+										<textarea
+											ref={textareaRef}
+											rows='1'
+											className='absolute inset-0 h-11 w-full resize-none overflow-hidden bg-transparent py-2 text-sm leading-6 text-transparent caret-slate-100 outline-none placeholder:text-transparent selection:bg-sky-500/25 md:text-[15px] sm:h-[52px] sm:py-3'
+											placeholder={isCompactViewport ? "Message..." : "Write a message..."}
+											value={message}
+											onChange={(event) => {
+												setMessage(event.target.value);
+												handleTyping();
+												adjustTextareaHeight();
+											}}
+											onKeyDown={(event) => {
+												if (event.key === "Enter" && !event.shiftKey) {
+													event.preventDefault();
+													handleSubmit(event);
+												}
+											}}
+											style={{
+												height: `${isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT}px`,
+												maxHeight: `${isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT}px`,
+												overflowWrap: "anywhere",
+											}}
+										/>
+									</div>
 								</div>
 
 								{showEmojiPicker ? (
@@ -576,7 +736,14 @@ const MessageInput = () => {
 															onClick={() => insertEmojiAtCursor(emoji.native)}
 															title={emoji.name}
 														>
-															<span className='leading-none'>{emoji.native}</span>
+															{emoji.categoryId === "flags" ? (
+																<FlagEmoji
+																	emoji={emoji}
+																	className='h-6 w-6 object-contain sm:h-7 sm:w-7'
+																/>
+															) : (
+																<span className='leading-none'>{emoji.native}</span>
+															)}
 														</button>
 													))}
 												</div>
@@ -619,7 +786,7 @@ const MessageInput = () => {
 								<button
 									type='submit'
 									className='inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-500 text-white shadow-[0_16px_34px_rgba(14,165,233,0.24)] transition hover:translate-y-[-1px] hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70 sm:h-[52px] sm:w-[52px] sm:rounded-[18px]'
-									disabled={loading || !message.trim()}
+									disabled={loading || (!message.trim() && !attachmentFile)}
 									aria-label='Send message'
 								>
 									{loading ? <span className='loading loading-spinner loading-sm'></span> : <HiOutlinePaperAirplane className='h-5 w-5 sm:h-6 sm:w-6' />}

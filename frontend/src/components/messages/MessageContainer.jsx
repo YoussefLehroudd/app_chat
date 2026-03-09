@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { BsReply } from "react-icons/bs";
-import { HiOutlineFaceSmile, HiOutlineMicrophone, HiOutlineTrash } from "react-icons/hi2";
+import { HiOutlineFaceSmile, HiOutlineMicrophone, HiOutlinePhone, HiOutlineTrash, HiOutlineVideoCamera } from "react-icons/hi2";
 import { IoArrowBack, IoInformationCircleOutline } from "react-icons/io5";
 import { TiMessages } from "react-icons/ti";
 import toast from "react-hot-toast";
@@ -10,9 +10,10 @@ import useConversation from "../../zustand/useConversation";
 import MessageInput from "./MessageInput";
 import Messages from "./Messages";
 import { useAuthContext } from "../../context/AuthContext";
+import { useCallContext } from "../../context/CallContext";
 import { useSocketContext } from "../../context/SocketContext";
 import formatLastSeen from "../../utils/lastSeen";
-import getDefaultAvatar from "../../utils/defaultAvatar";
+import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
 import UserInfoModal from "../UserInfoModal";
 import DeveloperBadge from "../common/DeveloperBadge";
@@ -37,14 +38,19 @@ const capabilityCards = [
 ];
 
 const MessageContainer = () => {
-	const { selectedConversation, setMessages, setSelectedConversation, setShowSidebar } = useConversation();
+	const { selectedConversation, setMessages, setSelectedConversation, setShowSidebar, setRepliedMessage } =
+		useConversation();
 	const { onlineUsers, lastSeenByUser } = useSocketContext();
+	const { callState, isCallReady, startVoiceCall, startVideoCall } = useCallContext();
 	const [showUserInfo, setShowUserInfo] = useState(false);
 	const [showDeleteConversationModal, setShowDeleteConversationModal] = useState(false);
 	const [isDeletingConversation, setIsDeletingConversation] = useState(false);
+	const [isJoiningGroup, setIsJoiningGroup] = useState(false);
 	const imgRef = useRef(null);
+	const isGroupConversation = selectedConversation?.type === "GROUP";
+	const canReadSelectedGroup = !isGroupConversation || selectedConversation?.isMember !== false;
 
-	const fallbackAvatar = getDefaultAvatar(selectedConversation?.gender);
+	const fallbackAvatar = getConversationFallbackAvatar(selectedConversation);
 	const resolvedProfilePic = getAvatarUrl(selectedConversation?.profilePic, 96);
 	const [avatarSrc, setAvatarSrc] = useState(resolvedProfilePic || fallbackAvatar);
 	const [avatarLoaded, setAvatarLoaded] = useState(!resolvedProfilePic);
@@ -73,13 +79,27 @@ const MessageContainer = () => {
 	const handleDeleteConversation = async () => {
 		if (!selectedConversation?._id || isDeletingConversation) return;
 
+		const conversationToDelete = selectedConversation;
 		const { messages } = useConversation.getState();
 		setIsDeletingConversation(true);
 		setShowDeleteConversationModal(false);
+		setShowUserInfo(false);
 		setMessages([]);
+		setRepliedMessage(null);
+		setShowSidebar(true);
+		setSelectedConversation(null);
+		window.dispatchEvent(
+			new CustomEvent("chat:conversation-removed", {
+				detail: { conversationId: conversationToDelete._id },
+			})
+		);
 
 		try {
-			const response = await fetch(`/api/messages/conversation/${selectedConversation._id}`, {
+			const endpoint =
+				conversationToDelete.type === "GROUP"
+					? `/api/messages/conversation/group/${conversationToDelete._id}`
+					: `/api/messages/conversation/${conversationToDelete._id}`;
+			const response = await fetch(endpoint, {
 				method: "DELETE",
 				headers: {
 					"Content-Type": "application/json",
@@ -95,10 +115,47 @@ const MessageContainer = () => {
 			window.dispatchEvent(new Event("chat:conversations-refresh"));
 			toast.success("Conversation deleted");
 		} catch (error) {
+			window.dispatchEvent(
+				new CustomEvent("chat:conversation-restored", {
+					detail: { conversation: conversationToDelete },
+				})
+			);
 			setMessages(messages);
+			setSelectedConversation(conversationToDelete);
+			setShowSidebar(false);
 			toast.error(error.message);
 		} finally {
 			setIsDeletingConversation(false);
+		}
+	};
+
+	const handleJoinPublicGroup = async () => {
+		if (!selectedConversation?._id || selectedConversation?.isMember !== false || selectedConversation?.isPrivate || isJoiningGroup) {
+			return;
+		}
+
+		setIsJoiningGroup(true);
+		try {
+			const response = await fetch(`/api/conversations/groups/${selectedConversation._id}/join`, {
+				method: "POST",
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to join group");
+			}
+
+			window.dispatchEvent(
+				new CustomEvent("chat:conversation-restored", {
+					detail: { conversation: data },
+				})
+			);
+			setSelectedConversation(data);
+			toast.success("You joined the group");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setIsJoiningGroup(false);
 		}
 	};
 
@@ -106,21 +163,39 @@ const MessageContainer = () => {
 	const selectedUserLastSeen = selectedConversation
 		? lastSeenByUser[selectedConversation._id] || selectedConversation.lastSeen
 		: null;
-	const selectedUserStatus = isSelectedUserOnline ? "En ligne maintenant" : formatLastSeen(selectedUserLastSeen);
+	const selectedUserStatus = isGroupConversation
+		? `${selectedConversation?.isPrivate ? "Private" : "Public"} group · ${selectedConversation?.memberCount || 1} members`
+		: isSelectedUserOnline
+			? "En ligne maintenant"
+			: formatLastSeen(selectedUserLastSeen);
 	const mobileSelectedUserStatus = [
 		isSelectedUserOnline ? "En ligne" : selectedUserStatus,
-		selectedConversation?.isVerified ? "Verified" : null,
-		selectedConversation?.role === "DEVELOPER" ? "Dev" : null,
+		!isGroupConversation && selectedConversation?.isVerified ? "Verified" : null,
+		!isGroupConversation && selectedConversation?.role === "DEVELOPER" ? "Dev" : null,
 	]
 		.filter(Boolean)
 		.join(" · ");
 	const desktopSelectedUserStatus = [
 		selectedUserStatus,
-		selectedConversation?.isVerified ? "Verified account" : null,
-		selectedConversation?.role === "DEVELOPER" ? "Official developer account" : null,
+		!isGroupConversation && selectedConversation?.isVerified ? "Verified account" : null,
+		!isGroupConversation && selectedConversation?.role === "DEVELOPER" ? "Official developer account" : null,
 	]
 		.filter(Boolean)
 		.join(" · ");
+	const isDirectConversation = selectedConversation?.type === "DIRECT";
+	const canStartDirectCall =
+		Boolean(selectedConversation?._id) &&
+		isDirectConversation &&
+		isSelectedUserOnline &&
+		isCallReady &&
+		callState.phase === "idle";
+	const canStartGroupCall =
+		Boolean(selectedConversation?._id) &&
+		isGroupConversation &&
+		canReadSelectedGroup &&
+		selectedConversation?.isMember !== false &&
+		isCallReady &&
+		callState.phase === "idle";
 
 	return (
 		<section className='flex h-full min-h-0 w-full flex-col bg-[linear-gradient(180deg,rgba(7,12,24,0.52),rgba(3,7,18,0.4))]'>
@@ -172,7 +247,7 @@ const MessageContainer = () => {
 								<span
 									className={`absolute bottom-0 right-0 h-3.5 w-3.5 translate-x-[14%] translate-y-[14%] rounded-full border-2 border-slate-950 shadow-[0_0_0_1px_rgba(15,23,42,0.45)] ${
 										isSelectedUserOnline ? "bg-emerald-400" : "bg-slate-500"
-									}`}
+									} ${isGroupConversation ? "opacity-0" : "opacity-100"}`}
 								></span>
 							</button>
 
@@ -181,11 +256,19 @@ const MessageContainer = () => {
 									<p className='truncate text-[15px] font-semibold text-slate-50 md:text-lg'>
 										{selectedConversation.fullName}
 									</p>
-									<VerifiedBadge user={selectedConversation} compact />
-									<DeveloperBadge user={selectedConversation} compact />
-									<span className='hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-300 sm:inline-flex'>
-										@{selectedConversation.username}
-									</span>
+									{isGroupConversation ? (
+										<span className='hidden rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2.5 py-1 text-[11px] font-medium text-cyan-100 sm:inline-flex'>
+											{selectedConversation.isPrivate ? "Private group" : "Group chat"}
+										</span>
+									) : (
+										<>
+											<VerifiedBadge user={selectedConversation} compact />
+											<DeveloperBadge user={selectedConversation} compact />
+											<span className='hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-300 sm:inline-flex'>
+												@{selectedConversation.username}
+											</span>
+										</>
+									)}
 								</div>
 								<p className='mt-0.5 truncate pr-1 text-[11px] leading-4 text-slate-400 sm:hidden'>
 									{mobileSelectedUserStatus}
@@ -206,15 +289,66 @@ const MessageContainer = () => {
 								))}
 							</div>
 
-							<button
-								type='button'
-								onClick={() => setShowDeleteConversationModal(true)}
-								className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-rose-400/25 hover:bg-rose-500/10 hover:text-rose-100 sm:h-11 sm:w-11'
-								aria-label='Delete conversation'
-								title='Delete conversation'
-							>
-								<HiOutlineTrash className='h-5 w-5' />
-							</button>
+							{isDirectConversation || canReadSelectedGroup ? (
+								<>
+									<button
+										type='button'
+										onClick={() => startVideoCall(selectedConversation)}
+										disabled={isDirectConversation ? !canStartDirectCall : !canStartGroupCall}
+										className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-sky-400/25 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-45 sm:h-11 sm:w-11'
+										aria-label={isGroupConversation ? "Start group video call" : "Start video call"}
+										title={
+											!isCallReady
+												? "Call connection is still loading"
+												: isDirectConversation && !isSelectedUserOnline
+													? "User must be online"
+													: isGroupConversation && selectedConversation?.isMember === false
+														? "Join the group first"
+													: callState.phase !== "idle"
+														? "Finish the current call first"
+														: isGroupConversation
+															? "Start group video call"
+															: "Start video call"
+										}
+									>
+										<HiOutlineVideoCamera className='h-5 w-5' />
+									</button>
+									<button
+										type='button'
+										onClick={() => startVoiceCall(selectedConversation)}
+										disabled={isDirectConversation ? !canStartDirectCall : !canStartGroupCall}
+										className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-emerald-400/25 hover:bg-emerald-500/10 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-45 sm:h-11 sm:w-11'
+										aria-label={isGroupConversation ? "Start group voice call" : "Start voice call"}
+										title={
+											!isCallReady
+												? "Call connection is still loading"
+												: isDirectConversation && !isSelectedUserOnline
+													? "User must be online"
+													: isGroupConversation && selectedConversation?.isMember === false
+														? "Join the group first"
+													: callState.phase !== "idle"
+														? "Finish the current call first"
+														: isGroupConversation
+															? "Start group voice call"
+															: "Start voice call"
+										}
+									>
+										<HiOutlinePhone className='h-5 w-5' />
+									</button>
+								</>
+							) : null}
+
+							{canReadSelectedGroup ? (
+								<button
+									type='button'
+									onClick={() => setShowDeleteConversationModal(true)}
+									className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-rose-400/25 hover:bg-rose-500/10 hover:text-rose-100 sm:h-11 sm:w-11'
+									aria-label='Delete conversation'
+									title='Delete conversation'
+								>
+									<HiOutlineTrash className='h-5 w-5' />
+								</button>
+							) : null}
 
 							<button
 								type='button'
@@ -228,8 +362,45 @@ const MessageContainer = () => {
 						</div>
 					</div>
 
-					<Messages />
-					<MessageInput />
+					{canReadSelectedGroup ? (
+						<>
+							<Messages />
+							<MessageInput />
+						</>
+					) : (
+						<div className='flex min-h-0 flex-1 items-center justify-center px-4 py-6 md:px-6 lg:px-8'>
+							<div className='w-full max-w-2xl rounded-[30px] border border-white/10 bg-[linear-gradient(135deg,rgba(9,14,28,0.82),rgba(17,24,39,0.62))] p-6 text-center shadow-[0_26px_70px_rgba(2,6,23,0.34)] backdrop-blur-xl md:p-8'>
+								<p className='text-[11px] font-semibold uppercase tracking-[0.34em] text-cyan-200/70'>Public group</p>
+								<h2 className='mt-4 text-2xl font-semibold text-white md:text-3xl'>{selectedConversation.fullName}</h2>
+								<p className='mx-auto mt-3 max-w-xl text-sm leading-7 text-slate-400 md:text-base'>
+									Join this public group to read messages, chat with members, and receive future updates.
+								</p>
+								<div className='mt-6 rounded-[24px] border border-white/10 bg-white/[0.03] px-4 py-4 text-left'>
+									<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>About this group</p>
+									<p className='mt-2 text-sm leading-7 text-slate-200'>
+										{selectedConversation.bio?.trim() || "No group description yet."}
+									</p>
+								</div>
+								<div className='mt-6 flex flex-wrap items-center justify-center gap-3'>
+									<button
+										type='button'
+										onClick={handleJoinPublicGroup}
+										className='rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_18px_38px_rgba(14,165,233,0.28)] transition hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70'
+										disabled={isJoiningGroup}
+									>
+										{isJoiningGroup ? "Joining..." : "Join group"}
+									</button>
+									<button
+										type='button'
+										onClick={() => setShowUserInfo(true)}
+										className='rounded-full border border-white/10 bg-white/[0.04] px-6 py-3 text-sm font-semibold text-slate-100 transition hover:border-white/20 hover:bg-white/[0.08]'
+									>
+										View info
+									</button>
+								</div>
+							</div>
+						</div>
+					)}
 					<UserInfoModal user={selectedConversation} open={showUserInfo} onClose={() => setShowUserInfo(false)} />
 					{showDeleteConversationModal
 						? createPortal(
@@ -237,13 +408,19 @@ const MessageContainer = () => {
 									<div className='w-full max-w-md rounded-[28px] border border-white/10 bg-slate-950/95 p-6 shadow-[0_32px_80px_rgba(2,6,23,0.55)]'>
 										<h2 className='text-xl font-semibold text-white'>Delete conversation?</h2>
 										<p className='mt-3 text-sm leading-7 text-slate-400'>
-											This will remove every message in this chat from your side. The other user keeps their copy.
+											{isGroupConversation
+												? "This will remove every message in this group from your side. Other members keep their copy."
+												: "This will remove every message in this chat from your side. The other user keeps their copy."}
 										</p>
 
 										<div className='mt-6 rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300'>
 											<span className='font-medium text-white'>{selectedConversation.fullName}</span>
 											<span className='text-slate-500'> · </span>
-											<span>@{selectedConversation.username}</span>
+											<span>
+												{isGroupConversation
+													? `${selectedConversation.memberCount || 1} members`
+													: `@${selectedConversation.username}`}
+											</span>
 										</div>
 
 										<div className='mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end'>

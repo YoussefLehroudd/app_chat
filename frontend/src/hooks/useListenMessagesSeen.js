@@ -11,7 +11,7 @@ const useListenMessagesSeen = () => {
 
 		const handleMessagesSeen = ({ conversationId, messageIds }) => {
 			// Only update if we're viewing the conversation where messages were seen
-			if (selectedConversation?._id === conversationId) {
+			if (selectedConversation?.type === "DIRECT" && selectedConversation?._id === conversationId) {
 				markMessagesSeen(messageIds);
 			}
 		};

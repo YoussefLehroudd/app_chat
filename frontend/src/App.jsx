@@ -5,6 +5,7 @@ import Login from "./pages/login/Login";
 import SignUp from "./pages/signup/SignUp";
 import Profile from "./pages/profile/Profile";
 import DeveloperDashboard from "./pages/developer/DeveloperDashboard";
+import VoiceCallOverlay from "./components/calls/VoiceCallOverlay";
 import { Toaster } from "react-hot-toast";
 import { useAuthContext } from "./context/AuthContext";
 
@@ -12,7 +13,8 @@ function App() {
 	const { authUser } = useAuthContext();
 	const location = useLocation();
 	const isAuthRoute = location.pathname === "/login" || location.pathname === "/signup";
-	const isWorkbenchRoute = location.pathname === "/profile" || location.pathname === "/developer";
+	const isDeveloperRoute = location.pathname.startsWith("/developer");
+	const isWorkbenchRoute = location.pathname === "/profile" || location.pathname.startsWith("/developer");
 
 	return (
 		<div
@@ -20,8 +22,10 @@ function App() {
 				isAuthRoute
 					? "h-dvh items-start justify-center overflow-y-auto overflow-x-hidden px-2 py-2 sm:px-4 sm:py-4 lg:items-center lg:overflow-hidden lg:px-6 lg:py-6"
 					: isWorkbenchRoute
-						? "h-dvh items-center justify-center overflow-hidden p-2 sm:p-4"
-					: "h-dvh items-center justify-center overflow-hidden p-2 sm:p-4"
+						? isDeveloperRoute
+							? "min-h-screen items-start justify-center overflow-x-hidden p-2 sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden"
+							: "h-dvh items-center justify-center overflow-hidden p-2 sm:p-4"
+						: "h-dvh items-center justify-center overflow-hidden p-2 sm:p-4"
 			}`}
 		>
 			<Routes>
@@ -30,7 +34,7 @@ function App() {
 				<Route path='/signup' element={authUser ? <Navigate to='/' /> : <SignUp />} />
 				<Route path='/profile' element={authUser ? <Profile /> : <Navigate to={"/login"} />} />
 				<Route
-					path='/developer'
+					path='/developer/*'
 					element={
 						authUser ? (
 							authUser.role === "DEVELOPER" ? <DeveloperDashboard /> : <Navigate to='/' />
@@ -41,6 +45,7 @@ function App() {
 				/>
 			</Routes>
 			<Toaster />
+			<VoiceCallOverlay />
 		</div>
 	);
 }

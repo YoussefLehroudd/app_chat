@@ -1,32 +1,79 @@
 import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
-import { getReceiverSocketId, io } from "../socket/socket.js";
+import { Readable } from "stream";
+import { getUserSocketIds, io } from "../socket/socket.js";
 import { deleteMessageEverywhere } from "../utils/messageModeration.js";
+import {
+	CONVERSATION_TYPES,
+	findDirectConversationByUsers,
+	findOrCreateDirectConversation,
+	getGroupConversationForMember,
+} from "../utils/conversations.js";
 import { toMessageDto } from "../utils/formatters.js";
 
-const getConversationPair = (userAId, userBId) => {
-	return userAId < userBId
-		? { userOneId: userAId, userTwoId: userBId }
-		: { userOneId: userBId, userTwoId: userAId };
+const parsedMessageDuration = (audioDurationSeconds) => {
+	const parsedValue = Number.parseInt(audioDurationSeconds, 10);
+	return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
 };
 
-const findConversationByUsers = async (userAId, userBId) => {
-	const { userOneId, userTwoId } = getConversationPair(userAId, userBId);
-	return prisma.conversation.findUnique({
-		where: { userOneId_userTwoId: { userOneId, userTwoId } },
-	});
+const normalizeMessageText = (value) => {
+	if (typeof value !== "string") return "";
+	return value.trim();
 };
 
-const findOrCreateConversation = async (userAId, userBId) => {
-	let conversation = await findConversationByUsers(userAId, userBId);
+const getUploadedFile = (files, fieldName) => {
+	const uploadedField = files?.[fieldName];
+	return Array.isArray(uploadedField) && uploadedField.length > 0 ? uploadedField[0] : null;
+};
 
-	if (!conversation) {
-		const { userOneId, userTwoId } = getConversationPair(userAId, userBId);
-		conversation = await prisma.conversation.create({
-			data: { userOneId, userTwoId },
-		});
-	}
+const getAttachmentType = (file) => {
+	const mimeType = file?.mimetype || "";
+	const originalName = file?.originalname?.toLowerCase() || "";
 
-	return conversation;
+	if (mimeType.startsWith("image/")) return "IMAGE";
+	if (mimeType.startsWith("video/")) return "VIDEO";
+	if (mimeType === "application/pdf" || originalName.endsWith(".pdf")) return "PDF";
+	return "FILE";
+};
+
+const getAttachmentResourceType = (file) => {
+	const mimeType = file?.mimetype || "";
+
+	if (mimeType.startsWith("image/")) return "image";
+	if (mimeType.startsWith("video/")) return "video";
+	return "raw";
+};
+
+const sanitizeDownloadFilename = (fileName) => {
+	if (typeof fileName !== "string") return "attachment";
+
+	const sanitizedName = fileName
+		.replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+		.replace(/\s+/g, " ")
+		.trim();
+
+	return sanitizedName || "attachment";
+};
+
+const encodeContentDispositionFilename = (fileName) =>
+	encodeURIComponent(fileName).replace(/['()]/g, escape).replace(/\*/g, "%2A");
+
+const messageInclude = {
+	sender: true,
+	conversation: {
+		select: {
+			type: true,
+		},
+	},
+	repliedMessage: {
+		include: {
+			sender: true,
+			conversation: {
+				select: {
+					type: true,
+				},
+			},
+		},
+	},
 };
 
 const getChatUserAvailability = async (userId) =>
@@ -35,15 +82,76 @@ const getChatUserAvailability = async (userId) =>
 		select: { id: true, isArchived: true, isBanned: true },
 	});
 
+const emitMessageToUsers = (userIds, payload) => {
+	const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+
+	uniqueUserIds.forEach((userId) => {
+		const socketIds = getUserSocketIds(userId);
+		socketIds.forEach((socketId) => {
+			io.to(socketId).emit("newMessage", payload);
+		});
+	});
+};
+
+const getDirectConversationMessages = async (viewerId, userToChatId) => {
+	const conversation = await findDirectConversationByUsers(viewerId, userToChatId);
+
+	if (!conversation) return [];
+
+	const messages = await prisma.message.findMany({
+		where: {
+			conversationId: conversation.id,
+			NOT: {
+				deletedFor: {
+					has: viewerId,
+				},
+			},
+		},
+		orderBy: { createdAt: "asc" },
+		include: messageInclude,
+	});
+
+	return messages.map((message) => toMessageDto(message));
+};
+
+const getGroupConversationMessages = async (viewerId, conversationId) => {
+	const conversation = await getGroupConversationForMember(conversationId, viewerId);
+
+	if (!conversation) {
+		return null;
+	}
+
+	const messages = await prisma.message.findMany({
+		where: {
+			conversationId: conversation.id,
+			NOT: {
+				deletedFor: {
+					has: viewerId,
+				},
+			},
+		},
+		orderBy: { createdAt: "asc" },
+		include: messageInclude,
+	});
+
+	return messages.map((message) => toMessageDto(message));
+};
+
 export const sendMessage = async (req, res) => {
 	try {
 		const { message, repliedMessageId, clientMessageId, audioDurationSeconds } = req.body;
 		const { id: receiverId } = req.params;
 		const senderId = req.user._id;
-		const parsedAudioDurationSeconds = Number.parseInt(audioDurationSeconds, 10);
+		const audioFile = getUploadedFile(req.files, "audio");
+		const attachmentFile = getUploadedFile(req.files, "attachment");
+		const normalizedMessage = normalizeMessageText(message);
 
-		if (!message && !req.file) {
-			return res.status(400).json({ error: "Message or audio is required" });
+		if (!normalizedMessage && !audioFile && !attachmentFile) {
+			return res.status(400).json({ error: "Message, voice note, or attachment is required" });
+		}
+
+		if (audioFile && attachmentFile) {
+			return res.status(400).json({ error: "Send one upload at a time" });
 		}
 
 		const receiver = await getChatUserAvailability(receiverId);
@@ -56,22 +164,25 @@ export const sendMessage = async (req, res) => {
 			return res.status(403).json({ error: "You cannot send messages to this account" });
 		}
 
-		const conversation = await findOrCreateConversation(senderId, receiverId);
+		const conversation = await findOrCreateDirectConversation(senderId, receiverId);
 
 		const newMessage = await prisma.message.create({
 			data: {
 				conversationId: conversation.id,
 				senderId,
 				receiverId,
-				message: message || null,
-				audio: req.file ? req.file.path : null,
-				audioDurationSeconds:
-					Number.isFinite(parsedAudioDurationSeconds) && parsedAudioDurationSeconds >= 0
-						? parsedAudioDurationSeconds
-						: null,
+				message: normalizedMessage || null,
+				audio: audioFile ? audioFile.path : null,
+				audioDurationSeconds: audioFile ? parsedMessageDuration(audioDurationSeconds) : null,
+				attachmentUrl: attachmentFile ? attachmentFile.path : null,
+				attachmentType: attachmentFile ? getAttachmentType(attachmentFile) : null,
+				attachmentMimeType: attachmentFile?.mimetype || null,
+				attachmentFileName: attachmentFile?.originalname || null,
+				attachmentFileSize: Number.isFinite(attachmentFile?.size) ? attachmentFile.size : null,
+				attachmentResourceType: attachmentFile ? getAttachmentResourceType(attachmentFile) : null,
 				repliedMessageId: repliedMessageId || null,
 			},
-			include: { repliedMessage: true },
+			include: messageInclude,
 		});
 
 		const fullMessage = {
@@ -79,20 +190,91 @@ export const sendMessage = async (req, res) => {
 			clientMessageId: clientMessageId || null,
 		};
 
-		// SOCKET IO FUNCTIONALITY WILL GO HERE
-		const receiverSocketId = getReceiverSocketId(receiverId);
-		const senderSocketId = getReceiverSocketId(senderId.toString());
-		if (receiverSocketId) {
-			// io.to(<socket_id>).emit() used to send events to specific client
-			io.to(receiverSocketId).emit("newMessage", fullMessage);
-		}
-		if (senderSocketId && senderSocketId !== receiverSocketId) {
-			io.to(senderSocketId).emit("newMessage", fullMessage);
-		}
+		emitMessageToUsers([receiverId, senderId], fullMessage);
 
 		res.status(201).json(fullMessage);
 	} catch (error) {
 		console.log("Error in sendMessage controller: ", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const sendGroupMessage = async (req, res) => {
+	try {
+		const { message, repliedMessageId, clientMessageId, audioDurationSeconds } = req.body;
+		const { id: conversationId } = req.params;
+		const senderId = req.user._id;
+		const audioFile = getUploadedFile(req.files, "audio");
+		const attachmentFile = getUploadedFile(req.files, "attachment");
+		const normalizedMessage = normalizeMessageText(message);
+
+		if (!normalizedMessage && !audioFile && !attachmentFile) {
+			return res.status(400).json({ error: "Message, voice note, or attachment is required" });
+		}
+
+		if (audioFile && attachmentFile) {
+			return res.status(400).json({ error: "Send one upload at a time" });
+		}
+
+		const conversation = await getGroupConversationForMember(conversationId, senderId, {
+			include: {
+				members: {
+					select: { userId: true },
+				},
+			},
+		});
+
+		if (!conversation) {
+			return res.status(404).json({ error: "Group not found" });
+		}
+
+		const newMessage = await prisma.message.create({
+			data: {
+				conversationId: conversation.id,
+				senderId,
+				receiverId: null,
+				message: normalizedMessage || null,
+				audio: audioFile ? audioFile.path : null,
+				audioDurationSeconds: audioFile ? parsedMessageDuration(audioDurationSeconds) : null,
+				attachmentUrl: attachmentFile ? attachmentFile.path : null,
+				attachmentType: attachmentFile ? getAttachmentType(attachmentFile) : null,
+				attachmentMimeType: attachmentFile?.mimetype || null,
+				attachmentFileName: attachmentFile?.originalname || null,
+				attachmentFileSize: Number.isFinite(attachmentFile?.size) ? attachmentFile.size : null,
+				attachmentResourceType: attachmentFile ? getAttachmentResourceType(attachmentFile) : null,
+				repliedMessageId: repliedMessageId || null,
+			},
+			include: messageInclude,
+		});
+
+		await prisma.conversationMember.update({
+			where: {
+				conversationId_userId: {
+					conversationId: conversation.id,
+					userId: senderId,
+				},
+			},
+			data: {
+				lastReadAt: new Date(),
+			},
+		});
+
+		const fullMessage = {
+			...toMessageDto(newMessage),
+			clientMessageId: clientMessageId || null,
+		};
+
+		emitMessageToUsers(
+			conversation.members.map((member) => member.userId),
+			fullMessage
+		);
+
+		res.status(201).json(fullMessage);
+	} catch (error) {
+		console.log("Error in sendGroupMessage controller: ", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
@@ -110,26 +292,108 @@ export const getMessages = async (req, res) => {
 			return res.status(404).json({ error: "User not available" });
 		}
 
-		const conversation = await findConversationByUsers(senderId, userToChatId);
-
-		if (!conversation) return res.status(200).json([]);
-
-		const messages = await prisma.message.findMany({
-			where: {
-				conversationId: conversation.id,
-				NOT: {
-					deletedFor: {
-						has: senderId,
-					},
-				},
-			},
-			orderBy: { createdAt: "asc" },
-			include: { repliedMessage: true },
-		});
-
-		res.status(200).json(messages.map((msg) => toMessageDto(msg)));
+		const messages = await getDirectConversationMessages(senderId, userToChatId);
+		res.status(200).json(messages);
 	} catch (error) {
 		console.log("Error in getMessages controller: ", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const getGroupMessages = async (req, res) => {
+	try {
+		const { id: conversationId } = req.params;
+		const userId = req.user._id;
+		const messages = await getGroupConversationMessages(userId, conversationId);
+
+		if (!messages) {
+			return res.status(404).json({ error: "Group not found" });
+		}
+
+		res.status(200).json(messages);
+	} catch (error) {
+		console.log("Error in getGroupMessages controller: ", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const downloadMessageAttachment = async (req, res) => {
+	try {
+		const { id } = req.params;
+		const userId = req.user._id;
+
+		const message = await prisma.message.findFirst({
+			where: {
+				id,
+				attachmentUrl: {
+					not: null,
+				},
+				NOT: {
+					deletedFor: {
+						has: userId,
+					},
+				},
+				OR: [
+					{
+						conversation: {
+							type: CONVERSATION_TYPES.DIRECT,
+							OR: [{ userOneId: userId }, { userTwoId: userId }],
+						},
+					},
+					{
+						conversation: {
+							type: CONVERSATION_TYPES.GROUP,
+							members: {
+								some: {
+									userId,
+								},
+							},
+						},
+					},
+				],
+			},
+			select: {
+				id: true,
+				attachmentUrl: true,
+				attachmentMimeType: true,
+				attachmentFileName: true,
+			},
+		});
+
+		if (!message?.attachmentUrl) {
+			return res.status(404).json({ error: "Attachment not found" });
+		}
+
+		const upstreamResponse = await fetch(message.attachmentUrl);
+
+		if (!upstreamResponse.ok || !upstreamResponse.body) {
+			return res.status(502).json({ error: "Failed to download attachment" });
+		}
+
+		const downloadFileName = sanitizeDownloadFilename(message.attachmentFileName || "attachment");
+		const contentType =
+			message.attachmentMimeType || upstreamResponse.headers.get("content-type") || "application/octet-stream";
+		const contentLength = upstreamResponse.headers.get("content-length");
+
+		res.setHeader("Content-Type", contentType);
+		res.setHeader(
+			"Content-Disposition",
+			`attachment; filename="${downloadFileName}"; filename*=UTF-8''${encodeContentDispositionFilename(downloadFileName)}`
+		);
+
+		if (contentLength) {
+			res.setHeader("Content-Length", contentLength);
+		}
+
+		Readable.fromWeb(upstreamResponse.body).pipe(res);
+	} catch (error) {
+		console.log("Error in downloadMessageAttachment controller: ", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
@@ -147,7 +411,7 @@ export const markMessagesAsSeen = async (req, res) => {
 			return res.status(404).json({ error: "User not available" });
 		}
 
-		const conversation = await findConversationByUsers(senderId, userToChatId);
+		const conversation = await findDirectConversationByUsers(senderId, userToChatId);
 
 		if (!conversation) return res.status(200).json({ message: "No conversation found" });
 
@@ -167,18 +431,17 @@ export const markMessagesAsSeen = async (req, res) => {
 
 		if (unseenMessages.length > 0) {
 			await prisma.message.updateMany({
-				where: { id: { in: unseenMessages.map((msg) => msg.id) } },
+				where: { id: { in: unseenMessages.map((message) => message.id) } },
 				data: { isSeen: true },
 			});
 
-			// Emit socket event to notify sender
-			const receiverSocketId = getReceiverSocketId(userToChatId);
-			if (receiverSocketId) {
-				io.to(receiverSocketId).emit("messagesSeen", {
+			const receiverSocketIds = getUserSocketIds(userToChatId);
+			receiverSocketIds.forEach((socketId) => {
+				io.to(socketId).emit("messagesSeen", {
 					conversationId: senderId.toString(),
-					messageIds: unseenMessages.map((msg) => msg.id),
+					messageIds: unseenMessages.map((message) => message.id),
 				});
-			}
+			});
 		}
 
 		res.status(200).json({ message: "Messages marked as seen" });
@@ -191,38 +454,64 @@ export const markMessagesAsSeen = async (req, res) => {
 	}
 };
 
+export const markGroupConversationAsSeen = async (req, res) => {
+	try {
+		const { id: conversationId } = req.params;
+		const userId = req.user._id;
+		const membership = await prisma.conversationMember.findUnique({
+			where: {
+				conversationId_userId: {
+					conversationId,
+					userId,
+				},
+			},
+			include: {
+				conversation: {
+					select: { type: true },
+				},
+			},
+		});
+
+		if (!membership || membership.conversation?.type !== CONVERSATION_TYPES.GROUP) {
+			return res.status(404).json({ error: "Group not found" });
+		}
+
+		await prisma.conversationMember.update({
+			where: {
+				conversationId_userId: {
+					conversationId,
+					userId,
+				},
+			},
+			data: { lastReadAt: new Date() },
+		});
+
+		res.status(200).json({ message: "Group marked as read" });
+	} catch (error) {
+		console.log("Error in markGroupConversationAsSeen controller: ", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		res.status(500).json({ error: "Internal server error" });
+	}
+};
+
 export const deleteConversation = async (req, res) => {
 	try {
 		const { id: userToChatId } = req.params;
 		const userId = req.user._id;
 
-		const conversation = await findConversationByUsers(userId, userToChatId);
+		const conversation = await findDirectConversationByUsers(userId, userToChatId);
 		if (!conversation) {
 			return res.status(200).json({ message: "Conversation deleted" });
 		}
 
-		const visibleMessages = await prisma.message.findMany({
-			where: {
-				conversationId: conversation.id,
-				NOT: {
-					deletedFor: {
-						has: userId,
-					},
-				},
-			},
-			select: { id: true },
-		});
-
-		if (visibleMessages.length > 0) {
-			await prisma.$transaction(
-				visibleMessages.map((message) =>
-					prisma.message.update({
-						where: { id: message.id },
-						data: { deletedFor: { push: userId } },
-					})
-				)
-			);
-		}
+		await prisma.$executeRaw`
+			UPDATE "Message"
+			SET "deletedFor" = array_append("deletedFor", ${userId})
+			WHERE "conversationId" = ${conversation.id}
+				AND array_position("deletedFor", ${userId}) IS NULL
+		`;
 
 		return res.status(200).json({ message: "Conversation deleted" });
 	} catch (error) {
@@ -234,26 +523,83 @@ export const deleteConversation = async (req, res) => {
 	}
 };
 
+export const deleteGroupConversation = async (req, res) => {
+	try {
+		const { id: conversationId } = req.params;
+		const userId = req.user._id;
+		const conversation = await getGroupConversationForMember(conversationId, userId);
+
+		if (!conversation) {
+			return res.status(200).json({ message: "Conversation deleted" });
+		}
+
+		await prisma.$executeRaw`
+			UPDATE "Message"
+			SET "deletedFor" = array_append("deletedFor", ${userId})
+			WHERE "conversationId" = ${conversation.id}
+				AND array_position("deletedFor", ${userId}) IS NULL
+		`;
+
+		await prisma.conversationMember.update({
+			where: {
+				conversationId_userId: {
+					conversationId: conversation.id,
+					userId,
+				},
+			},
+			data: { lastReadAt: new Date() },
+		});
+
+		return res.status(200).json({ message: "Conversation deleted" });
+	} catch (error) {
+		console.log("Error in deleteGroupConversation controller: ", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
 export const deleteMessage = async (req, res) => {
 	try {
 		const { id } = req.params;
 		const userId = req.user._id;
-		const { deleteType } = req.query; // "me" or "everyone"
+		const { deleteType } = req.query;
 
-		const message = await prisma.message.findUnique({ where: { id } });
+		const message = await prisma.message.findUnique({
+			where: { id },
+			include: {
+				conversation: {
+					select: {
+						type: true,
+						members: {
+							select: {
+								userId: true,
+								role: true,
+							},
+						},
+					},
+				},
+			},
+		});
+
 		if (!message) {
 			return res.status(404).json({ error: "Message not found" });
 		}
 
-		// Check if the user is the sender of the message
+		const isGroupMessage = message.conversation?.type === CONVERSATION_TYPES.GROUP;
+
 		if (deleteType === "everyone") {
 			if (message.senderId !== userId) {
 				return res.status(403).json({ error: "Unauthorized to delete this message for everyone" });
 			}
 		} else if (deleteType === "me") {
-			// Allow any participant to delete for themselves
-			const isParticipant = [message.senderId, message.receiverId].includes(userId);
-			if (!isParticipant) {
+			const isDirectParticipant = [message.senderId, message.receiverId].includes(userId);
+			const isGroupParticipant = isGroupMessage
+				? message.conversation.members.some((member) => member.userId === userId)
+				: false;
+
+			if (!isDirectParticipant && !isGroupParticipant) {
 				return res.status(403).json({ error: "Unauthorized to delete this message for yourself" });
 			}
 		} else {
@@ -261,7 +607,6 @@ export const deleteMessage = async (req, res) => {
 		}
 
 		if (deleteType === "me") {
-			// Add userId to deletedFor array if not already present
 			if (!message.deletedFor.includes(userId)) {
 				await prisma.message.update({
 					where: { id },
@@ -269,11 +614,10 @@ export const deleteMessage = async (req, res) => {
 				});
 			}
 			return res.status(200).json({ message: "Message deleted for you" });
-		} else if (deleteType === "everyone") {
-			await deleteMessageEverywhere(message);
-
-			return res.status(200).json({ message: "Message deleted for everyone" });
 		}
+
+		await deleteMessageEverywhere(message);
+		return res.status(200).json({ message: "Message deleted for everyone" });
 	} catch (error) {
 		console.log("Error in deleteMessage controller: ", error.message);
 		if (isPrismaConnectionError(error)) {

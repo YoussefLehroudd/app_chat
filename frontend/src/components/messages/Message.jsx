@@ -2,12 +2,27 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { BsCopy, BsReply, BsTrash } from "react-icons/bs";
+import { HiOutlinePhone, HiOutlineVideoCamera } from "react-icons/hi2";
+import { IoAttachOutline, IoDocumentOutline, IoDownloadOutline, IoImageOutline, IoVideocamOutline } from "react-icons/io5";
 import { useAuthContext } from "../../context/AuthContext";
+import { useCallContext } from "../../context/CallContext";
 import { extractTime } from "../../utils/extractTime";
+import { getFlagOnlyState } from "../../utils/flagEmoji";
 import useConversation from "../../zustand/useConversation";
+import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import getDefaultAvatar from "../../utils/defaultAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
 import { CHAT_AUDIO_CONTROL_EVENT, stopAllChatAudio } from "../../utils/audioPlayback";
+import {
+	formatAttachmentSize,
+	getAttachmentDownloadUrl,
+	getAttachmentKindLabel,
+	getAttachmentLabel,
+	getMessageSummaryText,
+	isImageAttachment,
+	isVideoAttachment,
+} from "../../utils/messageAttachments";
+import FlagText from "../common/FlagText";
 
 const getEmojiOnlyState = (value) => {
 	const trimmedValue = typeof value === "string" ? value.trim() : "";
@@ -26,6 +41,25 @@ const getEmojiOnlyState = (value) => {
 
 const getSafeAudioValue = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
 
+const getCopyValue = (message) => {
+	if (message?.audio) return message.audio;
+	if (message?.attachment?.url) return message.attachment.url;
+	return message?.message || "";
+};
+
+const formatCallDuration = (totalSeconds = 0) => {
+	const safeSeconds = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : 0;
+	const hours = Math.floor(safeSeconds / 3600);
+	const minutes = Math.floor((safeSeconds % 3600) / 60);
+	const seconds = safeSeconds % 60;
+
+	if (hours > 0) {
+		return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+	}
+
+	return `${minutes}:${String(seconds).padStart(2, "0")}`;
+};
+
 const Message = ({
 	message,
 	onDeleteMessage,
@@ -40,19 +74,24 @@ const Message = ({
 	const MENU_HEIGHT = 164;
 	const MENU_GAP = 12;
 	const { authUser } = useAuthContext();
+	const { callState, joinExistingCall } = useCallContext();
 	const { selectedConversation } = useConversation();
 	const fromMe = message.senderId === authUser._id;
 	const formattedTime = extractTime(message.createdAt);
 	const chatClassName = fromMe ? "chat-end" : "chat-start";
-	const profilePic = fromMe ? authUser?.profilePic : selectedConversation?.profilePic;
+	const isGroupConversation = selectedConversation?.type === "GROUP";
+	const senderProfile = !fromMe && isGroupConversation ? message.sender : selectedConversation;
+	const profilePic = fromMe ? authUser?.profilePic : senderProfile?.profilePic;
 	const isEmojiOnlyMessage = getEmojiOnlyState(message.message);
-	const fallbackAvatar = getDefaultAvatar(fromMe ? authUser?.gender : selectedConversation?.gender);
+	const { isFlagOnly: isFlagOnlyMessage, flagCount } = getFlagOnlyState(message.message);
+	const fallbackAvatar = getDefaultAvatar(fromMe ? authUser?.gender : senderProfile?.gender);
 	const resolvedProfilePic = getAvatarUrl(profilePic, 64);
 	const [avatarSrc, setAvatarSrc] = useState(resolvedProfilePic || fallbackAvatar);
 	const [avatarLoaded, setAvatarLoaded] = useState(!resolvedProfilePic);
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
 	const [deleteType, setDeleteType] = useState("me");
 	const [isDeleting, setIsDeleting] = useState(false);
+	const [isHandlingInvite, setIsHandlingInvite] = useState(false);
 	const [menuPosition, setMenuPosition] = useState(null);
 	const [isPlaying, setIsPlaying] = useState(false);
 	const [progress, setProgress] = useState(0);
@@ -257,8 +296,8 @@ const Message = ({
 
 	const handleCopy = async () => {
 		try {
-			await navigator.clipboard.writeText(message.audio ? message.audio : message.message || "");
-			toast.success(message.audio ? "Audio link copied" : "Message copied", { duration: 1400 });
+			await navigator.clipboard.writeText(getCopyValue(message));
+			toast.success(message.audio ? "Audio link copied" : message.attachment ? "Attachment link copied" : "Message copied", { duration: 1400 });
 			setContextMenuMessageId(null);
 			setMenuPosition(null);
 		} catch {
@@ -294,6 +333,304 @@ const Message = ({
 			? "ring-2 ring-white/80 ring-offset-2 ring-offset-sky-500/20"
 			: "ring-2 ring-sky-300/80 ring-offset-2 ring-offset-slate-950/40"
 		: "";
+	const flagMessageClassName = isFlagOnlyMessage
+		? "inline-flex flex-wrap items-center gap-1.5"
+		: "";
+	const flagImageClassName = isFlagOnlyMessage
+		? flagCount === 1
+			? "inline-block h-[1.28em] w-[1.9em] align-[-0.16em] rounded-[0.2em] object-cover sm:h-[1.36em] sm:w-[2.02em]"
+			: "inline-block h-[1.08em] w-[1.62em] align-[-0.15em] rounded-[0.18em] object-cover sm:h-[1.14em] sm:w-[1.72em]"
+			: "inline-block h-[1.02em] w-[1.5em] align-[-0.16em] rounded-[0.16em] object-cover";
+	const attachmentDownloadUrl = getAttachmentDownloadUrl(message);
+
+	const handleInvitationResponse = async (action) => {
+		if (!message.isGroupInvite || !message.groupInvite || isHandlingInvite) return;
+
+		setIsHandlingInvite(true);
+		try {
+			const response = await fetch(`/api/conversations/group-invites/${message._id}/respond`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ action }),
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to respond to invitation");
+			}
+
+			useConversation.getState().updateMessage(message._id, data.message);
+			if (action === "ACCEPT" && data.joinedConversation?._id) {
+				window.dispatchEvent(
+					new CustomEvent("chat:conversation-restored", {
+						detail: { conversation: data.joinedConversation },
+					})
+				);
+				toast.success("You joined the group");
+			} else {
+				toast.success("Invitation declined");
+			}
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setIsHandlingInvite(false);
+		}
+	};
+
+	if (message.isCallMessage && message.callInfo) {
+		const callInfo = message.callInfo;
+		const isLiveCall = callInfo.status !== "ENDED";
+		const isCurrentCall = callState.callId === callInfo.callId && callState.phase !== "idle";
+		const canJoinFromMessage =
+			isLiveCall &&
+			!isCurrentCall &&
+			Boolean(selectedConversation?._id) &&
+			callState.phase === "idle";
+
+		return (
+			<div
+				id={`message-${message._id}`}
+				data-message-id={message._id}
+				ref={messageRef}
+				className={`chat ${chatClassName} scroll-mt-24`}
+				style={{ position: "relative" }}
+			>
+				<div className='chat-image avatar'>
+					<div className='relative w-9 overflow-hidden rounded-full ring-1 ring-white/10 md:w-10'>
+						<img
+							alt='call avatar'
+							src={avatarSrc}
+							className='h-full w-full object-cover'
+							onError={() => {
+								setAvatarSrc(fallbackAvatar);
+								setAvatarLoaded(true);
+							}}
+						/>
+					</div>
+				</div>
+
+				<div
+					className={`max-w-[85%] rounded-[28px] border px-4 py-4 md:max-w-[72%] lg:max-w-[68%] xl:max-w-[62%] ${
+						fromMe
+							? "border-sky-300/24 bg-[linear-gradient(135deg,rgba(14,165,233,0.2),rgba(59,130,246,0.22))] text-white"
+							: "border-white/10 bg-slate-900/85 text-slate-100"
+					}`}
+				>
+					<div className='flex flex-wrap items-center justify-between gap-3'>
+						<div className='flex items-center gap-3'>
+							<div
+								className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl ${
+									callInfo.mediaType === "video"
+										? "bg-sky-500/16 text-sky-100"
+										: "bg-emerald-500/14 text-emerald-100"
+								}`}
+							>
+								{callInfo.mediaType === "video" ? (
+									<HiOutlineVideoCamera className='h-6 w-6' />
+								) : (
+									<HiOutlinePhone className='h-6 w-6' />
+								)}
+							</div>
+							<div>
+								<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200/75'>
+									{callInfo.mediaType === "video" ? "Video call" : "Voice call"}
+								</p>
+								<p className='mt-1 text-base font-semibold text-white'>
+									{isLiveCall ? `${callInfo.initiatorName} is calling` : `${callInfo.mediaType === "video" ? "Video" : "Voice"} call ended`}
+								</p>
+							</div>
+						</div>
+
+						<span
+							className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+								isCurrentCall
+									? "border-sky-300/20 bg-sky-500/12 text-sky-100"
+									: isLiveCall
+										? "border-emerald-300/20 bg-emerald-500/12 text-emerald-100"
+										: "border-white/10 bg-white/[0.05] text-slate-300"
+							}`}
+						>
+							{isCurrentCall ? "In call" : isLiveCall ? "Live now" : "Ended"}
+						</span>
+					</div>
+
+					<div className='mt-4 grid gap-3 rounded-[22px] border border-white/10 bg-white/[0.03] p-4 sm:grid-cols-3'>
+						<div>
+							<p className='text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400'>Started</p>
+							<p className='mt-2 text-sm font-medium text-white'>{extractTime(callInfo.startedAt || message.createdAt)}</p>
+						</div>
+						<div>
+							<p className='text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400'>Joined</p>
+							<p className='mt-2 text-sm font-medium text-white'>
+								{callInfo.joinedParticipantCount || callInfo.activeParticipantCount || 0} people
+							</p>
+						</div>
+						<div>
+							<p className='text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400'>
+								{isLiveCall ? "Active now" : "Duration"}
+							</p>
+							<p className='mt-2 text-sm font-medium text-white'>
+								{isLiveCall
+									? `${callInfo.activeParticipantCount || 1} inside`
+									: formatCallDuration(callInfo.durationSeconds)}
+							</p>
+						</div>
+					</div>
+
+					<p className='mt-3 text-sm leading-6 text-slate-200'>
+						{callInfo.previewText}
+						{callInfo.callMode === "group" ? " Group members can still join while the call is live." : ""}
+					</p>
+
+					{canJoinFromMessage ? (
+						<div className='mt-4 flex flex-wrap gap-2'>
+							<button
+								type='button'
+								onClick={() => joinExistingCall({ callId: callInfo.callId })}
+								className='rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition hover:from-sky-400 hover:to-cyan-400'
+							>
+								Join call
+							</button>
+						</div>
+					) : null}
+
+					<div className={`mt-3 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
+						<span>{formattedTime}</span>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (message.isGroupInvite && message.groupInvite) {
+		const inviteGroup = {
+			type: "GROUP",
+			isGroup: true,
+			fullName: message.groupInvite.groupTitle,
+			profilePic: message.groupInvite.groupProfilePic,
+		};
+		const inviteGroupAvatar =
+			getAvatarUrl(message.groupInvite.groupProfilePic, 96) || getConversationFallbackAvatar(inviteGroup);
+		const invitationStatus = message.groupInvite.status || "PENDING";
+		const isPendingInvitation = invitationStatus === "PENDING";
+		const isInviteReceiver = message.receiverId === authUser._id;
+
+		return (
+			<div
+				id={`message-${message._id}`}
+				data-message-id={message._id}
+				ref={messageRef}
+				className={`chat ${chatClassName} scroll-mt-24`}
+				style={{ position: "relative" }}
+			>
+				<div className='chat-image avatar'>
+					<div className='relative w-9 overflow-hidden rounded-full ring-1 ring-white/10 md:w-10'>
+						<img
+							alt='group avatar'
+							src={inviteGroupAvatar}
+							className='h-full w-full object-cover'
+							onError={(event) => {
+								event.currentTarget.src = getConversationFallbackAvatar(inviteGroup);
+							}}
+						/>
+					</div>
+				</div>
+
+				<div
+					className={`max-w-[85%] rounded-[28px] border px-4 py-4 md:max-w-[72%] lg:max-w-[68%] xl:max-w-[62%] ${
+						fromMe
+							? "border-sky-300/24 bg-[linear-gradient(135deg,rgba(14,165,233,0.2),rgba(59,130,246,0.22))] text-white"
+							: "border-white/10 bg-slate-900/85 text-slate-100"
+					}`}
+				>
+					<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200/75'>Group invitation</p>
+					<div className='mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-[22px] border border-white/10 bg-white/[0.03] p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center'>
+						<div className='h-12 w-12 overflow-hidden rounded-full ring-1 ring-white/10'>
+							<img
+								src={inviteGroupAvatar}
+								alt={message.groupInvite.groupTitle}
+								className='h-full w-full object-cover'
+								onError={(event) => {
+									event.currentTarget.src = getConversationFallbackAvatar(inviteGroup);
+								}}
+							/>
+						</div>
+						<div className='min-w-0'>
+							<p className='break-words text-sm font-semibold leading-5 text-white sm:truncate'>
+								{message.groupInvite.groupTitle}
+							</p>
+							<p className='mt-1 break-words text-xs leading-5 text-slate-300'>
+								<span className='block sm:inline'>Invited by {message.groupInvite.inviterName}</span>
+								<span className='hidden px-1 text-slate-500 sm:inline'>·</span>
+								<span className='block sm:inline'>{message.groupInvite.isPrivate ? "Private group" : "Public group"}</span>
+							</p>
+						</div>
+						<span
+							className={`col-start-2 justify-self-start rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] sm:col-start-auto sm:justify-self-end ${
+								invitationStatus === "ACCEPTED"
+									? "border-emerald-300/20 bg-emerald-500/10 text-emerald-100"
+									: invitationStatus === "DECLINED"
+										? "border-rose-300/20 bg-rose-500/10 text-rose-100"
+										: "border-amber-300/20 bg-amber-500/10 text-amber-100"
+							}`}
+						>
+							{invitationStatus}
+						</span>
+					</div>
+
+					<p className='mt-3 text-sm leading-6 text-slate-200'>
+						{message.groupInvite.groupDescription?.trim() || "Open the group when you are ready to join."}
+					</p>
+
+					{isInviteReceiver && isPendingInvitation ? (
+						<div className='mt-4 flex flex-wrap gap-2'>
+							<button
+								type='button'
+								onClick={() => handleInvitationResponse("ACCEPT")}
+								className='rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70'
+								disabled={isHandlingInvite}
+							>
+								{isHandlingInvite ? "Saving..." : "Accept"}
+							</button>
+							<button
+								type='button'
+								onClick={() => handleInvitationResponse("DECLINE")}
+								className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-200 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-70'
+								disabled={isHandlingInvite}
+							>
+								Decline
+							</button>
+						</div>
+					) : null}
+
+					<div className={`mt-3 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
+						<span>{formattedTime}</span>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (message.isSystem) {
+		return (
+			<div
+				id={`message-${message._id}`}
+				data-message-id={message._id}
+				ref={messageRef}
+				className='scroll-mt-24 px-2 py-1.5'
+			>
+				<div className='mx-auto flex max-w-xl flex-col items-center rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-3 text-center shadow-[0_16px_36px_rgba(2,6,23,0.2)]'>
+					<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-300/75'>Group update</p>
+					<p className='mt-2 text-sm leading-6 text-slate-100'>
+						<FlagText text={message.systemText || message.message} />
+					</p>
+					<span className='mt-2 text-[11px] text-slate-400'>{formattedTime}</span>
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div
@@ -334,6 +671,12 @@ const Message = ({
 				}`}
 				onContextMenu={handleContextMenu}
 			>
+				{!fromMe && isGroupConversation && message.sender?.fullName ? (
+					<p className='mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300/85'>
+						{message.sender.fullName}
+					</p>
+				) : null}
+
 				{repliedMessage ? (
 					<button
 						type='button'
@@ -344,7 +687,7 @@ const Message = ({
 						}}
 						title='Go to original message'
 					>
-						{repliedMessage.audio ? "Audio message" : repliedMessage.message}
+						<FlagText text={getMessageSummaryText(repliedMessage)} />
 					</button>
 				) : null}
 
@@ -409,15 +752,104 @@ const Message = ({
 						</div>
 					</div>
 				) : (
-					<p
-						className={`w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
-							isEmojiOnlyMessage
-								? "text-[28px] leading-[1.35] tracking-[0.08em] sm:text-[32px]"
-								: "leading-6"
-						}`}
-					>
-						{message.message}
-					</p>
+					<>
+						{message.attachment ? (
+							<div className='w-full min-w-0 max-w-full'>
+								{isImageAttachment(message.attachment) ? (
+									<a
+										href={message.attachment.url}
+										target='_blank'
+										rel='noreferrer'
+										className='block overflow-hidden rounded-[20px] border border-white/10 bg-slate-950/30'
+										onClick={(event) => event.stopPropagation()}
+									>
+										<img
+											src={message.attachment.url}
+											alt={getAttachmentLabel(message.attachment)}
+											className='max-h-[360px] w-full object-cover'
+										/>
+									</a>
+								) : isVideoAttachment(message.attachment) ? (
+									<video
+										controls
+										src={message.attachment.url}
+										className='max-h-[360px] w-full rounded-[20px] border border-white/10 bg-slate-950/45'
+										onClick={(event) => event.stopPropagation()}
+									>
+										Your browser does not support video playback.
+									</video>
+								) : (
+									<div
+										className={`flex items-center gap-3 rounded-[20px] border px-3 py-3 ${
+											fromMe ? "border-white/15 bg-white/10" : "border-white/8 bg-white/[0.03]"
+										}`}
+									>
+										<div
+											className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] ${
+												fromMe ? "bg-white/14 text-white" : "bg-slate-800 text-slate-200"
+											}`}
+										>
+											{message.attachment.type === "PDF" ? (
+												<IoDocumentOutline className='h-6 w-6' />
+											) : message.attachment.type === "IMAGE" ? (
+												<IoImageOutline className='h-6 w-6' />
+											) : message.attachment.type === "VIDEO" ? (
+												<IoVideocamOutline className='h-6 w-6' />
+											) : (
+												<IoAttachOutline className='h-6 w-6' />
+											)}
+										</div>
+
+										<div className='min-w-0 flex-1'>
+											<p className='truncate text-sm font-semibold text-white'>
+												{getAttachmentLabel(message.attachment)}
+											</p>
+											<p className={`mt-1 text-xs ${metaClassName}`}>
+												{[
+													getAttachmentKindLabel(message.attachment),
+													formatAttachmentSize(message.attachment.fileSize),
+												]
+													.filter(Boolean)
+													.join(" · ")}
+											</p>
+										</div>
+
+										<a
+											href={attachmentDownloadUrl || message.attachment.url}
+											download={message.attachment.fileName || undefined}
+											className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+												fromMe ? "bg-white/14 text-white hover:bg-white/22" : "bg-slate-800 text-slate-100 hover:bg-slate-700"
+											}`}
+											onClick={(event) => event.stopPropagation()}
+											title='Open attachment'
+										>
+											<IoDownloadOutline className='h-5 w-5' />
+										</a>
+									</div>
+								)}
+							</div>
+						) : null}
+
+						{message.message ? (
+							<p
+								className={`w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
+									message.attachment
+										? "mt-3 leading-6"
+										: isEmojiOnlyMessage
+											? "text-[28px] leading-[1.35] tracking-[0.08em] sm:text-[32px]"
+											: isFlagOnlyMessage
+												? "leading-[1.22]"
+												: "leading-6"
+								}`}
+							>
+								<FlagText
+									text={message.message}
+									className={flagMessageClassName}
+									imgClassName={flagImageClassName}
+								/>
+							</p>
+						) : null}
+					</>
 				)}
 
 				<div className={`mt-2 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
@@ -458,7 +890,7 @@ const Message = ({
 								}}
 							>
 								<BsCopy className='h-4 w-4' />
-								<span>{message.audio ? "Copy audio link" : "Copy message"}</span>
+								<span>{message.audio ? "Copy audio link" : message.attachment ? "Copy attachment link" : "Copy message"}</span>
 							</button>
 						</li>
 						<li>

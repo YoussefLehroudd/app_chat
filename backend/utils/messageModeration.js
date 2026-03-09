@@ -1,6 +1,6 @@
 import { prisma } from "../db/prisma.js";
 import { cloudinary } from "./cloudinary.js";
-import { getReceiverSocketId, io } from "../socket/socket.js";
+import { getUserSocketIds, io } from "../socket/socket.js";
 
 const CLOUDINARY_UPLOAD_SEGMENT = "/upload/";
 
@@ -35,16 +35,27 @@ const deleteCloudinaryAsset = async (assetUrl, resourceType = "image") => {
 const emitMessageDeleted = async (conversationId, messageId) => {
 	const conversation = await prisma.conversation.findUnique({
 		where: { id: conversationId },
-		select: { userOneId: true, userTwoId: true },
+		select: {
+			type: true,
+			userOneId: true,
+			userTwoId: true,
+			members: {
+				select: { userId: true },
+			},
+		},
 	});
 
 	if (!conversation) return;
 
-	[conversation.userOneId, conversation.userTwoId].forEach((participantId) => {
-		const socketId = getReceiverSocketId(participantId);
-		if (socketId) {
+	const participantIds =
+		conversation.type === "GROUP"
+			? conversation.members.map((member) => member.userId)
+			: [conversation.userOneId, conversation.userTwoId];
+
+	participantIds.filter(Boolean).forEach((participantId) => {
+		getUserSocketIds(participantId).forEach((socketId) => {
 			io.to(socketId).emit("deleteMessage", { messageId });
-		}
+		});
 	});
 };
 
@@ -56,6 +67,10 @@ const deleteMessageEverywhere = async (message) => {
 
 	if (message.audio) {
 		void deleteCloudinaryAsset(message.audio, "video");
+	}
+
+	if (message.attachmentUrl) {
+		void deleteCloudinaryAsset(message.attachmentUrl, message.attachmentResourceType || "raw");
 	}
 };
 

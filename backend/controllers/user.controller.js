@@ -5,70 +5,9 @@ import { DEVELOPER_ROLE } from "../utils/roles.js";
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
 
-export const getUsersForSidebar = async (req, res) => {
+export const getSelectableUsers = async (req, res) => {
 	try {
 		const loggedInUserId = req.user._id;
-		const conversations = await prisma.conversation.findMany({
-			where: {
-				OR: [{ userOneId: loggedInUserId }, { userTwoId: loggedInUserId }],
-			},
-			include: {
-				messages: {
-					where: {
-						NOT: {
-							deletedFor: {
-								has: loggedInUserId,
-							},
-						},
-					},
-					orderBy: { createdAt: "desc" },
-					take: 1,
-					select: {
-						message: true,
-						audio: true,
-						createdAt: true,
-					},
-				},
-			},
-		});
-
-		const latestMessageByUserId = new Map();
-		const unreadCountByUserId = new Map();
-		for (const conversation of conversations) {
-			const otherUserId = conversation.userOneId === loggedInUserId ? conversation.userTwoId : conversation.userOneId;
-			const latestMessage = conversation.messages[0];
-
-			if (!latestMessage) {
-				continue;
-			}
-
-			latestMessageByUserId.set(otherUserId, {
-				lastMessage: latestMessage.audio ? "Audio message" : latestMessage.message?.trim() || "Message",
-				lastMessageAt: latestMessage.createdAt,
-			});
-		}
-
-		await Promise.all(
-			conversations.map(async (conversation) => {
-				const otherUserId =
-					conversation.userOneId === loggedInUserId ? conversation.userTwoId : conversation.userOneId;
-				const unreadCount = await prisma.message.count({
-					where: {
-						conversationId: conversation.id,
-						receiverId: loggedInUserId,
-						isSeen: false,
-						NOT: {
-							deletedFor: {
-								has: loggedInUserId,
-							},
-						},
-					},
-				});
-
-				unreadCountByUserId.set(otherUserId, unreadCount);
-			})
-		);
-
 		const users = await prisma.user.findMany({
 			where: {
 				id: { not: loggedInUserId },
@@ -80,6 +19,7 @@ export const getUsersForSidebar = async (req, res) => {
 				fullName: true,
 				username: true,
 				role: true,
+				isPrimaryDeveloper: true,
 				isVerified: true,
 				verifiedAt: true,
 				profilePic: true,
@@ -89,28 +29,12 @@ export const getUsersForSidebar = async (req, res) => {
 				createdAt: true,
 				updatedAt: true,
 			},
+			orderBy: [{ fullName: "asc" }, { username: "asc" }],
 		});
 
-		const sidebarUsers = users
-			.map((user) =>
-				toUserDto({
-					...user,
-					...(latestMessageByUserId.get(user.id) || {
-						lastMessage: null,
-						lastMessageAt: null,
-					}),
-					unreadCount: unreadCountByUserId.get(user.id) || 0,
-				})
-			)
-			.sort((userA, userB) => {
-				const userATime = userA.lastMessageAt ? new Date(userA.lastMessageAt).getTime() : 0;
-				const userBTime = userB.lastMessageAt ? new Date(userB.lastMessageAt).getTime() : 0;
-				return userBTime - userATime;
-			});
-
-		res.status(200).json(sidebarUsers);
+		res.status(200).json(users.map((user) => toUserDto(user)));
 	} catch (error) {
-		console.error("Error in getUsersForSidebar: ", error.message);
+		console.error("Error in getSelectableUsers:", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
@@ -204,7 +128,7 @@ export const updateProfile = async (req, res) => {
 
 		res.status(200).json(toUserDto(updatedUser));
 	} catch (error) {
-		console.error("Error in updateProfile: ", error.message);
+		console.error("Error in updateProfile:", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}

@@ -10,6 +10,15 @@ const normalizeAuthUser = (user) => {
 		role: user.role || "USER",
 		isPrimaryDeveloper: user.isPrimaryDeveloper || false,
 		isVerified: user.isVerified || false,
+		developerPermissions: {
+			fullAccess: Boolean(user.developerPermissions?.fullAccess),
+			manageUsers: Boolean(user.developerPermissions?.manageUsers),
+			manageGroups: Boolean(user.developerPermissions?.manageGroups),
+			manageReports: Boolean(user.developerPermissions?.manageReports),
+			deleteGroups: Boolean(user.developerPermissions?.deleteGroups),
+			deleteMessages: Boolean(user.developerPermissions?.deleteMessages),
+			deleteReports: Boolean(user.developerPermissions?.deleteReports),
+		},
 	};
 };
 

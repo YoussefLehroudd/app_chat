@@ -10,7 +10,16 @@ const useGetMessages = () => {
 		const getMessages = async () => {
 			setLoading(true);
 			try {
-				const res = await fetch(`/api/messages/${selectedConversation._id}`);
+				if (selectedConversation?.type === "GROUP" && selectedConversation?.isMember === false) {
+					setMessages([]);
+					return;
+				}
+
+				const endpoint =
+					selectedConversation?.type === "GROUP"
+						? `/api/messages/group/${selectedConversation._id}`
+						: `/api/messages/${selectedConversation._id}`;
+				const res = await fetch(endpoint);
 				const data = await res.json();
 				if (data.error) throw new Error(data.error);
 				setMessages(data);
@@ -22,7 +31,8 @@ const useGetMessages = () => {
 		};
 
 		if (selectedConversation?._id) getMessages();
-	}, [selectedConversation?._id, setMessages]);
+		else setMessages([]);
+	}, [selectedConversation?._id, selectedConversation?.type, selectedConversation?.isMember, setMessages]);
 
 	return { messages, loading };
 };

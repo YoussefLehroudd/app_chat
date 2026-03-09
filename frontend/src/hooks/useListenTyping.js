@@ -11,14 +11,14 @@ const useListenTyping = () => {
 
 		const handleUserTyping = (userId) => {
 			// Only show typing indicator if it's from the selected conversation
-			if (selectedConversation?._id === userId) {
+			if (selectedConversation?.type === "DIRECT" && selectedConversation?._id === userId) {
 				setIsTyping(true);
 			}
 		};
 
 		const handleUserStopTyping = (userId) => {
 			// Only hide typing indicator if it's from the selected conversation
-			if (selectedConversation?._id === userId) {
+			if (selectedConversation?.type === "DIRECT" && selectedConversation?._id === userId) {
 				setIsTyping(false);
 			}
 		};

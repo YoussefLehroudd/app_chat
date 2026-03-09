@@ -32,6 +32,41 @@ const avatarStorage = new CloudinaryStorage({
 	},
 });
 
+const resolveMessageUploadParams = (file) => {
+	const mimeType = file?.mimetype || "";
+
+	if (file?.fieldname === "audio" || mimeType.startsWith("audio/")) {
+		return {
+			folder: "chat_audios",
+			resource_type: "video",
+		};
+	}
+
+	if (mimeType.startsWith("image/")) {
+		return {
+			folder: "chat_attachments/images",
+			resource_type: "image",
+		};
+	}
+
+	if (mimeType.startsWith("video/")) {
+		return {
+			folder: "chat_attachments/videos",
+			resource_type: "video",
+		};
+	}
+
+	return {
+		folder: "chat_attachments/files",
+		resource_type: "raw",
+	};
+};
+
+const messageStorage = new CloudinaryStorage({
+	cloudinary,
+	params: async (req, file) => resolveMessageUploadParams(file),
+});
+
 const imageFileFilter = (req, file, cb) => {
 	if (!file.mimetype.startsWith("image/")) {
 		return cb(new Error("Only image files are allowed"), false);
@@ -39,7 +74,10 @@ const imageFileFilter = (req, file, cb) => {
 	cb(null, true);
 };
 
-export const upload = multer({ storage });
+export const upload = multer({
+	storage: messageStorage,
+	limits: { fileSize: 25 * 1024 * 1024 },
+});
 export const avatarUpload = multer({
 	storage: avatarStorage,
 	fileFilter: imageFileFilter,
