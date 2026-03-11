@@ -30,6 +30,7 @@ const useLogin = () => {
 
 			localStorage.setItem("chat-user", JSON.stringify(data));
 			setAuthUser(data);
+			window.dispatchEvent(new Event("chat:conversations-refresh"));
 			setErrors({});
 			return true;
 		} catch (error) {

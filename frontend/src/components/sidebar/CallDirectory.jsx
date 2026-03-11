@@ -18,7 +18,7 @@ const formatDuration = (totalSeconds = 0) => {
 };
 
 const CallDirectory = ({ calls, loading, emptyTitle, emptyDescription, onOpenConversation }) => {
-	const { joinExistingCall, callState } = useCallContext();
+	const { joinExistingCall, callState, isCallClosedForUi, getClosedCallInfo } = useCallContext();
 
 	return (
 		<div className='min-h-0 flex-1 overflow-hidden'>
@@ -39,14 +39,17 @@ const CallDirectory = ({ calls, loading, emptyTitle, emptyDescription, onOpenCon
 
 				{!loading &&
 					calls.map((call) => {
-						const avatarSrc = getAvatarUrl(call.profilePic, 96) || getConversationFallbackAvatar(call);
-						const isActive = call.status !== "ENDED";
+						const effectiveCall = getClosedCallInfo?.(call) || call;
+						const avatarSrc = getAvatarUrl(effectiveCall.profilePic, 96) || getConversationFallbackAvatar(effectiveCall);
+						const isLocallyClosed = isCallClosedForUi?.(effectiveCall.callId);
+						const isActive = !isLocallyClosed && effectiveCall.status !== "ENDED";
 						const relatedConversation = onOpenConversation ? true : false;
-						const isCurrentCall = callState.callId === call.callId;
+						const isCurrentCall = callState.callId === effectiveCall.callId;
+						const canJoinNow = !isLocallyClosed && effectiveCall.canJoin;
 
 						return (
 							<div
-								key={call.callId}
+								key={effectiveCall.callId}
 								className={`rounded-[26px] border px-3.5 py-3.5 ${
 									isActive ? "border-cyan-300/18 bg-cyan-500/8" : "border-white/8 bg-white/[0.02]"
 								}`}
@@ -65,7 +68,7 @@ const CallDirectory = ({ calls, loading, emptyTitle, emptyDescription, onOpenCon
 
 									<div className='min-w-0 flex-1'>
 										<div className='flex flex-wrap items-center gap-2'>
-											<p className='truncate text-sm font-semibold text-slate-100'>{call.title}</p>
+											<p className='truncate text-sm font-semibold text-slate-100'>{effectiveCall.title}</p>
 											<span
 												className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] ${
 													isActive
@@ -79,29 +82,29 @@ const CallDirectory = ({ calls, loading, emptyTitle, emptyDescription, onOpenCon
 
 										<p className='mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400'>
 											<span className='inline-flex items-center gap-1'>
-												{call.mediaType === "video" ? (
+												{effectiveCall.mediaType === "video" ? (
 													<HiOutlineVideoCamera className='h-4 w-4 text-sky-300' />
 												) : (
 													<HiOutlinePhone className='h-4 w-4 text-emerald-300' />
 												)}
-												{call.mediaType === "video" ? "Video call" : "Voice call"}
+												{effectiveCall.mediaType === "video" ? "Video call" : "Voice call"}
 											</span>
-											<span>{extractTime(call.startedAt)}</span>
-											<span>{call.joinedParticipantCount} joined</span>
-											{call.status === "ENDED" ? <span>{formatDuration(call.durationSeconds)}</span> : null}
+											<span>{extractTime(effectiveCall.startedAt)}</span>
+											<span>{effectiveCall.joinedParticipantCount} joined</span>
+											{!isActive ? <span>{formatDuration(effectiveCall.durationSeconds)}</span> : null}
 										</p>
 
-										<p className='mt-2 text-sm leading-6 text-slate-300'>{call.previewText}</p>
+										<p className='mt-2 text-sm leading-6 text-slate-300'>{effectiveCall.previewText}</p>
 
 										<div className='mt-3 flex flex-wrap gap-2'>
 											<button
 												type='button'
-												onClick={() => joinExistingCall(call)}
-												disabled={!call.canJoin || isCurrentCall}
+												onClick={() => joinExistingCall(effectiveCall)}
+												disabled={!canJoinNow || isCurrentCall}
 												className='inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16 disabled:cursor-not-allowed disabled:opacity-45'
 											>
 												<HiOutlinePhoneArrowDownLeft className='h-4 w-4' />
-												{isCurrentCall ? "In call" : call.canJoin ? "Join live" : "Unavailable"}
+												{isCurrentCall ? "In call" : canJoinNow ? "Join live" : "Unavailable"}
 											</button>
 											<button
 												type='button'

@@ -74,6 +74,15 @@ const imageFileFilter = (req, file, cb) => {
 	cb(null, true);
 };
 
+const storyFileFilter = (req, file, cb) => {
+	const mimeType = file?.mimetype || "";
+	if (mimeType.startsWith("image/") || mimeType.startsWith("video/")) {
+		return cb(null, true);
+	}
+
+	return cb(new Error("Only image or video files are allowed"), false);
+};
+
 export const upload = multer({
 	storage: messageStorage,
 	limits: { fileSize: 25 * 1024 * 1024 },
@@ -82,5 +91,10 @@ export const avatarUpload = multer({
 	storage: avatarStorage,
 	fileFilter: imageFileFilter,
 	limits: { fileSize: 5 * 1024 * 1024 },
+});
+export const storyUpload = multer({
+	storage: messageStorage,
+	fileFilter: storyFileFilter,
+	limits: { fileSize: 25 * 1024 * 1024 },
 });
 export { cloudinary };

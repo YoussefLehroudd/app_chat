@@ -1,6 +1,7 @@
 export const SYSTEM_MESSAGE_PREFIX = "__CHAT_SYSTEM__:";
 export const GROUP_INVITE_MESSAGE_PREFIX = "__CHAT_GROUP_INVITE__:";
 export const CALL_MESSAGE_PREFIX = "__CHAT_CALL__:";
+export const STORY_INTERACTION_MESSAGE_PREFIX = "__CHAT_STORY_INTERACTION__:";
 
 export const GROUP_SYSTEM_MESSAGE_TYPES = {
 	MEMBER_LEFT: "MEMBER_LEFT",
@@ -20,6 +21,8 @@ const normalizeText = (value) => (typeof value === "string" ? value.trim() : "")
 const buildSystemMessageContent = (payload) => `${SYSTEM_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 const buildGroupInviteMessageContent = (payload) => `${GROUP_INVITE_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 const buildCallMessageContent = (payload) => `${CALL_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
+const buildStoryInteractionMessageContent = (payload) =>
+	`${STORY_INTERACTION_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 
 export const parseSystemMessageContent = (value) => {
 	if (typeof value !== "string" || !value.startsWith(SYSTEM_MESSAGE_PREFIX)) {
@@ -89,6 +92,41 @@ export const parseCallMessageContent = (value) => {
 	}
 };
 
+export const parseStoryInteractionMessageContent = (value) => {
+	if (typeof value !== "string" || !value.startsWith(STORY_INTERACTION_MESSAGE_PREFIX)) {
+		return null;
+	}
+
+	try {
+		const parsedValue = JSON.parse(value.slice(STORY_INTERACTION_MESSAGE_PREFIX.length));
+		const storyId = typeof parsedValue?.storyId === "string" ? parsedValue.storyId : null;
+		const storyOwnerId = typeof parsedValue?.storyOwnerId === "string" ? parsedValue.storyOwnerId : null;
+		const interactionType =
+			typeof parsedValue?.interactionType === "string" ? parsedValue.interactionType.toUpperCase() : null;
+		const previewText = normalizeText(parsedValue?.previewText);
+
+		if (!storyId || !storyOwnerId || !["REACTION", "COMMENT"].includes(interactionType)) {
+			return null;
+		}
+
+		return {
+			type: "STORY_INTERACTION",
+			storyId,
+			storyOwnerId,
+			storyOwnerName: normalizeText(parsedValue?.storyOwnerName),
+			storyMediaType: typeof parsedValue?.storyMediaType === "string" ? parsedValue.storyMediaType : "TEXT",
+			storyMediaUrl: normalizeText(parsedValue?.storyMediaUrl) || null,
+			storyText: normalizeText(parsedValue?.storyText),
+			interactionType,
+			emoji: normalizeText(parsedValue?.emoji),
+			comment: normalizeText(parsedValue?.comment),
+			previewText: previewText || (interactionType === "REACTION" ? "Reacted to your story" : "Replied to your story"),
+		};
+	} catch {
+		return null;
+	}
+};
+
 export const buildGroupMemberLeftSystemMessage = ({ isOwner = false, memberName }) =>
 	buildSystemMessageContent({
 		type: isOwner ? GROUP_SYSTEM_MESSAGE_TYPES.OWNER_LEFT : GROUP_SYSTEM_MESSAGE_TYPES.MEMBER_LEFT,
@@ -127,6 +165,32 @@ export const buildCallMessage = (payload) =>
 		activeParticipantCount: Number.isFinite(payload?.activeParticipantCount) ? payload.activeParticipantCount : 0,
 		invitedCount: Number.isFinite(payload?.invitedCount) ? payload.invitedCount : 0,
 		previewText: normalizeText(payload?.previewText) || "Call",
+	});
+
+export const buildStoryInteractionMessage = ({
+	storyId,
+	storyOwnerId,
+	storyOwnerName,
+	storyMediaType = "TEXT",
+	storyMediaUrl,
+	storyText,
+	interactionType = "REACTION",
+	emoji = "",
+	comment = "",
+	previewText,
+}) =>
+	buildStoryInteractionMessageContent({
+		type: "STORY_INTERACTION",
+		storyId,
+		storyOwnerId,
+		storyOwnerName: normalizeText(storyOwnerName),
+		storyMediaType: typeof storyMediaType === "string" ? storyMediaType.toUpperCase() : "TEXT",
+		storyMediaUrl: normalizeText(storyMediaUrl),
+		storyText: normalizeText(storyText),
+		interactionType: typeof interactionType === "string" ? interactionType.toUpperCase() : "REACTION",
+		emoji: normalizeText(emoji),
+		comment: normalizeText(comment),
+		previewText: normalizeText(previewText),
 	});
 
 export const parseGroupInviteMessageContent = (value) => {

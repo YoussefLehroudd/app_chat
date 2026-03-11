@@ -51,12 +51,18 @@ const requestFullscreen = async (element) => {
 
 const exitFullscreen = async () => {
 	if (typeof document === "undefined") return;
-	if (typeof document.exitFullscreen === "function") {
-		await document.exitFullscreen();
-		return;
-	}
-	if (typeof document.webkitExitFullscreen === "function") {
-		document.webkitExitFullscreen();
+	if (!getFullscreenElement()) return;
+
+	try {
+		if (typeof document.exitFullscreen === "function") {
+			await document.exitFullscreen();
+			return;
+		}
+		if (typeof document.webkitExitFullscreen === "function") {
+			document.webkitExitFullscreen();
+		}
+	} catch {
+		// Ignore "Document not active" and similar browser-specific fullscreen errors.
 	}
 };
 

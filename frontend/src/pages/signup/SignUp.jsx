@@ -2,7 +2,7 @@ import GenderCheckbox from "./GenderCheckbox";
 import { useState } from "react";
 import useSignup from "../../hooks/useSignup";
 import AuthShell from "../../components/auth/AuthShell";
-import { FiArrowRight, FiAtSign, FiLock, FiUser } from "react-icons/fi";
+import { FiArrowRight, FiAtSign, FiEye, FiEyeOff, FiLock, FiUser } from "react-icons/fi";
 
 const SignUp = () => {
 	const [inputs, setInputs] = useState({
@@ -12,6 +12,8 @@ const SignUp = () => {
 		confirmPassword: "",
 		gender: "",
 	});
+	const [showPassword, setShowPassword] = useState(false);
+	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
 	const { loading, signup, errors, clearError } = useSignup();
 
@@ -107,7 +109,7 @@ const SignUp = () => {
 							<div className={`auth-input-wrap ${errors.password ? "auth-input-wrap--error" : ""}`}>
 								<FiLock className='auth-input-icon' />
 								<input
-									type='password'
+									type={showPassword ? "text" : "password"}
 									placeholder='Enter password'
 									className='auth-input'
 									value={inputs.password}
@@ -115,6 +117,15 @@ const SignUp = () => {
 									autoComplete='new-password'
 									aria-invalid={Boolean(errors.password)}
 								/>
+								<button
+									type='button'
+									className='auth-input-toggle'
+									onClick={() => setShowPassword((currentShowPassword) => !currentShowPassword)}
+									aria-label={showPassword ? "Hide password" : "Show password"}
+									title={showPassword ? "Hide password" : "Show password"}
+								>
+									{showPassword ? <FiEyeOff size={18} /> : <FiEye size={18} />}
+								</button>
 							</div>
 							{errors.password ? <p className='auth-error-text'>{errors.password}</p> : null}
 						</div>
@@ -124,7 +135,7 @@ const SignUp = () => {
 							<div className={`auth-input-wrap ${errors.confirmPassword ? "auth-input-wrap--error" : ""}`}>
 								<FiLock className='auth-input-icon' />
 								<input
-									type='password'
+									type={showConfirmPassword ? "text" : "password"}
 									placeholder='Confirm password'
 									className='auth-input'
 									value={inputs.confirmPassword}
@@ -132,6 +143,17 @@ const SignUp = () => {
 									autoComplete='new-password'
 									aria-invalid={Boolean(errors.confirmPassword)}
 								/>
+								<button
+									type='button'
+									className='auth-input-toggle'
+									onClick={() =>
+										setShowConfirmPassword((currentShowConfirmPassword) => !currentShowConfirmPassword)
+									}
+									aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+									title={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+								>
+									{showConfirmPassword ? <FiEyeOff size={18} /> : <FiEye size={18} />}
+								</button>
 							</div>
 							{errors.confirmPassword ? <p className='auth-error-text'>{errors.confirmPassword}</p> : null}
 						</div>

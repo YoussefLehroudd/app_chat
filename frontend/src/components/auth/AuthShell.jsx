@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { FiMessageCircle, FiShield, FiZap } from "react-icons/fi";
 
 const features = [
@@ -29,6 +29,12 @@ const AuthShell = ({
 	footerTo,
 	children,
 }) => {
+	const location = useLocation();
+	const footerLinkState =
+		location.pathname === "/login" || location.pathname === "/signup"
+			? { authSwitchFrom: location.pathname }
+			: undefined;
+
 	return (
 		<div className='auth-shell animate-authFadeUp'>
 			<div className='auth-shell__orb auth-shell__orb--one'></div>
@@ -114,7 +120,7 @@ const AuthShell = ({
 
 						<div className='auth-panel-footer mt-6 border-t border-slate-300/80 pt-4 text-sm text-slate-500'>
 							{footerPrompt}{" "}
-							<Link to={footerTo} className='auth-inline-link'>
+							<Link to={footerTo} state={footerLinkState} className='auth-inline-link'>
 								{footerLinkLabel}
 							</Link>
 						</div>

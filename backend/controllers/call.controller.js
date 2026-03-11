@@ -202,10 +202,17 @@ export const leaveCall = async (req, res) => {
 
 		emitCallMessageUpdated(updatedCall.formattedMessage, updatedCall.audienceUserIds);
 		emitCallPayloadToUsers(liveAudienceIds, "call:participants", updatedCall.callSession);
-		emitToUsers(liveAudienceIds.filter((participantId) => participantId !== userId), "call:participant-left", {
-			callId,
-			participantUserId: userId,
-		});
+		if (updatedCall.callSession.status === "ENDED") {
+			emitToUsers(liveAudienceIds.filter((participantId) => participantId !== userId), "call:ended", {
+				callId,
+				endedByUserId: userId,
+			});
+		} else {
+			emitToUsers(liveAudienceIds.filter((participantId) => participantId !== userId), "call:participant-left", {
+				callId,
+				participantUserId: userId,
+			});
+		}
 
 		res.status(200).json({ message: "Left call" });
 	} catch (error) {

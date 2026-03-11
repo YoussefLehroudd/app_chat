@@ -16,6 +16,7 @@ import {
 	parseCallMessageContent,
 	parseSystemMessageContent,
 	parseGroupInviteMessageContent,
+	parseStoryInteractionMessageContent,
 	updateGroupInviteMessageStatus,
 } from "../utils/systemMessages.js";
 
@@ -126,6 +127,14 @@ const getLatestMessagePreview = (latestMessage) => {
 	const parsedCallMessage = parseCallMessageContent(latestMessage.message);
 	if (parsedCallMessage) {
 		return parsedCallMessage.previewText || "Call";
+	}
+
+	const parsedStoryInteraction = parseStoryInteractionMessageContent(latestMessage.message);
+	if (parsedStoryInteraction) {
+		return (
+			parsedStoryInteraction.previewText ||
+			(parsedStoryInteraction.interactionType === "REACTION" ? "Reacted to your story" : "Replied to your story")
+		);
 	}
 
 	return latestMessage.message?.trim() || "Message";

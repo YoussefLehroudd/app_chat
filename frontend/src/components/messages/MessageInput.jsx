@@ -86,6 +86,45 @@ const getSupportedAudioMimeType = () => {
 	return preferredMimeTypes.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
 };
 
+const DRAFT_CACHE_PREFIX = "chat:draft:v1:";
+
+const buildDraftCacheKey = (conversation) => {
+	if (!conversation?._id) return "";
+	const conversationType = conversation.type === "GROUP" ? "GROUP" : "DIRECT";
+	return `${DRAFT_CACHE_PREFIX}${conversationType}:${conversation._id}`;
+};
+
+const getDraftValue = (conversation) => {
+	const draftKey = buildDraftCacheKey(conversation);
+	if (!draftKey) return "";
+
+	try {
+		const cachedDraft = localStorage.getItem(draftKey);
+		return typeof cachedDraft === "string" ? cachedDraft : "";
+	} catch {
+		return "";
+	}
+};
+
+const saveDraftValue = (conversation, nextDraft) => {
+	const draftKey = buildDraftCacheKey(conversation);
+	if (!draftKey) return;
+
+	try {
+		if (nextDraft) {
+			localStorage.setItem(draftKey, nextDraft);
+		} else {
+			localStorage.removeItem(draftKey);
+		}
+	} catch {
+		// Ignore localStorage failures.
+	}
+};
+
+const clearDraftValue = (conversation) => {
+	saveDraftValue(conversation, "");
+};
+
 const MessageInput = () => {
 	const MOBILE_TEXTAREA_HEIGHT = 44;
 	const DESKTOP_TEXTAREA_HEIGHT = 52;
@@ -126,6 +165,11 @@ const MessageInput = () => {
 	const accumulatedRecordingMsRef = useRef(0);
 	const finalRecordingDurationSecondsRef = useRef(0);
 	const attachmentPreviewUrlRef = useRef(null);
+	const selectedConversationRef = useRef(selectedConversation);
+
+	useEffect(() => {
+		selectedConversationRef.current = selectedConversation;
+	}, [selectedConversation]);
 
 	useEffect(() => {
 		if (typeof window === "undefined") {
@@ -151,6 +195,18 @@ const MessageInput = () => {
 			textareaRef.current.focus();
 		}
 	}, [repliedMessage]);
+
+	useEffect(() => {
+		const nextDraft = getDraftValue(selectedConversation);
+		setMessage(nextDraft);
+		setTimeout(() => {
+			adjustTextareaHeight();
+		}, 0);
+	}, [selectedConversation?._id, selectedConversation?.type]);
+
+	useEffect(() => {
+		saveDraftValue(selectedConversation, message);
+	}, [selectedConversation?._id, selectedConversation?.type, message]);
 
 	useEffect(() => {
 		return () => {
@@ -320,28 +376,40 @@ const MessageInput = () => {
 	const handleSubmit = async (event) => {
 		event.preventDefault();
 		if (!message.trim() && !attachmentFile) return;
+		const conversationAtSubmit = selectedConversation;
+		const submittedMessage = message;
 
-		if (selectedConversation?.type === "DIRECT") {
-			socket?.emit("stopTyping", selectedConversation._id);
+		if (conversationAtSubmit?.type === "DIRECT") {
+			socket?.emit("stopTyping", conversationAtSubmit._id);
 		}
 
 		if (typingTimeoutRef.current) {
 			clearTimeout(typingTimeoutRef.current);
 		}
 
-		await sendMessage({
-			message,
+		const result = await sendMessage({
+			message: submittedMessage,
 			attachmentFile,
 			repliedMessageId: repliedMessage ? repliedMessage._id : null,
 		});
-		setMessage("");
+		if (!result?.ok) return;
+
+		clearDraftValue(conversationAtSubmit);
+		const activeConversation = selectedConversationRef.current;
+		const isStillSameConversation =
+			activeConversation?._id === conversationAtSubmit?._id &&
+			activeConversation?.type === conversationAtSubmit?.type;
+
+		if (isStillSameConversation) {
+			setMessage("");
+			if (textareaRef.current) {
+				const height = isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT;
+				textareaRef.current.style.height = `${height}px`;
+			}
+		}
+
 		clearSelectedAttachment();
 		setRepliedMessage(null);
-
-		if (textareaRef.current) {
-			const height = isCompactViewport ? MOBILE_TEXTAREA_HEIGHT : DESKTOP_TEXTAREA_HEIGHT;
-			textareaRef.current.style.height = `${height}px`;
-		}
 	};
 
 	const updateAudioLevels = () => {

@@ -10,6 +10,36 @@ import {
 } from "../utils/conversations.js";
 import { toMessageDto } from "../utils/formatters.js";
 
+const DEFAULT_MESSAGE_PAGE_LIMIT = 40;
+const MAX_MESSAGE_PAGE_LIMIT = 100;
+
+const normalizeMessagePageLimit = (rawLimit) => {
+	const parsedLimit = Number.parseInt(rawLimit, 10);
+	if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) return DEFAULT_MESSAGE_PAGE_LIMIT;
+	return Math.min(parsedLimit, MAX_MESSAGE_PAGE_LIMIT);
+};
+
+const parseBeforeCursor = (rawValue) => {
+	if (typeof rawValue !== "string" || !rawValue.trim()) return null;
+	const parsedDate = new Date(rawValue);
+	if (Number.isNaN(parsedDate.getTime())) return null;
+	return parsedDate;
+};
+
+const buildPaginatedMessagesResponse = (records, limit) => {
+	const hasMore = records.length > limit;
+	const pageRecords = hasMore ? records.slice(0, limit) : records;
+	const messages = pageRecords.reverse().map((message) => toMessageDto(message));
+	return {
+		messages,
+		pageInfo: {
+			hasMore,
+			limit,
+			oldestMessageAt: messages.length > 0 ? messages[0].createdAt : null,
+		},
+	};
+};
+
 const parsedMessageDuration = (audioDurationSeconds) => {
 	const parsedValue = Number.parseInt(audioDurationSeconds, 10);
 	return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
@@ -93,48 +123,79 @@ const emitMessageToUsers = (userIds, payload) => {
 	});
 };
 
-const getDirectConversationMessages = async (viewerId, userToChatId) => {
+const getDirectConversationMessages = async (viewerId, userToChatId, { before = null, limit = DEFAULT_MESSAGE_PAGE_LIMIT } = {}) => {
 	const conversation = await findDirectConversationByUsers(viewerId, userToChatId);
 
-	if (!conversation) return [];
+	if (!conversation) {
+		return {
+			messages: [],
+			pageInfo: {
+				hasMore: false,
+				limit,
+				oldestMessageAt: null,
+			},
+		};
+	}
 
-	const messages = await prisma.message.findMany({
-		where: {
-			conversationId: conversation.id,
-			NOT: {
-				deletedFor: {
-					has: viewerId,
-				},
+	const where = {
+		conversationId: conversation.id,
+		NOT: {
+			deletedFor: {
+				has: viewerId,
 			},
 		},
-		orderBy: { createdAt: "asc" },
+	};
+
+	if (before) {
+		where.createdAt = {
+			lt: before,
+		};
+	}
+
+	const messages = await prisma.message.findMany({
+		where,
+		orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+		take: limit + 1,
 		include: messageInclude,
 	});
 
-	return messages.map((message) => toMessageDto(message));
+	return buildPaginatedMessagesResponse(messages, limit);
 };
 
-const getGroupConversationMessages = async (viewerId, conversationId) => {
+const getGroupConversationMessages = async (
+	viewerId,
+	conversationId,
+	{ before = null, limit = DEFAULT_MESSAGE_PAGE_LIMIT } = {}
+) => {
 	const conversation = await getGroupConversationForMember(conversationId, viewerId);
 
 	if (!conversation) {
 		return null;
 	}
 
-	const messages = await prisma.message.findMany({
-		where: {
-			conversationId: conversation.id,
-			NOT: {
-				deletedFor: {
-					has: viewerId,
-				},
+	const where = {
+		conversationId: conversation.id,
+		NOT: {
+			deletedFor: {
+				has: viewerId,
 			},
 		},
-		orderBy: { createdAt: "asc" },
+	};
+
+	if (before) {
+		where.createdAt = {
+			lt: before,
+		};
+	}
+
+	const messages = await prisma.message.findMany({
+		where,
+		orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+		take: limit + 1,
 		include: messageInclude,
 	});
 
-	return messages.map((message) => toMessageDto(message));
+	return buildPaginatedMessagesResponse(messages, limit);
 };
 
 export const sendMessage = async (req, res) => {
@@ -286,14 +347,20 @@ export const getMessages = async (req, res) => {
 	try {
 		const { id: userToChatId } = req.params;
 		const senderId = req.user._id;
+		const before = parseBeforeCursor(req.query.before);
+		const limit = normalizeMessagePageLimit(req.query.limit);
 		const userToChat = await getChatUserAvailability(userToChatId);
+
+		if (req.query.before && !before) {
+			return res.status(400).json({ error: "Invalid before cursor" });
+		}
 
 		if (!userToChat || userToChat.isArchived || userToChat.isBanned) {
 			return res.status(404).json({ error: "User not available" });
 		}
 
-		const messages = await getDirectConversationMessages(senderId, userToChatId);
-		res.status(200).json(messages);
+		const paginatedMessages = await getDirectConversationMessages(senderId, userToChatId, { before, limit });
+		res.status(200).json(paginatedMessages);
 	} catch (error) {
 		console.log("Error in getMessages controller: ", error.message);
 		if (isPrismaConnectionError(error)) {
@@ -307,13 +374,20 @@ export const getGroupMessages = async (req, res) => {
 	try {
 		const { id: conversationId } = req.params;
 		const userId = req.user._id;
-		const messages = await getGroupConversationMessages(userId, conversationId);
+		const before = parseBeforeCursor(req.query.before);
+		const limit = normalizeMessagePageLimit(req.query.limit);
 
-		if (!messages) {
+		if (req.query.before && !before) {
+			return res.status(400).json({ error: "Invalid before cursor" });
+		}
+
+		const paginatedMessages = await getGroupConversationMessages(userId, conversationId, { before, limit });
+
+		if (!paginatedMessages) {
 			return res.status(404).json({ error: "Group not found" });
 		}
 
-		res.status(200).json(messages);
+		res.status(200).json(paginatedMessages);
 	} catch (error) {
 		console.log("Error in getGroupMessages controller: ", error.message);
 		if (isPrismaConnectionError(error)) {

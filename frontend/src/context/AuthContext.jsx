@@ -3,10 +3,16 @@ import { preloadAvatar } from "../utils/avatar";
 
 export const AuthContext = createContext();
 
+const getUserId = (user) => user?._id || user?.id || null;
+
 const normalizeAuthUser = (user) => {
 	if (!user) return null;
+	const userId = getUserId(user);
+	if (!userId) return null;
 	return {
 		...user,
+		_id: userId,
+		id: userId,
 		role: user.role || "USER",
 		isPrimaryDeveloper: user.isPrimaryDeveloper || false,
 		isVerified: user.isVerified || false,
@@ -28,7 +34,16 @@ export const useAuthContext = () => {
 };
 
 export const AuthContextProvider = ({ children }) => {
-	const [authUser, setAuthUser] = useState(normalizeAuthUser(JSON.parse(localStorage.getItem("chat-user")) || null));
+	const [authUser, setAuthUserState] = useState(normalizeAuthUser(JSON.parse(localStorage.getItem("chat-user")) || null));
+
+	const setAuthUser = (nextUser) => {
+		if (typeof nextUser === "function") {
+			setAuthUserState((currentUser) => normalizeAuthUser(nextUser(currentUser)));
+			return;
+		}
+
+		setAuthUserState(normalizeAuthUser(nextUser));
+	};
 
 	useEffect(() => {
 		let isCancelled = false;

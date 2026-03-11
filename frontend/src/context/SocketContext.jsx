@@ -6,6 +6,7 @@ import useConversation from "../zustand/useConversation";
 
 const SocketContext = createContext();
 const CONVERSATIONS_REFRESH_EVENT = "chat:conversations-refresh";
+const getUserId = (user) => user?._id || user?.id || null;
 
 export const useSocketContext = () => {
 	return useContext(SocketContext);
@@ -17,12 +18,13 @@ export const SocketContextProvider = ({ children }) => {
 	const [onlineUsers, setOnlineUsers] = useState([]);
 	const [lastSeenByUser, setLastSeenByUser] = useState({});
 	const { authUser, setAuthUser } = useAuthContext();
+	const authUserId = getUserId(authUser);
 
 	useEffect(() => {
-		if (authUser) {
+		if (authUserId) {
 			const socket = io(import.meta.env.VITE_API_URL || "http://localhost:5001", {
 				query: {
-					userId: authUser._id,
+					userId: authUserId,
 				},
 			});
 
@@ -55,16 +57,19 @@ export const SocketContextProvider = ({ children }) => {
 			});
 
 			socket.on("sessionUserUpdated", (nextUser) => {
-				if (!nextUser?._id) return;
+				const nextUserId = getUserId(nextUser);
+				if (!nextUserId) return;
+				const normalizedNextUser = { ...nextUser, _id: nextUserId, id: nextUserId };
 
-				useConversation.getState().applyUserUpdate(nextUser);
-				localStorage.setItem("chat-user", JSON.stringify(nextUser));
-				setAuthUser(nextUser);
+				useConversation.getState().applyUserUpdate(normalizedNextUser);
+				localStorage.setItem("chat-user", JSON.stringify(normalizedNextUser));
+				setAuthUser(normalizedNextUser);
 			});
 
 			socket.on("publicUserUpdated", (nextUser) => {
-				if (!nextUser?._id) return;
-				useConversation.getState().applyUserUpdate(nextUser);
+				const nextUserId = getUserId(nextUser);
+				if (!nextUserId) return;
+				useConversation.getState().applyUserUpdate({ ...nextUser, _id: nextUserId, id: nextUserId });
 			});
 
 			socket.on("conversationsRefreshRequired", () => {
@@ -106,7 +111,7 @@ export const SocketContextProvider = ({ children }) => {
 			setOnlineUsers([]);
 			setLastSeenByUser({});
 		}
-	}, [authUser, setAuthUser]);
+	}, [authUserId, setAuthUser]);
 
 	return (
 		<SocketContext.Provider value={{ socket, isSocketConnected, onlineUsers, lastSeenByUser }}>

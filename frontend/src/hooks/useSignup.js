@@ -27,8 +27,11 @@ const useSignup = () => {
 				setErrors(mapSignupErrorToFields(data));
 				return false;
 			}
-			localStorage.setItem("chat-user", JSON.stringify(data));
-			setAuthUser(data);
+
+			const sessionUser = await establishSignupSession({ username, password }, data);
+			localStorage.setItem("chat-user", JSON.stringify(sessionUser));
+			setAuthUser(sessionUser);
+			window.dispatchEvent(new Event("chat:conversations-refresh"));
 			setErrors({});
 			return true;
 		} catch (error) {
@@ -57,6 +60,25 @@ const useSignup = () => {
 	return { loading, signup, errors, clearError };
 };
 export default useSignup;
+
+async function establishSignupSession({ username, password }, fallbackUser) {
+	try {
+		const loginResponse = await fetch("/api/auth/login", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ username, password }),
+		});
+
+		const loginData = await loginResponse.json();
+		if (loginResponse.ok && !loginData.error) {
+			return loginData;
+		}
+	} catch {
+		// Keep signup response user if auto-login refresh fails.
+	}
+
+	return fallbackUser;
+}
 
 function validateSignupInputs({ fullName, username, password, confirmPassword, gender }) {
 	const errors = {};

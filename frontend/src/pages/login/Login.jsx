@@ -1,11 +1,12 @@
 import { useState } from "react";
 import useLogin from "../../hooks/useLogin";
 import AuthShell from "../../components/auth/AuthShell";
-import { FiArrowRight, FiAtSign, FiLock } from "react-icons/fi";
+import { FiArrowRight, FiAtSign, FiEye, FiEyeOff, FiLock } from "react-icons/fi";
 
 const Login = () => {
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
+	const [showPassword, setShowPassword] = useState(false);
 
 	const { loading, login, errors, clearError } = useLogin();
 
@@ -58,7 +59,7 @@ const Login = () => {
 						<div className={`auth-input-wrap ${errors.password ? "auth-input-wrap--error" : ""}`}>
 							<FiLock className='auth-input-icon' />
 							<input
-								type='password'
+								type={showPassword ? "text" : "password"}
 								placeholder='Enter your password'
 								className='auth-input'
 								value={password}
@@ -66,6 +67,15 @@ const Login = () => {
 								autoComplete='current-password'
 								aria-invalid={Boolean(errors.password)}
 							/>
+							<button
+								type='button'
+								className='auth-input-toggle'
+								onClick={() => setShowPassword((currentShowPassword) => !currentShowPassword)}
+								aria-label={showPassword ? "Hide password" : "Show password"}
+								title={showPassword ? "Hide password" : "Show password"}
+							>
+								{showPassword ? <FiEyeOff size={18} /> : <FiEye size={18} />}
+							</button>
 						</div>
 						{errors.password ? <p className='auth-error-text'>{errors.password}</p> : null}
 					</div>

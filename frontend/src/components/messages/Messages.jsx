@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { BsReply } from "react-icons/bs";
 import { HiOutlineFaceSmile, HiOutlineMicrophone } from "react-icons/hi2";
@@ -18,8 +18,15 @@ const emptyStateTips = [
 	{ icon: BsReply, label: "Right-click to reply or copy" },
 ];
 
+const buildConversationKey = (conversation) => {
+	if (!conversation?._id) return "";
+	const conversationType = conversation.type === "GROUP" ? "GROUP" : "DIRECT";
+	return `${conversationType}:${conversation._id}`;
+};
+
 const Messages = () => {
-	const { messages, loading } = useGetMessages();
+	const { messages, loading, loadingOlder, hasOlderMessages, loadOlderMessages, messagesConversationKey } =
+		useGetMessages();
 	const { selectedConversation, isTyping } = useConversation();
 	const [contextMenuMessageId, setContextMenuMessageId] = useState(null);
 	const [typingAvatarSrc, setTypingAvatarSrc] = useState(null);
@@ -33,12 +40,151 @@ const Messages = () => {
 	const lastMessageRef = useRef();
 	const scrollContainerRef = useRef();
 	const highlightTimeoutRef = useRef(null);
+	const initialScrollDoneRef = useRef(false);
+	const pendingPrependRestoreRef = useRef(null);
+	const previousBoundariesRef = useRef({
+		firstId: null,
+		lastId: null,
+		count: 0,
+	});
+	const selectedConversationKey = buildConversationKey(selectedConversation);
 
 	useEffect(() => {
-		setTimeout(() => {
-			lastMessageRef.current?.scrollIntoView({ behavior: "smooth" });
-		}, 100);
-	}, [messages, isTyping]);
+		initialScrollDoneRef.current = false;
+		pendingPrependRestoreRef.current = null;
+		previousBoundariesRef.current = {
+			firstId: null,
+			lastId: null,
+			count: 0,
+		};
+	}, [selectedConversation?._id]);
+
+	const scrollToBottom = useCallback((behavior = "auto") => {
+		lastMessageRef.current?.scrollIntoView({ behavior });
+	}, []);
+
+	const loadOlderAtTop = useCallback(async () => {
+		if (loading || loadingOlder || !hasOlderMessages) return;
+		const container = scrollContainerRef.current;
+		if (!container) return;
+
+		pendingPrependRestoreRef.current = {
+			prevHeight: container.scrollHeight,
+			prevTop: container.scrollTop,
+		};
+
+		const result = await loadOlderMessages();
+		if (!result?.loaded) {
+			pendingPrependRestoreRef.current = null;
+		}
+	}, [hasOlderMessages, loadOlderMessages, loading, loadingOlder]);
+
+	useEffect(() => {
+		const container = scrollContainerRef.current;
+		if (!container) return undefined;
+
+		let isFramePending = false;
+		const handleScroll = () => {
+			if (isFramePending) return;
+
+			isFramePending = true;
+			requestAnimationFrame(() => {
+				isFramePending = false;
+				if (container.scrollTop <= 80) {
+					void loadOlderAtTop();
+				}
+			});
+		};
+
+		container.addEventListener("scroll", handleScroll, { passive: true });
+		return () => {
+			container.removeEventListener("scroll", handleScroll);
+		};
+	}, [loadOlderAtTop]);
+
+	useEffect(() => {
+		const container = scrollContainerRef.current;
+		if (!container) return;
+		if (!selectedConversationKey || messagesConversationKey !== selectedConversationKey) return;
+
+		const currentFirstId = messages[0]?._id || null;
+		const currentLastId = messages[messages.length - 1]?._id || null;
+		const currentCount = messages.length;
+		const previous = previousBoundariesRef.current;
+
+		if (!initialScrollDoneRef.current) {
+			if (currentCount === 0) {
+				// Wait for the first real batch before locking initial scroll state.
+				if (loading) {
+					return;
+				}
+
+				initialScrollDoneRef.current = true;
+				previousBoundariesRef.current = {
+					firstId: currentFirstId,
+					lastId: currentLastId,
+					count: currentCount,
+				};
+				return;
+			}
+
+			initialScrollDoneRef.current = true;
+			requestAnimationFrame(() => {
+				scrollToBottom("auto");
+			});
+			previousBoundariesRef.current = {
+				firstId: currentFirstId,
+				lastId: currentLastId,
+				count: currentCount,
+			};
+			return;
+		}
+
+		if (pendingPrependRestoreRef.current) {
+			const { prevHeight, prevTop } = pendingPrependRestoreRef.current;
+			pendingPrependRestoreRef.current = null;
+			requestAnimationFrame(() => {
+				container.scrollTop = container.scrollHeight - prevHeight + prevTop;
+			});
+			previousBoundariesRef.current = {
+				firstId: currentFirstId,
+				lastId: currentLastId,
+				count: currentCount,
+			};
+			return;
+		}
+
+		const appendedMessages =
+			currentCount >= previous.count &&
+			currentFirstId === previous.firstId &&
+			currentLastId !== previous.lastId;
+		const distanceFromBottom = container.scrollHeight - (container.scrollTop + container.clientHeight);
+		const isNearBottom = distanceFromBottom <= 120;
+
+		if (appendedMessages && isNearBottom) {
+			requestAnimationFrame(() => {
+				scrollToBottom("smooth");
+			});
+		}
+
+		previousBoundariesRef.current = {
+			firstId: currentFirstId,
+			lastId: currentLastId,
+			count: currentCount,
+		};
+	}, [messages, messagesConversationKey, scrollToBottom, selectedConversationKey]);
+
+	useEffect(() => {
+		if (!isTyping) return;
+		const container = scrollContainerRef.current;
+		if (!container) return;
+		const distanceFromBottom = container.scrollHeight - (container.scrollTop + container.clientHeight);
+		if (distanceFromBottom <= 120) {
+			requestAnimationFrame(() => {
+				scrollToBottom("smooth");
+			});
+		}
+	}, [isTyping, scrollToBottom]);
 
 	useEffect(() => {
 		const handleClickOutside = () => {
@@ -107,6 +253,14 @@ const Messages = () => {
 					className='custom-scrollbar chat-scrollbar h-full overflow-x-hidden overflow-y-auto px-2.5 py-3 sm:px-3 sm:py-4 md:px-5'
 				>
 					<div className='space-y-2 pr-1 md:space-y-3'>
+						{loadingOlder ? (
+							<div className='flex items-center justify-center py-1'>
+								<span className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-300'>
+									Loading older messages...
+								</span>
+							</div>
+						) : null}
+
 						{!loading &&
 							messages.length > 0 &&
 							messages.map((message) => {

@@ -336,6 +336,60 @@ export const CallContextProvider = ({ children }) => {
 	const pendingIceCandidatesRef = useRef(new Map());
 	const durationIntervalRef = useRef(null);
 	const incomingCallRef = useRef(null);
+	const recentlyClosedCallsRef = useRef(new Map());
+
+	const computeCallDurationSeconds = (call, endedAt = new Date()) => {
+		const endedAtDate = endedAt instanceof Date ? endedAt : new Date(endedAt);
+		const startedAtSource = call?.connectedAt || call?.startedAt;
+		if (!startedAtSource) return Number(call?.durationSeconds) || 0;
+
+		const startedAtDate = new Date(startedAtSource);
+		const endedAtMs = endedAtDate.getTime();
+		const startedAtMs = startedAtDate.getTime();
+		if (!Number.isFinite(endedAtMs) || !Number.isFinite(startedAtMs)) {
+			return Number(call?.durationSeconds) || 0;
+		}
+
+		return Math.max(0, Math.round((endedAtMs - startedAtMs) / 1000));
+	};
+
+	const formatDurationLabel = (totalSeconds = 0) => {
+		const safeSeconds = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : 0;
+		const hours = Math.floor(safeSeconds / 3600);
+		const minutes = Math.floor((safeSeconds % 3600) / 60);
+		const seconds = safeSeconds % 60;
+
+		if (hours > 0) {
+			return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+		}
+
+		return `${minutes}:${String(seconds).padStart(2, "0")}`;
+	};
+
+	const buildClosedCallSnapshot = (call, endedAt = new Date()) => {
+		if (!call?.callId) {
+			return {
+				status: CALL_STATUSES.ENDED,
+				endedAt: toIsoString(endedAt),
+			};
+		}
+
+		const durationSeconds = Math.max(Number(call.durationSeconds) || 0, computeCallDurationSeconds(call, endedAt));
+		const mediaLabel = call.mediaType === "video" ? "Video call" : "Voice call";
+		const joinedCount =
+			Number(call.joinedParticipantCount) ||
+			Number(call.activeParticipantCount) ||
+			((call.participants || []).filter((participant) => participant.joinedAt).length || 0);
+
+		return {
+			status: CALL_STATUSES.ENDED,
+			endedAt: toIsoString(endedAt),
+			durationSeconds,
+			activeParticipantCount: 0,
+			joinedParticipantCount: joinedCount,
+			previewText: durationSeconds > 0 ? `${mediaLabel} · ${formatDurationLabel(durationSeconds)}` : `${mediaLabel} ended`,
+		};
+	};
 
 	useEffect(() => {
 		callStateRef.current = callState;
@@ -348,6 +402,47 @@ export const CallContextProvider = ({ children }) => {
 	useEffect(() => {
 		authUserRef.current = authUser;
 	}, [authUser]);
+
+	const purgeExpiredClosedCalls = () => {
+		const now = Date.now();
+		for (const [callId, record] of recentlyClosedCallsRef.current.entries()) {
+			if (!callId || !record?.expiresAt || record.expiresAt <= now) {
+				recentlyClosedCallsRef.current.delete(callId);
+			}
+		}
+	};
+
+	const markCallAsRecentlyClosed = (callId, ttlMs = 180000, snapshot = null) => {
+		if (!callId) return;
+		purgeExpiredClosedCalls();
+		const existingRecord = recentlyClosedCallsRef.current.get(callId);
+		recentlyClosedCallsRef.current.set(callId, {
+			expiresAt: Date.now() + ttlMs,
+			snapshot: snapshot || existingRecord?.snapshot || null,
+		});
+	};
+
+	const clearRecentlyClosedCall = (callId) => {
+		if (!callId) return;
+		recentlyClosedCallsRef.current.delete(callId);
+	};
+
+	const isCallRecentlyClosed = (callId) => {
+		if (!callId) return false;
+		purgeExpiredClosedCalls();
+		const record = recentlyClosedCallsRef.current.get(callId);
+		if (!record?.expiresAt) return false;
+		if (record.expiresAt <= Date.now()) {
+			recentlyClosedCallsRef.current.delete(callId);
+			return false;
+		}
+		return true;
+	};
+
+	const getClosedCallSnapshot = (callId) => {
+		if (!isCallRecentlyClosed(callId)) return null;
+		return recentlyClosedCallsRef.current.get(callId)?.snapshot || null;
+	};
 
 	const getOtherCallUserIds = (call, options = {}) => {
 		const { joinedOnly = false, activeOnly = false } = options;
@@ -363,6 +458,36 @@ export const CallContextProvider = ({ children }) => {
 				})
 				.map((participant) => participant.userId)
 		)];
+	};
+
+	const normalizeIncomingCallForViewer = (call) => {
+		if (!call?.callId) return call;
+
+		const viewerId = authUserRef.current?._id || "";
+		const isGroupCall =
+			call.callMode === "group" ||
+			call.conversationType === "GROUP" ||
+			call.conversation?.type === "GROUP";
+		if (isGroupCall) {
+			return call;
+		}
+
+		const callInitiatorId = call.initiator?._id || call.initiatorId || "";
+		if (!callInitiatorId || callInitiatorId === viewerId) {
+			return call;
+		}
+
+		const otherUsers = Array.isArray(call.otherUsers)
+			? call.otherUsers.filter((user) => user?._id && user._id !== viewerId)
+			: [];
+		const primaryOtherUser = otherUsers[0] || call.initiator || null;
+
+		return {
+			...call,
+			otherUsers: primaryOtherUser ? [primaryOtherUser] : otherUsers,
+			title: primaryOtherUser?.fullName || call.title,
+			profilePic: primaryOtherUser?.profilePic || call.profilePic || "",
+		};
 	};
 
 	const buildOptimisticParticipant = ({ user, status, joinedAt = null, invitedBy = null }) => ({
@@ -458,6 +583,7 @@ export const CallContextProvider = ({ children }) => {
 	const syncParticipantLocally = (user, nextFields = {}) => {
 		const participantUserId = getUserIdKey(user || nextFields.userId);
 		if (!participantUserId) return;
+		const nowIso = toIsoString();
 
 		updateCallState((currentState) => {
 			if (!currentState.callId) {
@@ -490,10 +616,16 @@ export const CallContextProvider = ({ children }) => {
 					nextFields.invitedBy ?? existingParticipant?.invitedBy ?? null,
 			});
 			const metrics = getParticipantMetrics(nextParticipants);
+			const currentUserJoinedAndActive = isCurrentUserActive(nextParticipants, authUserRef.current?._id || "");
+			const shouldMarkConnected = metrics.activeParticipantCount >= 2 && currentUserJoinedAndActive;
+			const nextConnectedAt = shouldMarkConnected ? currentState.connectedAt || nowIso : currentState.connectedAt;
 
 			return {
 				...currentState,
 				status: metrics.activeParticipantCount > 1 ? CALL_STATUSES.ACTIVE : currentState.status,
+				phase:
+					shouldMarkConnected && currentState.phase !== "idle" ? "active" : currentState.phase,
+				connectedAt: nextConnectedAt,
 				participants: nextParticipants,
 				participantCount: nextParticipants.length,
 				joinedParticipantCount: metrics.joinedParticipantCount,
@@ -530,6 +662,14 @@ export const CallContextProvider = ({ children }) => {
 		updateDuration();
 		durationIntervalRef.current = window.setInterval(updateDuration, 1000);
 	};
+
+	useEffect(() => {
+		if (callState.phase !== "active" || !callState.connectedAt) {
+			return;
+		}
+
+		startDurationTimer(callState.connectedAt);
+	}, [callState.phase, callState.connectedAt]);
 
 	const registerParticipants = (participants) => {
 		const nextUsers = uniqueUsers((participants || []).map((participant) => participant?.user).filter(Boolean));
@@ -916,14 +1056,13 @@ export const CallContextProvider = ({ children }) => {
 			const nextState = connection.connectionState;
 
 			if (nextState === "connected") {
+				const localConnectedAt = callStateRef.current.connectedAt || toIsoString();
 				updateCallState((currentState) => ({
 					...currentState,
 					phase: "active",
+					connectedAt: currentState.connectedAt || localConnectedAt,
 				}));
-
-				if (callStateRef.current.connectedAt) {
-					startDurationTimer(callStateRef.current.connectedAt);
-				}
+				startDurationTimer(localConnectedAt);
 				return;
 			}
 
@@ -999,6 +1138,7 @@ export const CallContextProvider = ({ children }) => {
 	const joinCallById = async (callId, options = {}) => {
 		if (!callId) return null;
 
+		clearRecentlyClosedCall(callId);
 		const call = options.call || (await fetchCall(callId));
 		incomingCallRef.current = null;
 		syncCurrentCallFromDto(call, {
@@ -1077,6 +1217,7 @@ export const CallContextProvider = ({ children }) => {
 
 		let startedCall = null;
 		const localCallId = createClientCallId();
+		clearRecentlyClosedCall(localCallId);
 		const optimisticCall = buildOptimisticCall({
 			target,
 			mediaType,
@@ -1119,6 +1260,7 @@ export const CallContextProvider = ({ children }) => {
 			await offerActiveParticipantsForCall(callStateRef.current.callId ? callStateRef.current : optimisticCall);
 		} catch (error) {
 			console.error(`Error starting ${mediaType} call:`, error);
+			markCallAsRecentlyClosed(localCallId, 180000, buildClosedCallSnapshot(optimisticCall));
 			emitFastSocketEvent("call:ended-fast", {
 				targetUserIds: fastRingTargetUserIds,
 				callId: localCallId,
@@ -1191,6 +1333,7 @@ export const CallContextProvider = ({ children }) => {
 			return;
 		}
 
+		markCallAsRecentlyClosed(incomingCall.callId, 180000, buildClosedCallSnapshot(incomingCall));
 		emitFastSocketEvent("call:declined-fast", {
 			targetUserIds: getOtherCallUserIds(incomingCall, { activeOnly: true }),
 			callId: incomingCall.callId,
@@ -1232,12 +1375,14 @@ export const CallContextProvider = ({ children }) => {
 			const targetUserIds = getOtherCallUserIds(activeCall);
 
 			if (shouldLeaveOnly) {
+				markCallAsRecentlyClosed(activeCall.callId, 8000);
 				emitFastSocketEvent("call:participant-left-fast", {
 					targetUserIds,
 					callId: activeCall.callId,
 					participantUserId: currentUserId,
 				});
 			} else {
+				markCallAsRecentlyClosed(activeCall.callId, 180000, buildClosedCallSnapshot(activeCall));
 				emitFastSocketEvent("call:ended-fast", {
 					targetUserIds,
 					callId: activeCall.callId,
@@ -1312,16 +1457,19 @@ export const CallContextProvider = ({ children }) => {
 
 		const handleCallRinging = ({ call } = {}) => {
 			if (!call?.callId) return;
+			const normalizedCall = normalizeIncomingCallForViewer(call);
+			if (isCallRecentlyClosed(call.callId)) return;
+			if (normalizedCall?.status && normalizedCall.status !== CALL_STATUSES.RINGING) return;
 
 			if (incomingCallRef.current?.callId === call.callId) {
 				incomingCallRef.current = {
 					...incomingCallRef.current,
-					...call,
+					...normalizedCall,
 				};
 			}
 
 			if (callStateRef.current.callId === call.callId) {
-				syncCurrentCallFromDto(call, {
+				syncCurrentCallFromDto(normalizedCall, {
 					phase: callStateRef.current.phase,
 					direction: callStateRef.current.direction || "incoming",
 				});
@@ -1333,9 +1481,9 @@ export const CallContextProvider = ({ children }) => {
 				return;
 			}
 
-			incomingCallRef.current = call;
-			registerParticipants(call.participants);
-			updateCallState(buildCallStateFromDto(call, INITIAL_CALL_STATE, {
+			incomingCallRef.current = normalizedCall;
+			registerParticipants(normalizedCall.participants);
+			updateCallState(buildCallStateFromDto(normalizedCall, INITIAL_CALL_STATE, {
 				phase: "incoming",
 				direction: "incoming",
 			}));
@@ -1343,16 +1491,28 @@ export const CallContextProvider = ({ children }) => {
 
 		const handleCallParticipants = ({ call } = {}) => {
 			if (!call?.callId) return;
+			const normalizedCall = normalizeIncomingCallForViewer(call);
+			if (isCallRecentlyClosed(call.callId) && callStateRef.current.callId !== call.callId) {
+				return;
+			}
+			if (normalizedCall.status === CALL_STATUSES.ENDED) {
+				markCallAsRecentlyClosed(call.callId, 180000, buildClosedCallSnapshot(normalizedCall));
+			}
 
 			if (incomingCallRef.current?.callId === call.callId) {
-				incomingCallRef.current = call;
+				incomingCallRef.current = normalizedCall;
 			}
 
 			if (callStateRef.current.callId !== call.callId) {
 				return;
 			}
+			if (normalizedCall.status === CALL_STATUSES.ENDED) {
+				toast("Call ended");
+				resetCallLocally();
+				return;
+			}
 
-			syncCurrentCallFromDto(call, {
+			syncCurrentCallFromDto(normalizedCall, {
 				phase: callStateRef.current.phase,
 				direction: callStateRef.current.direction,
 			});
@@ -1386,12 +1546,47 @@ export const CallContextProvider = ({ children }) => {
 
 		const handleParticipantLeft = ({ callId, participantUserId } = {}) => {
 			if (!callId || callStateRef.current.callId !== callId || !participantUserId) return;
+			const currentCall = callStateRef.current;
+			const remainingActiveCount = (currentCall.participants || []).filter(
+				(participant) =>
+					participant.userId !== participantUserId && participant.joinedAt && !participant.leftAt
+			).length;
+
 			syncParticipantLocally(participantUserId, {
 				status: CALL_PARTICIPANT_STATUSES.JOINED,
 				leftAt: toIsoString(),
 				isActive: false,
 			});
 			closePeerConnection(participantUserId);
+
+			if (remainingActiveCount <= 1 && currentCall.phase !== "incoming") {
+				const closedSnapshot = buildClosedCallSnapshot(currentCall);
+				markCallAsRecentlyClosed(callId, 180000, closedSnapshot);
+				emitFastSocketEvent("call:ended-fast", {
+					targetUserIds: getOtherCallUserIds(currentCall),
+					callId,
+					endedByUserId: authUserRef.current?._id,
+					reason: "insufficient-participants",
+				});
+				resetCallLocally();
+
+				void requestJsonWithRetry(
+					`/api/calls/${callId}/end`,
+					{
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+						},
+					},
+					{
+						retries: 8,
+						delayMs: 200,
+						shouldRetry: (error) => /call not available|call not found/i.test(error.message || ""),
+					}
+				).catch(() => {
+					// Ignore persistence latency here. UI already reflects the ended call instantly.
+				});
+			}
 		};
 
 		const handleParticipantDeclined = ({ callId, userId } = {}) => {
@@ -1477,7 +1672,14 @@ export const CallContextProvider = ({ children }) => {
 		};
 
 		const handleCallEnded = ({ callId } = {}) => {
-			if (!callId || callStateRef.current.callId !== callId) return;
+			if (!callId) return;
+			const isCurrentCall = callStateRef.current.callId === callId;
+			markCallAsRecentlyClosed(
+				callId,
+				180000,
+				isCurrentCall ? buildClosedCallSnapshot(callStateRef.current) : null
+			);
+			if (!isCurrentCall) return;
 			toast("Call ended");
 			resetCallLocally();
 		};
@@ -1523,6 +1725,24 @@ export const CallContextProvider = ({ children }) => {
 		.filter((participant) => participant.joinedAt)
 		.map((participant) => participant.user)
 		.filter(Boolean);
+	const isCallClosedForUi = (callId) => isCallRecentlyClosed(callId);
+	const getClosedCallInfo = (callInfoOrId) => {
+		const callId = typeof callInfoOrId === "string" ? callInfoOrId : callInfoOrId?.callId;
+		const closedSnapshot = getClosedCallSnapshot(callId);
+		if (!closedSnapshot) return null;
+
+		if (typeof callInfoOrId === "object" && callInfoOrId) {
+			return {
+				...callInfoOrId,
+				...closedSnapshot,
+				status: CALL_STATUSES.ENDED,
+				activeParticipantCount: 0,
+				canJoin: false,
+			};
+		}
+
+		return closedSnapshot;
+	};
 
 	const value = {
 		callState,
@@ -1541,6 +1761,8 @@ export const CallContextProvider = ({ children }) => {
 		inviteUsersToCurrentCall,
 		toggleMute,
 		toggleScreenShare,
+		isCallClosedForUi,
+		getClosedCallInfo,
 	};
 
 	return <CallContext.Provider value={value}>{children}</CallContext.Provider>;

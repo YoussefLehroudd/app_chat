@@ -23,6 +23,7 @@ import {
 	isVideoAttachment,
 } from "../../utils/messageAttachments";
 import FlagText from "../common/FlagText";
+const STORY_OPEN_REQUEST_EVENT = "chat:open-story-from-message";
 
 const getEmojiOnlyState = (value) => {
 	const trimmedValue = typeof value === "string" ? value.trim() : "";
@@ -74,7 +75,7 @@ const Message = ({
 	const MENU_HEIGHT = 164;
 	const MENU_GAP = 12;
 	const { authUser } = useAuthContext();
-	const { callState, joinExistingCall } = useCallContext();
+	const { callState, joinExistingCall, isCallClosedForUi, getClosedCallInfo } = useCallContext();
 	const { selectedConversation } = useConversation();
 	const fromMe = message.senderId === authUser._id;
 	const formattedTime = extractTime(message.createdAt);
@@ -379,10 +380,49 @@ const Message = ({
 		}
 	};
 
+	const openStoryFromMessage = () => {
+		const interaction = message?.storyInteraction;
+		if (!interaction?.storyId || !interaction?.storyOwnerId) {
+			toast.error("Story reference unavailable");
+			return;
+		}
+
+		window.dispatchEvent(
+			new CustomEvent(STORY_OPEN_REQUEST_EVENT, {
+				detail: {
+					storyId: interaction.storyId,
+					userId: interaction.storyOwnerId,
+					story: {
+						_id: interaction.storyId,
+						userId: interaction.storyOwnerId,
+						text: interaction.storyText || "",
+						mediaUrl: interaction.storyMediaUrl || null,
+						mediaType: interaction.storyMediaType || "TEXT",
+						isOwn: interaction.storyOwnerId === authUser?._id,
+						isSeen: false,
+						viewCount: null,
+						createdAt: message.createdAt,
+						updatedAt: message.updatedAt,
+						expiresAt: null,
+						author: {
+							_id: interaction.storyOwnerId,
+							fullName: interaction.storyOwnerName || selectedConversation?.fullName || "Story owner",
+							username: selectedConversation?.username || "story",
+							profilePic: selectedConversation?.profilePic || "",
+							gender: selectedConversation?.gender || null,
+						},
+					},
+				},
+			})
+		);
+	};
+
 	if (message.isCallMessage && message.callInfo) {
 		const callInfo = message.callInfo;
-		const isLiveCall = callInfo.status !== "ENDED";
-		const isCurrentCall = callState.callId === callInfo.callId && callState.phase !== "idle";
+		const effectiveCallInfo = getClosedCallInfo?.(callInfo) || callInfo;
+		const isLocallyClosed = isCallClosedForUi?.(effectiveCallInfo.callId);
+		const isLiveCall = !isLocallyClosed && effectiveCallInfo.status !== "ENDED";
+		const isCurrentCall = callState.callId === effectiveCallInfo.callId && callState.phase !== "idle";
 		const canJoinFromMessage =
 			isLiveCall &&
 			!isCurrentCall &&
@@ -422,12 +462,12 @@ const Message = ({
 						<div className='flex items-center gap-3'>
 							<div
 								className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl ${
-									callInfo.mediaType === "video"
+									effectiveCallInfo.mediaType === "video"
 										? "bg-sky-500/16 text-sky-100"
 										: "bg-emerald-500/14 text-emerald-100"
 								}`}
 							>
-								{callInfo.mediaType === "video" ? (
+								{effectiveCallInfo.mediaType === "video" ? (
 									<HiOutlineVideoCamera className='h-6 w-6' />
 								) : (
 									<HiOutlinePhone className='h-6 w-6' />
@@ -435,10 +475,12 @@ const Message = ({
 							</div>
 							<div>
 								<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200/75'>
-									{callInfo.mediaType === "video" ? "Video call" : "Voice call"}
+									{effectiveCallInfo.mediaType === "video" ? "Video call" : "Voice call"}
 								</p>
 								<p className='mt-1 text-base font-semibold text-white'>
-									{isLiveCall ? `${callInfo.initiatorName} is calling` : `${callInfo.mediaType === "video" ? "Video" : "Voice"} call ended`}
+									{isLiveCall
+										? `${effectiveCallInfo.initiatorName} is calling`
+										: `${effectiveCallInfo.mediaType === "video" ? "Video" : "Voice"} call ended`}
 								</p>
 							</div>
 						</div>
@@ -459,12 +501,12 @@ const Message = ({
 					<div className='mt-4 grid gap-3 rounded-[22px] border border-white/10 bg-white/[0.03] p-4 sm:grid-cols-3'>
 						<div>
 							<p className='text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400'>Started</p>
-							<p className='mt-2 text-sm font-medium text-white'>{extractTime(callInfo.startedAt || message.createdAt)}</p>
+							<p className='mt-2 text-sm font-medium text-white'>{extractTime(effectiveCallInfo.startedAt || message.createdAt)}</p>
 						</div>
 						<div>
 							<p className='text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400'>Joined</p>
 							<p className='mt-2 text-sm font-medium text-white'>
-								{callInfo.joinedParticipantCount || callInfo.activeParticipantCount || 0} people
+								{effectiveCallInfo.joinedParticipantCount || effectiveCallInfo.activeParticipantCount || 0} people
 							</p>
 						</div>
 						<div>
@@ -473,22 +515,22 @@ const Message = ({
 							</p>
 							<p className='mt-2 text-sm font-medium text-white'>
 								{isLiveCall
-									? `${callInfo.activeParticipantCount || 1} inside`
-									: formatCallDuration(callInfo.durationSeconds)}
+									? `${effectiveCallInfo.activeParticipantCount || 1} inside`
+									: formatCallDuration(effectiveCallInfo.durationSeconds)}
 							</p>
 						</div>
 					</div>
 
 					<p className='mt-3 text-sm leading-6 text-slate-200'>
-						{callInfo.previewText}
-						{callInfo.callMode === "group" ? " Group members can still join while the call is live." : ""}
+						{effectiveCallInfo.previewText}
+						{isLiveCall && effectiveCallInfo.callMode === "group" ? " Group members can still join while the call is live." : ""}
 					</p>
 
 					{canJoinFromMessage ? (
 						<div className='mt-4 flex flex-wrap gap-2'>
 							<button
 								type='button'
-								onClick={() => joinExistingCall({ callId: callInfo.callId })}
+								onClick={() => joinExistingCall({ callId: effectiveCallInfo.callId })}
 								className='rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition hover:from-sky-400 hover:to-cyan-400'
 							>
 								Join call
@@ -607,6 +649,101 @@ const Message = ({
 
 					<div className={`mt-3 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
 						<span>{formattedTime}</span>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (message.isStoryInteraction && message.storyInteraction) {
+		const interaction = message.storyInteraction;
+		const isReaction = interaction.interactionType === "REACTION";
+		const summaryText = isReaction
+			? `${interaction.emoji || "❤️"} Reacted to your story`
+			: `💬 Replied to your story${interaction.comment ? `: ${interaction.comment}` : ""}`;
+		const storyMediaType = interaction.storyMediaType || "TEXT";
+		const hasStoryImage = storyMediaType === "IMAGE" && Boolean(interaction.storyMediaUrl);
+		const hasStoryVideo = storyMediaType === "VIDEO" && Boolean(interaction.storyMediaUrl);
+
+		return (
+			<div
+				id={`message-${message._id}`}
+				data-message-id={message._id}
+				ref={messageRef}
+				className={`chat ${chatClassName} ${shakeClass} scroll-mt-24`}
+				style={{ position: "relative" }}
+			>
+				<div className='chat-image avatar'>
+					<div className='relative w-9 rounded-full overflow-hidden ring-1 ring-white/10 md:w-10'>
+						<div
+							className={`absolute inset-0 bg-slate-700/60 transition-opacity duration-200 ${
+								avatarLoaded ? "opacity-0" : "opacity-100"
+							}`}
+						></div>
+						<img
+							alt='user avatar'
+							ref={avatarImgRef}
+							src={avatarSrc}
+							className={`h-full w-full object-cover transition-opacity duration-200 ${
+								avatarLoaded ? "opacity-100" : "opacity-0"
+							}`}
+							loading='eager'
+							decoding='async'
+							onLoad={() => setAvatarLoaded(true)}
+							onError={() => {
+								setAvatarSrc(fallbackAvatar);
+								setAvatarLoaded(true);
+							}}
+						/>
+					</div>
+				</div>
+
+				<div
+					className={`chat-bubble before:hidden after:hidden overflow-visible max-w-[85%] cursor-pointer px-3 py-3 text-sm transition-shadow duration-300 md:max-w-[72%] md:px-4 md:py-3.5 lg:max-w-[68%] xl:max-w-[62%] ${bubbleClassName} ${highlightClassName} ${
+						fromMe ? "rounded-[24px] rounded-br-[10px]" : "rounded-[24px] rounded-bl-[10px]"
+					}`}
+					onContextMenu={handleContextMenu}
+				>
+					<p className='text-sm font-medium leading-6 text-slate-100'>
+						<FlagText text={summaryText} />
+					</p>
+
+					<button
+						type='button'
+						onClick={(event) => {
+							event.stopPropagation();
+							openStoryFromMessage();
+						}}
+						className={`mt-3 block w-full overflow-hidden rounded-[20px] border text-left transition ${
+							fromMe
+								? "border-white/20 bg-white/10 hover:bg-white/16"
+								: "border-white/10 bg-white/[0.03] hover:bg-white/[0.07]"
+						}`}
+						title='Open related story'
+					>
+						{hasStoryImage ? (
+							<img src={interaction.storyMediaUrl} alt='Story preview' className='max-h-[180px] w-full object-cover' />
+						) : hasStoryVideo ? (
+							<div className='flex h-[140px] items-center justify-center bg-slate-950/35'>
+								<div className='rounded-full border border-cyan-300/25 bg-cyan-500/12 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100'>
+									Video story
+								</div>
+							</div>
+						) : (
+							<div className='px-4 py-4'>
+								<p className='text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-200/75'>Story</p>
+							</div>
+						)}
+						<div className='border-t border-white/10 px-4 py-3'>
+							<p className='line-clamp-2 text-xs leading-5 text-slate-200'>
+								{interaction.storyText?.trim() || "Tap to open story"}
+							</p>
+						</div>
+					</button>
+
+					<div className={`mt-2 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
+						<span>{message.isPending ? "Sending..." : formattedTime}</span>
+						{fromMe && !message.isPending ? <span>{message.isSeen ? <span className='text-blue-200'>✓✓</span> : "✓"}</span> : null}
 					</div>
 				</div>
 			</div>

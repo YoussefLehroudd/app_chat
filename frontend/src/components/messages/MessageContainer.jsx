@@ -204,161 +204,165 @@ const MessageContainer = () => {
 			) : (
 				<>
 					<div className='shrink-0 px-2 pb-2 pt-2 sm:px-3 sm:pb-3 sm:pt-3 md:px-5 md:pb-4 md:pt-4 lg:px-6'>
-						<div className='flex items-center gap-2.5 rounded-[22px] border border-white/10 bg-[linear-gradient(135deg,rgba(15,23,42,0.72),rgba(30,41,59,0.5))] px-2.5 py-2.5 shadow-[0_20px_42px_rgba(2,6,23,0.22)] backdrop-blur-xl sm:gap-3 sm:rounded-[28px] sm:px-3 sm:py-3 md:px-4'>
-							<button
-								type='button'
-								onClick={handleBackClick}
-								className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-white/20 hover:bg-white/[0.08] sm:h-11 sm:w-11'
-								aria-label='Exit conversation'
-								title='Exit conversation'
-							>
-								<IoArrowBack className='h-5 w-5' />
-							</button>
-
-							<button
-								type='button'
-								onClick={() => setShowUserInfo(true)}
-								className='relative inline-flex shrink-0 rounded-full ring-1 ring-white/10'
-								title='Open user info'
-							>
-								<div className='relative h-11 w-11 overflow-hidden rounded-full md:h-14 md:w-14'>
-									<div
-										className={`absolute inset-0 bg-slate-700/60 transition-opacity duration-200 ${
-											avatarLoaded ? "opacity-0" : "opacity-100"
-										}`}
-									></div>
-									<img
-										ref={imgRef}
-										src={avatarSrc}
-										alt={`${selectedConversation.fullName} avatar`}
-										className={`h-full w-full object-cover transition-opacity duration-200 ${
-											avatarLoaded ? "opacity-100" : "opacity-0"
-										}`}
-										loading='eager'
-										decoding='async'
-										fetchPriority='high'
-										onLoad={() => setAvatarLoaded(true)}
-										onError={() => {
-											setAvatarSrc(fallbackAvatar);
-											setAvatarLoaded(true);
-										}}
-									/>
-								</div>
-								<span
-									className={`absolute bottom-0 right-0 h-3.5 w-3.5 translate-x-[14%] translate-y-[14%] rounded-full border-2 border-slate-950 shadow-[0_0_0_1px_rgba(15,23,42,0.45)] ${
-										isSelectedUserOnline ? "bg-emerald-400" : "bg-slate-500"
-									} ${isGroupConversation ? "opacity-0" : "opacity-100"}`}
-								></span>
-							</button>
-
-							<div className='min-w-0 flex-1'>
-								<div className='flex flex-wrap items-center gap-2'>
-									<p className='truncate text-[15px] font-semibold text-slate-50 md:text-lg'>
-										{selectedConversation.fullName}
-									</p>
-									{isGroupConversation ? (
-										<span className='hidden rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2.5 py-1 text-[11px] font-medium text-cyan-100 sm:inline-flex'>
-											{selectedConversation.isPrivate ? "Private group" : "Group chat"}
-										</span>
-									) : (
-										<>
-											<VerifiedBadge user={selectedConversation} compact />
-											<DeveloperBadge user={selectedConversation} compact />
-											<span className='hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-300 sm:inline-flex'>
-												@{selectedConversation.username}
-											</span>
-										</>
-									)}
-								</div>
-								<p className='mt-0.5 truncate pr-1 text-[11px] leading-4 text-slate-400 sm:hidden'>
-									{mobileSelectedUserStatus}
-								</p>
-								<p className='mt-0.5 hidden truncate pr-0 text-sm leading-5 text-slate-400 sm:block'>
-									{desktopSelectedUserStatus}
-								</p>
-							</div>
-
-							<div className='hidden items-center gap-2 xl:flex'>
-								{capabilityCards.map(({ title }) => (
-									<span
-										key={title}
-										className='rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-slate-300'
-									>
-										{title}
-									</span>
-								))}
-							</div>
-
-							{isDirectConversation || canReadSelectedGroup ? (
-								<>
-									<button
-										type='button'
-										onClick={() => startVideoCall(selectedConversation)}
-										disabled={isDirectConversation ? !canStartDirectCall : !canStartGroupCall}
-										className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-sky-400/25 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-45 sm:h-11 sm:w-11'
-										aria-label={isGroupConversation ? "Start group video call" : "Start video call"}
-										title={
-											!isCallReady
-												? "Call connection is still loading"
-												: isDirectConversation && !isSelectedUserOnline
-													? "User must be online"
-													: isGroupConversation && selectedConversation?.isMember === false
-														? "Join the group first"
-													: callState.phase !== "idle"
-														? "Finish the current call first"
-														: isGroupConversation
-															? "Start group video call"
-															: "Start video call"
-										}
-									>
-										<HiOutlineVideoCamera className='h-5 w-5' />
-									</button>
-									<button
-										type='button'
-										onClick={() => startVoiceCall(selectedConversation)}
-										disabled={isDirectConversation ? !canStartDirectCall : !canStartGroupCall}
-										className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-emerald-400/25 hover:bg-emerald-500/10 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-45 sm:h-11 sm:w-11'
-										aria-label={isGroupConversation ? "Start group voice call" : "Start voice call"}
-										title={
-											!isCallReady
-												? "Call connection is still loading"
-												: isDirectConversation && !isSelectedUserOnline
-													? "User must be online"
-													: isGroupConversation && selectedConversation?.isMember === false
-														? "Join the group first"
-													: callState.phase !== "idle"
-														? "Finish the current call first"
-														: isGroupConversation
-															? "Start group voice call"
-															: "Start voice call"
-										}
-									>
-										<HiOutlinePhone className='h-5 w-5' />
-									</button>
-								</>
-							) : null}
-
-							{canReadSelectedGroup ? (
+						<div className='flex flex-wrap items-center gap-2.5 rounded-[22px] border border-white/10 bg-[linear-gradient(135deg,rgba(15,23,42,0.72),rgba(30,41,59,0.5))] px-2.5 py-2.5 shadow-[0_20px_42px_rgba(2,6,23,0.22)] backdrop-blur-xl sm:gap-3 sm:rounded-[28px] sm:px-3 sm:py-3 md:px-4'>
+							<div className='flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3'>
 								<button
 									type='button'
-									onClick={() => setShowDeleteConversationModal(true)}
-									className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-rose-400/25 hover:bg-rose-500/10 hover:text-rose-100 sm:h-11 sm:w-11'
-									aria-label='Delete conversation'
-									title='Delete conversation'
+									onClick={handleBackClick}
+									className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-white/20 hover:bg-white/[0.08] sm:h-11 sm:w-11'
+									aria-label='Exit conversation'
+									title='Exit conversation'
 								>
-									<HiOutlineTrash className='h-5 w-5' />
+									<IoArrowBack className='h-5 w-5' />
 								</button>
-							) : null}
 
-							<button
-								type='button'
-								onClick={() => setShowUserInfo(true)}
-								className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-sky-400/25 hover:bg-white/[0.08] sm:h-11 sm:w-11'
-								aria-label='Conversation info'
-								title='Conversation info'
-							>
-								<IoInformationCircleOutline className='h-5 w-5' />
-							</button>
+								<button
+									type='button'
+									onClick={() => setShowUserInfo(true)}
+									className='relative inline-flex shrink-0 rounded-full ring-1 ring-white/10'
+									title='Open user info'
+								>
+									<div className='relative h-11 w-11 overflow-hidden rounded-full md:h-14 md:w-14'>
+										<div
+											className={`absolute inset-0 bg-slate-700/60 transition-opacity duration-200 ${
+												avatarLoaded ? "opacity-0" : "opacity-100"
+											}`}
+										></div>
+										<img
+											ref={imgRef}
+											src={avatarSrc}
+											alt={`${selectedConversation.fullName} avatar`}
+											className={`h-full w-full object-cover transition-opacity duration-200 ${
+												avatarLoaded ? "opacity-100" : "opacity-0"
+											}`}
+											loading='eager'
+											decoding='async'
+											fetchpriority='high'
+											onLoad={() => setAvatarLoaded(true)}
+											onError={() => {
+												setAvatarSrc(fallbackAvatar);
+												setAvatarLoaded(true);
+											}}
+										/>
+									</div>
+									<span
+										className={`absolute bottom-0 right-0 h-3.5 w-3.5 translate-x-[14%] translate-y-[14%] rounded-full border-2 border-slate-950 shadow-[0_0_0_1px_rgba(15,23,42,0.45)] ${
+											isSelectedUserOnline ? "bg-emerald-400" : "bg-slate-500"
+										} ${isGroupConversation ? "opacity-0" : "opacity-100"}`}
+									></span>
+								</button>
+
+								<div className='min-w-0 flex-1'>
+									<div className='flex flex-wrap items-center gap-2'>
+										<p className='truncate text-[15px] font-semibold text-slate-50 md:text-lg'>
+											{selectedConversation.fullName}
+										</p>
+										{isGroupConversation ? (
+											<span className='hidden rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2.5 py-1 text-[11px] font-medium text-cyan-100 sm:inline-flex'>
+												{selectedConversation.isPrivate ? "Private group" : "Group chat"}
+											</span>
+										) : (
+											<>
+												<VerifiedBadge user={selectedConversation} compact />
+												<DeveloperBadge user={selectedConversation} compact className='hidden sm:inline-flex' />
+												<span className='hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-300 sm:inline-flex'>
+													@{selectedConversation.username}
+												</span>
+											</>
+										)}
+									</div>
+									<p className='mt-0.5 truncate pr-1 text-[11px] leading-4 text-slate-400 sm:hidden'>
+										{mobileSelectedUserStatus}
+									</p>
+									<p className='mt-0.5 hidden truncate pr-0 text-sm leading-5 text-slate-400 sm:block'>
+										{desktopSelectedUserStatus}
+									</p>
+								</div>
+							</div>
+
+							<div className='flex w-full items-center justify-end gap-2 pt-1 sm:w-auto sm:pt-0'>
+								<div className='hidden items-center gap-2 xl:flex'>
+									{capabilityCards.map(({ title }) => (
+										<span
+											key={title}
+											className='rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-slate-300'
+										>
+											{title}
+										</span>
+									))}
+								</div>
+
+								{isDirectConversation || canReadSelectedGroup ? (
+									<>
+										<button
+											type='button'
+											onClick={() => startVideoCall(selectedConversation)}
+											disabled={isDirectConversation ? !canStartDirectCall : !canStartGroupCall}
+											className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-sky-400/25 hover:bg-sky-500/10 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-45 sm:h-11 sm:w-11'
+											aria-label={isGroupConversation ? "Start group video call" : "Start video call"}
+											title={
+												!isCallReady
+													? "Call connection is still loading"
+													: isDirectConversation && !isSelectedUserOnline
+														? "User must be online"
+														: isGroupConversation && selectedConversation?.isMember === false
+															? "Join the group first"
+														: callState.phase !== "idle"
+															? "Finish the current call first"
+															: isGroupConversation
+																? "Start group video call"
+																: "Start video call"
+											}
+										>
+											<HiOutlineVideoCamera className='h-5 w-5' />
+										</button>
+										<button
+											type='button'
+											onClick={() => startVoiceCall(selectedConversation)}
+											disabled={isDirectConversation ? !canStartDirectCall : !canStartGroupCall}
+											className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-emerald-400/25 hover:bg-emerald-500/10 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-45 sm:h-11 sm:w-11'
+											aria-label={isGroupConversation ? "Start group voice call" : "Start voice call"}
+											title={
+												!isCallReady
+													? "Call connection is still loading"
+													: isDirectConversation && !isSelectedUserOnline
+														? "User must be online"
+														: isGroupConversation && selectedConversation?.isMember === false
+															? "Join the group first"
+														: callState.phase !== "idle"
+															? "Finish the current call first"
+															: isGroupConversation
+																? "Start group voice call"
+																: "Start voice call"
+											}
+										>
+											<HiOutlinePhone className='h-5 w-5' />
+										</button>
+									</>
+								) : null}
+
+								{canReadSelectedGroup ? (
+									<button
+										type='button'
+										onClick={() => setShowDeleteConversationModal(true)}
+										className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-rose-400/25 hover:bg-rose-500/10 hover:text-rose-100 sm:h-11 sm:w-11'
+										aria-label='Delete conversation'
+										title='Delete conversation'
+									>
+										<HiOutlineTrash className='h-5 w-5' />
+									</button>
+								) : null}
+
+								<button
+									type='button'
+									onClick={() => setShowUserInfo(true)}
+									className='inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-200 transition hover:border-sky-400/25 hover:bg-white/[0.08] sm:h-11 sm:w-11'
+									aria-label='Conversation info'
+									title='Conversation info'
+								>
+									<IoInformationCircleOutline className='h-5 w-5' />
+								</button>
+							</div>
 						</div>
 					</div>
 

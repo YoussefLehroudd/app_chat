@@ -49,7 +49,7 @@ const ProfileButton = () => {
 						}`}
 						loading='eager'
 						decoding='async'
-						fetchPriority='high'
+						fetchpriority='high'
 						onLoad={() => setAvatarLoaded(true)}
 						onError={() => {
 							setAvatarSrc(fallbackAvatar);

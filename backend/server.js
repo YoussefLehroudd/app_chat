@@ -16,6 +16,7 @@ import callRoutes from "./routes/call.routes.js";
 import conversationRoutes from "./routes/conversation.routes.js";
 import developerRoutes from "./routes/developer.routes.js";
 import messageRoutes from "./routes/message.routes.js";
+import storyRoutes from "./routes/story.routes.js";
 import userRoutes from "./routes/user.routes.js";
 
 import { connectToDatabase } from "./db/prisma.js";
@@ -31,6 +32,7 @@ app.use("/api/calls", callRoutes);
 app.use("/api/conversations", conversationRoutes);
 app.use("/api/developer", developerRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/stories", storyRoutes);
 app.use("/api/users", userRoutes);
 
 app.use(express.static(path.join(__dirname, "..", "frontend", "dist")));

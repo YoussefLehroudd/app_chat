@@ -13,8 +13,20 @@ function App() {
 	const { authUser } = useAuthContext();
 	const location = useLocation();
 	const isAuthRoute = location.pathname === "/login" || location.pathname === "/signup";
+	const authSwitchFrom = location.state?.authSwitchFrom;
+	const authSwitchDirection =
+		location.pathname === "/signup" && authSwitchFrom === "/login"
+			? "forward"
+			: location.pathname === "/login" && authSwitchFrom === "/signup"
+				? "backward"
+				: "neutral";
 	const isDeveloperRoute = location.pathname.startsWith("/developer");
 	const isWorkbenchRoute = location.pathname === "/profile" || location.pathname.startsWith("/developer");
+	const renderAuthRoute = (screen) => (
+		<div key={`${location.pathname}-${location.key}`} className={`auth-route-transition auth-route-transition--${authSwitchDirection}`}>
+			{screen}
+		</div>
+	);
 
 	return (
 		<div
@@ -30,8 +42,8 @@ function App() {
 		>
 			<Routes>
 				<Route path='/' element={authUser ? <Home /> : <Navigate to={"/login"} />} />
-				<Route path='/login' element={authUser ? <Navigate to='/' /> : <Login />} />
-				<Route path='/signup' element={authUser ? <Navigate to='/' /> : <SignUp />} />
+				<Route path='/login' element={authUser ? <Navigate to='/' /> : renderAuthRoute(<Login />)} />
+				<Route path='/signup' element={authUser ? <Navigate to='/' /> : renderAuthRoute(<SignUp />)} />
 				<Route path='/profile' element={authUser ? <Profile /> : <Navigate to={"/login"} />} />
 				<Route
 					path='/developer/*'

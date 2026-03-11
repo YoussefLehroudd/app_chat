@@ -2,9 +2,9 @@ import Conversation from "./Conversation";
 
 const ConversationSkeleton = () => {
 	return (
-		<div className='rounded-[26px] border border-white/8 bg-white/[0.035] p-3.5'>
-			<div className='flex items-center gap-3'>
-				<div className='h-12 w-12 rounded-full bg-slate-700/60 animate-pulse'></div>
+		<div className='rounded-[22px] border border-white/8 bg-white/[0.035] p-3'>
+			<div className='flex items-center gap-2.5'>
+				<div className='h-11 w-11 rounded-full bg-slate-700/60 animate-pulse'></div>
 				<div className='min-w-0 flex-1 space-y-2'>
 					<div className='h-4 w-32 rounded bg-slate-700/60 animate-pulse'></div>
 					<div className='h-3 w-full max-w-[180px] rounded bg-slate-800/70 animate-pulse'></div>
@@ -20,7 +20,7 @@ const Conversations = ({ loading, conversations, emptyTitle, emptyDescription })
 
 	return (
 		<div className='min-h-0 flex-1 overflow-hidden'>
-			<div className='custom-scrollbar flex h-full flex-col gap-2.5 overflow-y-auto pr-1'>
+			<div className='custom-scrollbar flex h-full flex-col gap-2 overflow-y-auto pr-1'>
 				{showSkeletons
 					? Array.from({ length: 6 }).map((_, idx) => <ConversationSkeleton key={`skeleton-${idx}`} />)
 					: null}

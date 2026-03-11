@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import generateTokenAndSetCookie from "../utils/generateToken.js";
 import { toUserDto } from "../utils/formatters.js";
+import { emitPublicUserUpdated } from "../utils/realtime.js";
 import {
 	DEVELOPER_ROLE,
 	getRoleForNewAccount,
@@ -95,6 +96,7 @@ export const signup = async (req, res) => {
 
 		// Generate JWT token here
 		generateTokenAndSetCookie(newUser.id, res);
+		emitPublicUserUpdated(newUser);
 
 		res.status(201).json(toUserDto(newUser, { includeDeveloperPermissions: true }));
 	} catch (error) {

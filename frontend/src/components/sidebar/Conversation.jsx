@@ -66,7 +66,7 @@ const Conversation = ({ conversation }) => {
 	return (
 		<>
 			<div
-				className={`group flex cursor-pointer items-center gap-3 rounded-[26px] border px-3.5 py-3.5 transition-all duration-200 ${
+				className={`group flex cursor-pointer items-center gap-2.5 rounded-[22px] border px-3 py-2.5 transition-all duration-200 ${
 					isSelected
 						? "border-sky-300/45 bg-[linear-gradient(135deg,rgba(14,165,233,0.85),rgba(6,182,212,0.9))] shadow-[0_20px_42px_rgba(14,165,233,0.22)]"
 						: "border-transparent bg-white/[0.015] hover:border-white/10 hover:bg-white/[0.04]"
@@ -76,7 +76,7 @@ const Conversation = ({ conversation }) => {
 				<div className='relative shrink-0'>
 					<button
 						type='button'
-						className='relative h-12 w-12 overflow-hidden rounded-full ring-1 ring-white/10'
+						className='relative h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/10'
 						onClick={handleAvatarClick}
 						title='Show user info'
 					>
@@ -109,10 +109,10 @@ const Conversation = ({ conversation }) => {
 					></span>
 				</div>
 
-				<div className='min-w-0 flex flex-1 items-start justify-between gap-2 sm:gap-3'>
+				<div className='min-w-0 flex flex-1 items-start justify-between gap-2.5'>
 					<div className='min-w-0 flex-1'>
-						<div className='flex min-w-0 items-center gap-1.5 sm:gap-2'>
-							<p className={`min-w-0 truncate text-sm font-semibold md:text-[15px] ${nameClassName}`}>
+						<div className='flex min-w-0 items-center gap-1.5'>
+							<p className={`min-w-0 truncate text-[15px] font-semibold ${nameClassName}`}>
 								{conversation.fullName}
 							</p>
 							{isGroupConversation ? (
@@ -133,7 +133,7 @@ const Conversation = ({ conversation }) => {
 						<p className={`mt-0.5 truncate text-[11px] ${usernameClassName}`}>
 							{secondaryLine}
 						</p>
-						<p className={`mt-2 truncate pr-2 text-xs leading-5 md:text-sm ${previewClassName}`}>
+						<p className={`mt-1 truncate pr-2 text-[13px] leading-5 ${previewClassName}`}>
 							<FlagText text={lastMessagePreview} />
 						</p>
 					</div>

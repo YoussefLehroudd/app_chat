@@ -721,6 +721,13 @@ export const leaveCallSessionRecord = async ({ callId, userId }) => {
 		},
 	});
 
+	const sessionAfterLeave = await getCallSessionById(callId);
+	const activeParticipantsAfterLeave = getActiveParticipants(sessionAfterLeave);
+	// Calls are valid only while at least two joined participants are still active.
+	if (sessionAfterLeave?.status === CALL_STATUSES.ACTIVE && activeParticipantsAfterLeave.length < 2) {
+		return endCallSessionRecord({ callId, endedById: userId });
+	}
+
 	const refreshed = await refreshCallMessageSnapshot(callId);
 	return {
 		callSession: refreshed.callSession,

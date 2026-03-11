@@ -2,6 +2,10 @@ import { useState } from "react";
 import { useAuthContext } from "../context/AuthContext";
 import toast from "react-hot-toast";
 
+const removeConversationCache = () => {
+	localStorage.removeItem("chat-conversations");
+};
+
 const useLogout = () => {
 	const [loading, setLoading] = useState(false);
 	const { setAuthUser } = useAuthContext();
@@ -19,7 +23,7 @@ const useLogout = () => {
 			}
 
 			localStorage.removeItem("chat-user");
-			localStorage.removeItem("chat-conversations");
+			removeConversationCache();
 			setAuthUser(null);
 		} catch (error) {
 			toast.error(error.message);

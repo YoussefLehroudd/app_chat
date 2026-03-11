@@ -59,6 +59,12 @@ enum CallParticipantStatus {
   MISSED
 }
 
+enum StoryMediaType {
+  TEXT
+  IMAGE
+  VIDEO
+}
+
 model User {
   id                   String    @id @default(uuid())
   fullName             String
@@ -95,6 +101,8 @@ model User {
   endedCallSessions       CallSession[]        @relation("EndedCallSessions")
   callParticipations      CallParticipant[]    @relation("CallParticipants")
   callInvitationsSent     CallParticipant[]    @relation("CallInvitationsSent")
+  stories                 Story[]
+  seenStories             StoryView[]          @relation("StoryViews")
 }
 
 model Conversation {
@@ -270,4 +278,34 @@ model CallParticipant {
   @@index([callSessionId])
   @@index([userId])
   @@index([status])
+}
+
+model Story {
+  id            String         @id @default(uuid())
+  userId        String
+  text          String?        @default("")
+  mediaUrl      String?
+  mediaType     StoryMediaType @default(TEXT)
+  mediaMimeType String?
+  expiresAt     DateTime
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  views StoryView[]
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+model StoryView {
+  storyId  String
+  viewerId String
+  seenAt   DateTime @default(now())
+
+  story  Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  viewer User  @relation("StoryViews", fields: [viewerId], references: [id], onDelete: Cascade)
+
+  @@id([storyId, viewerId])
+  @@index([viewerId, seenAt])
 }

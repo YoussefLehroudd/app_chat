@@ -1,4 +1,9 @@
-import { parseCallMessageContent, parseGroupInviteMessageContent, parseSystemMessageContent } from "./systemMessages.js";
+import {
+	parseCallMessageContent,
+	parseGroupInviteMessageContent,
+	parseStoryInteractionMessageContent,
+	parseSystemMessageContent,
+} from "./systemMessages.js";
 import { normalizeDeveloperPermissions } from "./developerPermissions.js";
 
 const toUserDto = (user, options = {}) => {
@@ -80,6 +85,8 @@ const getMessagePresentation = (value, attachment = null) => {
 			callInfo: null,
 			isGroupInvite: false,
 			groupInvite: null,
+			isStoryInteraction: false,
+			storyInteraction: null,
 		};
 	}
 
@@ -95,6 +102,8 @@ const getMessagePresentation = (value, attachment = null) => {
 			callInfo: parsedCallMessage,
 			isGroupInvite: false,
 			groupInvite: null,
+			isStoryInteraction: false,
+			storyInteraction: null,
 		};
 	}
 
@@ -110,6 +119,33 @@ const getMessagePresentation = (value, attachment = null) => {
 			callInfo: null,
 			isGroupInvite: true,
 			groupInvite: parsedGroupInvite,
+			isStoryInteraction: false,
+			storyInteraction: null,
+		};
+	}
+
+	const parsedStoryInteraction = parseStoryInteractionMessageContent(value);
+	if (parsedStoryInteraction) {
+		const isReaction = parsedStoryInteraction.interactionType === "REACTION";
+		const previewText =
+			parsedStoryInteraction.previewText ||
+			(isReaction ? "Reacted to your story" : "Replied to your story");
+		const displayMessage = isReaction
+			? `${parsedStoryInteraction.emoji || "❤️"} Reacted to your story`
+			: `💬 Replied to your story${parsedStoryInteraction.comment ? `: ${parsedStoryInteraction.comment}` : ""}`;
+
+		return {
+			message: displayMessage,
+			previewText,
+			isSystem: false,
+			systemText: null,
+			systemType: null,
+			isCallMessage: false,
+			callInfo: null,
+			isGroupInvite: false,
+			groupInvite: null,
+			isStoryInteraction: true,
+			storyInteraction: parsedStoryInteraction,
 		};
 	}
 
@@ -124,6 +160,8 @@ const getMessagePresentation = (value, attachment = null) => {
 		callInfo: null,
 		isGroupInvite: false,
 		groupInvite: null,
+		isStoryInteraction: false,
+		storyInteraction: null,
 	};
 };
 
@@ -227,6 +265,8 @@ const toMessagePreviewDto = (message) => {
 		callInfo: presentation.callInfo,
 		isGroupInvite: presentation.isGroupInvite,
 		groupInvite: presentation.groupInvite,
+		isStoryInteraction: presentation.isStoryInteraction,
+		storyInteraction: presentation.storyInteraction,
 		previewText: presentation.previewText,
 		createdAt: message.createdAt,
 		updatedAt: message.updatedAt,
@@ -258,6 +298,8 @@ const toMessageDto = (message) => {
 		callInfo: presentation.callInfo,
 		isGroupInvite: presentation.isGroupInvite,
 		groupInvite: presentation.groupInvite,
+		isStoryInteraction: presentation.isStoryInteraction,
+		storyInteraction: presentation.storyInteraction,
 		previewText: presentation.previewText,
 		createdAt: message.createdAt,
 		updatedAt: message.updatedAt,
