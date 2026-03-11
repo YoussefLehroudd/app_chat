@@ -187,6 +187,7 @@ const StoryViewerModal = ({
 
 	useEffect(() => {
 		if (!open || !initializedForOpenRef.current || orderedGroups.length === 0) return;
+		if (!activeGroupUserId || !activeStoryId) return;
 
 		const nextGroupIndex = activeGroupIndex >= 0 ? activeGroupIndex : 0;
 		const nextGroup = orderedGroups[nextGroupIndex];

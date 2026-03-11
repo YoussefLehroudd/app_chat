@@ -10,6 +10,8 @@ import {
 	shouldBootstrapDeveloper,
 } from "../utils/roles.js";
 
+const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+
 const buildUsernameBase = (username) => {
 	return (
 		username
@@ -49,15 +51,28 @@ const generateUsernameSuggestion = async (username) => {
 export const signup = async (req, res) => {
 	try {
 		const { fullName, username, password, confirmPassword, gender } = req.body;
+		const normalizedFullName = typeof fullName === "string" ? fullName.trim() : "";
+		const normalizedUsername = typeof username === "string" ? username.trim() : "";
+		const normalizedGender = typeof gender === "string" ? gender.toLowerCase().trim() : "";
+
+		if (!normalizedFullName || !normalizedUsername || !password || !confirmPassword || !normalizedGender) {
+			return res.status(400).json({ error: "All fields are required" });
+		}
+
+		if (!USERNAME_PATTERN.test(normalizedUsername)) {
+			return res.status(400).json({
+				error: "Username must be 3-20 characters and use only letters, numbers, or _",
+			});
+		}
 
 		if (password !== confirmPassword) {
 			return res.status(400).json({ error: "Passwords don't match" });
 		}
 
-		const user = await prisma.user.findUnique({ where: { username } });
+		const user = await prisma.user.findUnique({ where: { username: normalizedUsername } });
 
 		if (user) {
-			const suggestion = await generateUsernameSuggestion(username);
+			const suggestion = await generateUsernameSuggestion(normalizedUsername);
 			return res.status(400).json({
 				error: "Username already exists",
 				suggestion,
@@ -72,7 +87,7 @@ export const signup = async (req, res) => {
 
 		const boyProfilePic = `/avatars/male.svg`;
 		const girlProfilePic = `/avatars/female.svg`;
-		const usernameMatchesPrimary = isPrimaryDeveloperUsername(username);
+		const usernameMatchesPrimary = isPrimaryDeveloperUsername(normalizedUsername);
 		const existingPrimaryDeveloper = usernameMatchesPrimary
 			? await prisma.user.findFirst({
 					where: { isPrimaryDeveloper: true },
@@ -80,17 +95,17 @@ export const signup = async (req, res) => {
 			  })
 			: null;
 		const isPrimaryDeveloper = usernameMatchesPrimary && !existingPrimaryDeveloper;
-		const role = isPrimaryDeveloper ? DEVELOPER_ROLE : getRoleForNewAccount(username);
+		const role = isPrimaryDeveloper ? DEVELOPER_ROLE : getRoleForNewAccount(normalizedUsername);
 
 		const newUser = await prisma.user.create({
 			data: {
-				fullName,
-				username,
+				fullName: normalizedFullName,
+				username: normalizedUsername,
 				password: hashedPassword,
-				gender,
+				gender: normalizedGender,
 				role,
 				isPrimaryDeveloper,
-				profilePic: gender === "male" ? boyProfilePic : girlProfilePic,
+				profilePic: normalizedGender === "male" ? boyProfilePic : girlProfilePic,
 			},
 		});
 

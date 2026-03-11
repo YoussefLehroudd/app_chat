@@ -22,7 +22,7 @@ const CallDirectory = ({ calls, loading, emptyTitle, emptyDescription, onOpenCon
 
 	return (
 		<div className='min-h-0 flex-1 overflow-hidden'>
-			<div className='custom-scrollbar flex h-full flex-col gap-2.5 overflow-y-auto pr-1'>
+			<div className='custom-scrollbar flex h-full flex-col gap-2.5 overflow-y-auto pb-2 pr-1'>
 				{loading && calls.length === 0
 					? Array.from({ length: 4 }).map((_, index) => (
 							<div key={`call-skeleton-${index}`} className='rounded-[26px] border border-white/8 bg-white/[0.035] p-3.5'>

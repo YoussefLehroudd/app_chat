@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useAuthContext } from "../context/AuthContext";
 
+const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+
 const useSignup = () => {
 	const [loading, setLoading] = useState(false);
 	const [errors, setErrors] = useState({});
@@ -82,6 +84,7 @@ async function establishSignupSession({ username, password }, fallbackUser) {
 
 function validateSignupInputs({ fullName, username, password, confirmPassword, gender }) {
 	const errors = {};
+	const normalizedUsername = typeof username === "string" ? username.trim() : "";
 
 	if (!fullName || !username || !password || !confirmPassword || !gender) {
 		if (!fullName) errors.fullName = "Full name is required";
@@ -99,6 +102,10 @@ function validateSignupInputs({ fullName, username, password, confirmPassword, g
 		errors.password = "Password must be at least 6 characters";
 	}
 
+	if (normalizedUsername && !USERNAME_PATTERN.test(normalizedUsername)) {
+		errors.username = "Use 3-20 chars: letters, numbers, or _";
+	}
+
 	return errors;
 }
 
@@ -111,6 +118,10 @@ function mapSignupErrorToFields(response) {
 			username: "Username already exists",
 			usernameSuggestion: response?.suggestion || "",
 		};
+	}
+
+	if (normalizedMessage.includes("letters, numbers, or _")) {
+		return { username: "Use 3-20 chars: letters, numbers, or _" };
 	}
 
 	if (normalizedMessage.includes("password") && normalizedMessage.includes("match")) {

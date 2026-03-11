@@ -35,9 +35,9 @@ function App() {
 					? "h-dvh items-start justify-center overflow-y-auto overflow-x-hidden px-2 py-2 sm:px-4 sm:py-4 lg:items-center lg:overflow-hidden lg:px-6 lg:py-6"
 					: isWorkbenchRoute
 						? isDeveloperRoute
-							? "min-h-screen items-start justify-center overflow-x-hidden p-2 sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden"
-							: "h-dvh items-center justify-center overflow-hidden p-2 sm:p-4"
-						: "h-dvh items-center justify-center overflow-hidden p-2 sm:p-4"
+							? "min-h-[100svh] items-start justify-center overflow-x-hidden p-2 sm:min-h-screen sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden"
+							: "h-[100svh] items-start justify-center overflow-hidden p-2 sm:h-dvh sm:items-center sm:p-4"
+						: "h-[100svh] items-start justify-center overflow-hidden p-2 sm:h-dvh sm:items-center sm:p-4"
 			}`}
 		>
 			<Routes>

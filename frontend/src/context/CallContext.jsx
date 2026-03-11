@@ -272,7 +272,7 @@ const buildCallStateFromDto = (call, currentState = INITIAL_CALL_STATE, override
 	isScreenSharing: overrides.isScreenSharing ?? currentState.isScreenSharing,
 	isMuted: overrides.isMuted ?? currentState.isMuted,
 	startedAt: call.startedAt || null,
-	connectedAt: call.connectedAt || null,
+	connectedAt: call.connectedAt || currentState.connectedAt || null,
 	endedAt: call.endedAt || null,
 	callMessageId: call.callMessageId || null,
 	participants: Array.isArray(call.participants) ? call.participants : [],
@@ -995,8 +995,20 @@ export const CallContextProvider = ({ children }) => {
 		updateCallState((currentState) => {
 			const mergedParticipants = mergeParticipantsWithLocalState(call.participants, currentState.participants);
 			const metrics = getParticipantMetrics(mergedParticipants);
+			const requestedPhase = options.phase ?? currentState.phase;
+			const currentUserJoinedAndActive = isCurrentUserActive(mergedParticipants, authUserRef.current?._id || "");
+			const shouldMarkConnected =
+				requestedPhase !== "idle" &&
+				requestedPhase !== "incoming" &&
+				(Boolean(call.connectedAt || currentState.connectedAt) ||
+					(metrics.activeParticipantCount >= 2 && currentUserJoinedAndActive));
+			const resolvedPhase = shouldMarkConnected ? "active" : requestedPhase;
+			const resolvedConnectedAt = shouldMarkConnected
+				? call.connectedAt || currentState.connectedAt || toIsoString()
+				: call.connectedAt || currentState.connectedAt || null;
 			const mergedCall = {
 				...call,
+				connectedAt: resolvedConnectedAt,
 				participants: mergedParticipants,
 				participantCount: mergedParticipants.length,
 				joinedParticipantCount:
@@ -1016,7 +1028,7 @@ export const CallContextProvider = ({ children }) => {
 			registerParticipants(mergedParticipants);
 			return buildCallStateFromDto(mergedCall, currentState, {
 				...options,
-				phase: options.phase ?? currentState.phase,
+				phase: resolvedPhase,
 			});
 		});
 
@@ -1033,6 +1045,25 @@ export const CallContextProvider = ({ children }) => {
 
 		const { callId, mediaType = "voice" } = options;
 		const connection = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+		const markConnectionAsActive = () => {
+			if (!callId || callStateRef.current.callId !== callId) {
+				return;
+			}
+
+			const localConnectedAt = callStateRef.current.connectedAt || toIsoString();
+			updateCallState((currentState) => {
+				if (currentState.callId !== callId || currentState.phase === "idle" || currentState.phase === "incoming") {
+					return currentState;
+				}
+
+				return {
+					...currentState,
+					phase: "active",
+					connectedAt: currentState.connectedAt || localConnectedAt,
+				};
+			});
+			startDurationTimer(localConnectedAt);
+		};
 
 		connection.onicecandidate = (event) => {
 			if (!event.candidate || !socketRef.current || !targetUserId) return;
@@ -1050,19 +1081,27 @@ export const CallContextProvider = ({ children }) => {
 			if (stream) {
 				setRemoteParticipantStream(targetUserId, stream);
 			}
+			markConnectionAsActive();
 		};
 
 		connection.onconnectionstatechange = () => {
 			const nextState = connection.connectionState;
 
 			if (nextState === "connected") {
-				const localConnectedAt = callStateRef.current.connectedAt || toIsoString();
-				updateCallState((currentState) => ({
-					...currentState,
-					phase: "active",
-					connectedAt: currentState.connectedAt || localConnectedAt,
-				}));
-				startDurationTimer(localConnectedAt);
+				markConnectionAsActive();
+				return;
+			}
+
+			if (["failed", "disconnected", "closed"].includes(nextState)) {
+				closePeerConnection(targetUserId);
+			}
+		};
+
+		connection.oniceconnectionstatechange = () => {
+			const nextState = connection.iceConnectionState;
+
+			if (["connected", "completed"].includes(nextState)) {
+				markConnectionAsActive();
 				return;
 			}
 
@@ -1628,7 +1667,7 @@ export const CallContextProvider = ({ children }) => {
 
 				updateCallState((currentState) => ({
 					...currentState,
-					phase: "connecting",
+					phase: currentState.phase === "active" ? "active" : "connecting",
 				}));
 			} catch (error) {
 				console.error("Error handling call offer:", error);

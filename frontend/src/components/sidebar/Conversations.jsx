@@ -20,7 +20,7 @@ const Conversations = ({ loading, conversations, emptyTitle, emptyDescription })
 
 	return (
 		<div className='min-h-0 flex-1 overflow-hidden'>
-			<div className='custom-scrollbar flex h-full flex-col gap-2 overflow-y-auto pr-1'>
+			<div className='custom-scrollbar flex h-full flex-col gap-2 overflow-y-auto pb-2 pr-1'>
 				{showSkeletons
 					? Array.from({ length: 6 }).map((_, idx) => <ConversationSkeleton key={`skeleton-${idx}`} />)
 					: null}

@@ -127,10 +127,11 @@ const Sidebar = () => {
 	};
 
 	const handleOpenStoryViewer = (group, storyId) => {
-		if (!group?.user?._id || !storyId) return;
+		const targetUserId = getUserId(group?.user);
+		if (!targetUserId || !storyId) return;
 		setStoryViewerGroupsOverride(null);
 		setStoryViewerTarget({
-			userId: group.user._id,
+			userId: targetUserId,
 			storyId,
 		});
 		setShowSidebar(true);
@@ -310,7 +311,7 @@ const Sidebar = () => {
 				/>
 			)}
 
-			<div className='mt-3'>
+			<div className='sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)] pt-2'>
 				<div className='flex items-center gap-2.5'>
 					<div className='min-w-0 flex-1'>
 						<SearchInput
