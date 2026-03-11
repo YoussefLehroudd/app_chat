@@ -14,6 +14,7 @@
 	--auth-muted: #94a3b8;
 	--auth-accent: #f59e0b;
 	--auth-accent-strong: #ea580c;
+	--app-viewport-height: 100dvh;
 }
 
 html {

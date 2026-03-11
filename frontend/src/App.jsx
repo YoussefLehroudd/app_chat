@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import "./App.css";
 import Home from "./pages/home/Home";
@@ -28,6 +29,32 @@ function App() {
 		</div>
 	);
 
+	useEffect(() => {
+		if (typeof window === "undefined" || typeof document === "undefined") {
+			return undefined;
+		}
+
+		const root = document.documentElement;
+		const updateViewportHeight = () => {
+			const viewportHeight = window.visualViewport?.height || window.innerHeight;
+			if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
+			root.style.setProperty("--app-viewport-height", `${Math.round(viewportHeight)}px`);
+		};
+
+		updateViewportHeight();
+		window.addEventListener("resize", updateViewportHeight);
+		window.addEventListener("orientationchange", updateViewportHeight);
+		window.visualViewport?.addEventListener("resize", updateViewportHeight);
+		window.visualViewport?.addEventListener("scroll", updateViewportHeight);
+
+		return () => {
+			window.removeEventListener("resize", updateViewportHeight);
+			window.removeEventListener("orientationchange", updateViewportHeight);
+			window.visualViewport?.removeEventListener("resize", updateViewportHeight);
+			window.visualViewport?.removeEventListener("scroll", updateViewportHeight);
+		};
+	}, []);
+
 	return (
 		<div
 			className={`box-border flex min-h-screen ${
@@ -35,9 +62,9 @@ function App() {
 					? "h-dvh items-start justify-center overflow-y-auto overflow-x-hidden px-2 py-2 sm:px-4 sm:py-4 lg:items-center lg:overflow-hidden lg:px-6 lg:py-6"
 					: isWorkbenchRoute
 						? isDeveloperRoute
-							? "min-h-[100svh] items-start justify-center overflow-x-hidden p-2 sm:min-h-screen sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden"
-							: "h-[100svh] items-start justify-center overflow-hidden p-2 sm:h-dvh sm:items-center sm:p-4"
-						: "h-[100svh] items-start justify-center overflow-hidden p-2 sm:h-dvh sm:items-center sm:p-4"
+							? "min-h-[var(--app-viewport-height)] items-start justify-center overflow-x-hidden p-1.5 sm:min-h-screen sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden"
+							: "h-[var(--app-viewport-height)] items-start justify-center overflow-hidden p-1.5 sm:h-dvh sm:items-center sm:p-4"
+						: "h-[var(--app-viewport-height)] items-start justify-center overflow-hidden p-1.5 sm:h-dvh sm:items-center sm:p-4"
 			}`}
 		>
 			<Routes>

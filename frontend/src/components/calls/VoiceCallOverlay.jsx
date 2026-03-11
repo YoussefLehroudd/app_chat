@@ -429,7 +429,7 @@ const VoiceCallOverlay = () => {
 	};
 
 	return createPortal(
-		<div className='fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/78 px-3 py-3 backdrop-blur-md sm:px-4 sm:py-4'>
+		<div className='fixed inset-x-0 top-0 z-[200] flex h-[var(--app-viewport-height)] items-center justify-center bg-slate-950/78 px-3 py-[calc(env(safe-area-inset-bottom,0px)+0.6rem)] backdrop-blur-md sm:px-4 sm:py-4'>
 			<div
 				className={`flex w-full max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-[32px] border border-white/12 bg-[linear-gradient(180deg,rgba(7,13,26,0.98),rgba(10,18,34,0.94))] p-4 shadow-[0_28px_90px_rgba(2,6,23,0.65)] sm:max-h-[calc(100dvh-2rem)] sm:p-6 ${
 					isVideoCall ? "max-w-5xl" : "max-w-xl"

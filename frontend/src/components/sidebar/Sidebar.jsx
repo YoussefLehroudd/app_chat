@@ -237,7 +237,7 @@ const Sidebar = () => {
 	}, [authUser, refreshStories, storyGroups]);
 
 	return (
-		<aside className='flex h-full min-h-0 w-full flex-col border-r border-white/10 bg-[linear-gradient(180deg,rgba(7,12,25,0.92),rgba(3,8,20,0.84))] p-4 md:w-[390px] lg:w-[430px] xl:w-[460px] lg:p-5'>
+		<aside className='flex h-full min-h-0 w-full flex-col border-r border-white/10 bg-[linear-gradient(180deg,rgba(7,12,25,0.92),rgba(3,8,20,0.84))] p-3 md:w-[390px] lg:w-[430px] lg:p-5 xl:w-[460px]'>
 			<div className='mb-2'>
 				<div className='flex items-start justify-between gap-4'>
 					<p className='pt-1 text-[11px] font-semibold uppercase tracking-[0.34em] text-sky-300/70'>Chat Space</p>
@@ -311,7 +311,7 @@ const Sidebar = () => {
 				/>
 			)}
 
-			<div className='sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)] pt-2'>
+			<div className='sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pt-2'>
 				<div className='flex items-center gap-2.5'>
 					<div className='min-w-0 flex-1'>
 						<SearchInput

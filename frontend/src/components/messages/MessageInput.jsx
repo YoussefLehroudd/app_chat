@@ -613,7 +613,10 @@ const MessageInput = () => {
 	const canPreviewSelectedAttachment = isImageAttachment(selectedAttachmentPreview) || isVideoAttachment(selectedAttachmentPreview);
 
 	return (
-		<form className='shrink-0 px-2 pb-2 pt-1.5 sm:px-3 sm:pb-3 sm:pt-2 md:px-5 md:pb-4 lg:px-6' onSubmit={handleSubmit}>
+		<form
+			className='shrink-0 px-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.55rem)] pt-1.5 sm:px-3 sm:pb-3 sm:pt-2 md:px-5 md:pb-4 lg:px-6'
+			onSubmit={handleSubmit}
+		>
 			<div className='relative rounded-[22px] border border-white/10 bg-[#0b1428]/90 p-2 shadow-[0_22px_52px_rgba(2,6,23,0.24)] backdrop-blur-xl sm:rounded-[26px] sm:p-2.5 md:p-3'>
 				<div>
 					{repliedMessage ? (
