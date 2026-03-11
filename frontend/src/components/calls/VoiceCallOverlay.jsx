@@ -74,9 +74,20 @@ const StreamVideo = ({ stream, className = "", muted = false, mirrored = false }
 		if (!videoElement) return;
 		videoElement.srcObject = stream || null;
 
-		if (stream) {
+		const attemptPlay = () => {
 			void videoElement.play().catch(() => {});
+		};
+
+		if (stream) {
+			attemptPlay();
+			videoElement.addEventListener("loadedmetadata", attemptPlay);
+			videoElement.addEventListener("canplay", attemptPlay);
 		}
+
+		return () => {
+			videoElement.removeEventListener("loadedmetadata", attemptPlay);
+			videoElement.removeEventListener("canplay", attemptPlay);
+		};
 	}, [stream]);
 
 	return (
@@ -97,10 +108,24 @@ const StreamAudio = ({ stream }) => {
 		const audioElement = audioRef.current;
 		if (!audioElement) return;
 		audioElement.srcObject = stream || null;
+		audioElement.muted = false;
+		audioElement.volume = 1;
+
+		const attemptPlay = () => {
+			void audioElement.play().catch(() => {});
+		};
 
 		if (stream) {
-			void audioElement.play().catch(() => {});
+			attemptPlay();
+			audioElement.addEventListener("loadedmetadata", attemptPlay);
+			audioElement.addEventListener("canplay", attemptPlay);
+			window.addEventListener("pointerdown", attemptPlay, { once: true });
 		}
+
+		return () => {
+			audioElement.removeEventListener("loadedmetadata", attemptPlay);
+			audioElement.removeEventListener("canplay", attemptPlay);
+		};
 	}, [stream]);
 
 	return <audio ref={audioRef} autoPlay playsInline />;
@@ -375,11 +400,11 @@ const VoiceCallOverlay = () => {
 			<div className={`grid h-full min-h-0 gap-3 p-3 ${remoteCount > 1 ? "sm:grid-cols-2" : "grid-cols-1"}`}>
 				{remoteParticipants.map((participant) => (
 					<div
-						key={participant.user?._id || Math.random().toString(36)}
+						key={participant.userId || participant.user?._id || "participant"}
 						className='relative min-h-0 overflow-hidden rounded-[24px] border border-white/10 bg-slate-950'
 					>
 						{participant.stream?.getVideoTracks?.().length ? (
-							<StreamVideo stream={participant.stream} className='h-full w-full object-cover' />
+							<StreamVideo stream={participant.stream} muted className='h-full w-full object-cover' />
 						) : (
 							<div className='flex h-full w-full flex-col items-center justify-center bg-[linear-gradient(180deg,rgba(2,6,23,0.92),rgba(15,23,42,0.96))] px-4 text-center'>
 								<img
@@ -429,7 +454,7 @@ const VoiceCallOverlay = () => {
 							) : shouldShowMainDirectVideo ? (
 								<StreamVideo
 									stream={mainDirectStream}
-									muted={isShowingLocalInMain}
+									muted
 									mirrored={isShowingLocalInMain}
 									className='h-full w-full object-cover'
 								/>
@@ -509,7 +534,11 @@ const VoiceCallOverlay = () => {
 								>
 									{isShowingLocalInMain ? (
 										primaryRemoteParticipant?.stream ? (
-											<StreamVideo stream={primaryRemoteParticipant.stream} className='h-full w-full object-cover' />
+											<StreamVideo
+												stream={primaryRemoteParticipant.stream}
+												muted
+												className='h-full w-full object-cover'
+											/>
 										) : (
 											<div className='flex h-full w-full flex-col items-center justify-center bg-[linear-gradient(180deg,rgba(2,6,23,0.92),rgba(15,23,42,0.96))] px-2 text-center'>
 												<img
@@ -731,11 +760,9 @@ const VoiceCallOverlay = () => {
 					</div>
 				) : null}
 
-				{!isVideoCall
-					? remoteParticipants.map((participant) => (
-							<StreamAudio key={participant.user?._id || Math.random().toString(36)} stream={participant.stream} />
-					  ))
-					: null}
+				{remoteParticipants.map((participant) => (
+					<StreamAudio key={`remote-audio-${participant.userId || participant.user?._id || "participant"}`} stream={participant.stream} />
+				))}
 				<audio ref={ringtoneAudioRef} src={callRingtone} loop preload='auto' />
 			</div>
 		</div>,

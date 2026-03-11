@@ -3,7 +3,68 @@ import toast from "react-hot-toast";
 import { useAuthContext } from "./AuthContext";
 import { useSocketContext } from "./SocketContext";
 
-const STUN_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
+const DEFAULT_ICE_SERVERS = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
+const PUBLIC_TURN_FALLBACK_SERVERS = [
+	{
+		urls: [
+			"turn:openrelay.metered.ca:80",
+			"turn:openrelay.metered.ca:443",
+			"turns:openrelay.metered.ca:443?transport=tcp",
+		],
+		username: "openrelayproject",
+		credential: "openrelayproject",
+	},
+];
+
+const normalizeIceServer = (server) => {
+	if (!server || typeof server !== "object") return null;
+
+	const urls = (Array.isArray(server.urls) ? server.urls : [server.urls])
+		.map((url) => (typeof url === "string" ? url.trim() : ""))
+		.filter(Boolean);
+
+	if (urls.length === 0) return null;
+
+	const normalizedServer = { urls };
+	if (typeof server.username === "string" && server.username.trim()) {
+		normalizedServer.username = server.username.trim();
+	}
+	if (typeof server.credential === "string" && server.credential.trim()) {
+		normalizedServer.credential = server.credential.trim();
+	}
+	if (typeof server.credentialType === "string" && server.credentialType.trim()) {
+		normalizedServer.credentialType = server.credentialType.trim();
+	}
+
+	return normalizedServer;
+};
+
+const parseIceServersFromEnv = () => {
+	const rawValue = import.meta.env?.VITE_WEBRTC_ICE_SERVERS;
+	if (typeof rawValue !== "string" || !rawValue.trim()) {
+		return [];
+	}
+
+	try {
+		const parsedValue = JSON.parse(rawValue);
+		if (!Array.isArray(parsedValue)) {
+			return [];
+		}
+
+		return parsedValue.map(normalizeIceServer).filter(Boolean);
+	} catch {
+		return [];
+	}
+};
+
+const ICE_SERVERS = (() => {
+	const envIceServers = parseIceServersFromEnv();
+	if (envIceServers.length > 0) {
+		return envIceServers;
+	}
+
+	return [...DEFAULT_ICE_SERVERS, ...PUBLIC_TURN_FALLBACK_SERVERS];
+})();
 const CALL_STATUSES = {
 	RINGING: "RINGING",
 	ACTIVE: "ACTIVE",
@@ -334,6 +395,7 @@ export const CallContextProvider = ({ children }) => {
 	const peerConnectionsRef = useRef(new Map());
 	const participantDirectoryRef = useRef(new Map());
 	const pendingIceCandidatesRef = useRef(new Map());
+	const inboundRemoteStreamsRef = useRef(new Map());
 	const durationIntervalRef = useRef(null);
 	const incomingCallRef = useRef(null);
 	const recentlyClosedCallsRef = useRef(new Map());
@@ -690,13 +752,16 @@ export const CallContextProvider = ({ children }) => {
 			null;
 
 		setRemoteParticipants((currentParticipants) => {
-			const participantIndex = currentParticipants.findIndex((participant) => participant.user?._id === userId);
+			const participantIndex = currentParticipants.findIndex(
+				(participant) => participant.userId === userId || participant.user?._id === userId
+			);
 			if (participantIndex === -1) {
-				return [...currentParticipants, { user, stream }];
+				return [...currentParticipants, { userId, user, stream }];
 			}
 
 			const nextParticipants = [...currentParticipants];
 			nextParticipants[participantIndex] = {
+				userId,
 				user: user || nextParticipants[participantIndex].user,
 				stream,
 			};
@@ -705,8 +770,12 @@ export const CallContextProvider = ({ children }) => {
 	};
 
 	const removeRemoteParticipant = (userId) => {
+		if (!userId) return;
+		inboundRemoteStreamsRef.current.delete(userId);
 		setRemoteParticipants((currentParticipants) =>
-			currentParticipants.filter((participant) => participant.user?._id !== userId)
+			currentParticipants.filter(
+				(participant) => participant.userId !== userId && participant.user?._id !== userId
+			)
 		);
 	};
 
@@ -767,6 +836,7 @@ export const CallContextProvider = ({ children }) => {
 		incomingCallRef.current = null;
 		participantDirectoryRef.current = new Map();
 		pendingIceCandidatesRef.current = new Map();
+		inboundRemoteStreamsRef.current = new Map();
 		setRemoteParticipants([]);
 		callStateRef.current = INITIAL_CALL_STATE;
 		setCallState(INITIAL_CALL_STATE);
@@ -1044,7 +1114,10 @@ export const CallContextProvider = ({ children }) => {
 		}
 
 		const { callId, mediaType = "voice" } = options;
-		const connection = new RTCPeerConnection({ iceServers: STUN_SERVERS });
+		const connection = new RTCPeerConnection({
+			iceServers: ICE_SERVERS,
+			iceCandidatePoolSize: 8,
+		});
 		const markConnectionAsActive = () => {
 			if (!callId || callStateRef.current.callId !== callId) {
 				return;
@@ -1077,7 +1150,33 @@ export const CallContextProvider = ({ children }) => {
 		};
 
 		connection.ontrack = (event) => {
-			const [stream] = event.streams;
+			let [stream] = event.streams || [];
+
+			// Some browsers can emit `ontrack` with an empty `event.streams`.
+			// Build and retain a per-user MediaStream so remote audio/video is still rendered.
+			if (!stream && event.track) {
+				stream = inboundRemoteStreamsRef.current.get(targetUserId);
+				if (!stream) {
+					stream = new MediaStream();
+					inboundRemoteStreamsRef.current.set(targetUserId, stream);
+				}
+				const hasTrack = stream.getTracks().some((track) => track.id === event.track.id);
+				if (!hasTrack) {
+					stream.addTrack(event.track);
+				}
+
+				event.track.onended = () => {
+					const activeStream = inboundRemoteStreamsRef.current.get(targetUserId);
+					if (!activeStream) return;
+					activeStream.removeTrack(event.track);
+					if (activeStream.getTracks().length === 0) {
+						removeRemoteParticipant(targetUserId);
+						return;
+					}
+					setRemoteParticipantStream(targetUserId, activeStream);
+				};
+			}
+
 			if (stream) {
 				setRemoteParticipantStream(targetUserId, stream);
 			}
@@ -1642,11 +1741,26 @@ export const CallContextProvider = ({ children }) => {
 		};
 
 		const handleOffer = async ({ offer, caller, callerId, callId, mediaType = "voice" } = {}) => {
-			if (!offer || !callerId || callStateRef.current.callId !== callId || !localStreamRef.current) {
+			if (!offer || !callerId || callStateRef.current.callId !== callId) {
 				return;
 			}
 
 			try {
+				if (!localStreamRef.current) {
+					// Wait briefly for `getUserMedia` to settle before dropping the offer.
+					for (let attempt = 0; attempt < 18 && !localStreamRef.current; attempt += 1) {
+						if (callStateRef.current.callId !== callId) {
+							return;
+						}
+						// eslint-disable-next-line no-await-in-loop
+						await wait(80);
+					}
+				}
+
+				if (!localStreamRef.current || callStateRef.current.callId !== callId) {
+					return;
+				}
+
 				registerParticipant(caller);
 				const connection = createPeerConnection(callerId, {
 					callId,
