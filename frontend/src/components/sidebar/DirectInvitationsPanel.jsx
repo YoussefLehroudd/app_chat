@@ -42,7 +42,11 @@ const DirectInvitationsPanel = ({
 									<div className='h-9 w-9 overflow-hidden rounded-full ring-1 ring-white/10'>
 										<img src={friendAvatar} alt={friendConversation?.fullName || "Friend"} className='h-full w-full object-cover' />
 									</div>
-									<div className='min-w-0 flex-1'>
+									<div
+										className='min-w-0 flex-1'
+										data-copy-user={friendConversation?.username || undefined}
+										title={friendConversation?.username ? "Click to copy username" : undefined}
+									>
 										<p className='truncate text-sm font-medium text-slate-100'>{friendConversation?.fullName || "Friend"}</p>
 										<p className='truncate text-xs text-slate-400'>@{friendConversation?.username || "unknown"}</p>
 									</div>
@@ -80,7 +84,11 @@ const DirectInvitationsPanel = ({
 										<div className='h-10 w-10 overflow-hidden rounded-full ring-1 ring-white/10'>
 											<img src={senderAvatar} alt={sender?.fullName || "User"} className='h-full w-full object-cover' />
 										</div>
-										<div className='min-w-0 flex-1'>
+										<div
+											className='min-w-0 flex-1'
+											data-copy-user={sender?.username || undefined}
+											title={sender?.username ? "Click to copy username" : undefined}
+										>
 											<p className='truncate text-sm font-medium text-slate-100'>{sender?.fullName || "User"}</p>
 											<p className='truncate text-xs text-slate-400'>@{sender?.username || "unknown"}</p>
 										</div>

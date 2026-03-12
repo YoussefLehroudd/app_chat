@@ -161,7 +161,11 @@ const DirectInviteModal = ({
 												className='h-full w-full object-cover'
 											/>
 										</div>
-										<div className='min-w-0 flex-1'>
+										<div
+											className='min-w-0 flex-1'
+											data-copy-user={user?.username || undefined}
+											title={user?.username ? "Click to copy username" : undefined}
+										>
 											<p className='truncate text-sm font-medium text-slate-100'>{user?.fullName || "User"}</p>
 											<p className='truncate text-xs text-slate-400'>@{user?.username || "unknown"}</p>
 										</div>

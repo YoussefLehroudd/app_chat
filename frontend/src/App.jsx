@@ -1,9 +1,9 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import "./App.css";
 import Login from "./pages/login/Login";
 import SignUp from "./pages/signup/SignUp";
-import { Toaster } from "react-hot-toast";
+import { Toaster, toast } from "react-hot-toast";
 import { useAuthContext } from "./context/AuthContext";
 
 const Home = lazy(() => import("./pages/home/Home"));
@@ -12,10 +12,36 @@ const DeveloperDashboard = lazy(() => import("./pages/developer/DeveloperDashboa
 const VoiceCallOverlay = lazy(() => import("./components/calls/VoiceCallOverlay"));
 const AuthenticatedProviders = lazy(() => import("./components/app/AuthenticatedProviders"));
 
+const normalizeCopyUser = (value) => {
+	const normalized = typeof value === "string" ? value.trim().replace(/^@+/, "") : "";
+	return normalized ? `@${normalized}` : "";
+};
+
+const copyTextToClipboard = async (value) => {
+	if (!value) return false;
+
+	if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+		await navigator.clipboard.writeText(value);
+		return true;
+	}
+
+	const textarea = document.createElement("textarea");
+	textarea.value = value;
+	textarea.setAttribute("readonly", "");
+	textarea.style.position = "absolute";
+	textarea.style.left = "-9999px";
+	document.body.appendChild(textarea);
+	textarea.select();
+	const copied = document.execCommand("copy");
+	document.body.removeChild(textarea);
+	return copied;
+};
+
 function App() {
 	const { authUser } = useAuthContext();
 	const location = useLocation();
 	const [isMobileKeyboardOpen, setIsMobileKeyboardOpen] = useState(false);
+	const lastCopiedUserRef = useRef({ value: "", at: 0 });
 	const isAuthRoute = location.pathname === "/login" || location.pathname === "/signup";
 	const isProfileRoute = location.pathname === "/profile";
 	const authSwitchFrom = location.state?.authSwitchFrom;
@@ -97,6 +123,47 @@ function App() {
 		if (typeof document === "undefined") return;
 		document.body.classList.toggle("app-profile-route", location.pathname === "/profile");
 	}, [location.pathname]);
+
+	useEffect(() => {
+		if (typeof document === "undefined") return undefined;
+
+		const handleCopyUserClick = (event) => {
+			const target = event.target;
+			if (!(target instanceof Element)) return;
+			if (target.closest("input, textarea, select, [contenteditable='true']")) return;
+
+			const selectedText = window.getSelection?.().toString().trim();
+			if (selectedText) return;
+
+			const copySource = target.closest("[data-copy-user]");
+			if (!copySource) return;
+
+			const userHandle = normalizeCopyUser(copySource.getAttribute("data-copy-user"));
+			if (!userHandle) return;
+
+			const now = Date.now();
+			if (lastCopiedUserRef.current.value === userHandle && now - lastCopiedUserRef.current.at < 700) {
+				return;
+			}
+
+			void copyTextToClipboard(userHandle)
+				.then((copied) => {
+					if (!copied) {
+						throw new Error("copy-failed");
+					}
+					lastCopiedUserRef.current = { value: userHandle, at: now };
+					toast.success(`${userHandle} copied`, { duration: 1200 });
+				})
+				.catch(() => {
+					toast.error("Copy failed");
+				});
+		};
+
+		document.addEventListener("click", handleCopyUserClick);
+		return () => {
+			document.removeEventListener("click", handleCopyUserClick);
+		};
+	}, []);
 
 	return (
 		<div className={appShellClass}>

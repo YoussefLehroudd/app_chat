@@ -252,7 +252,13 @@ const MessageContainer = () => {
 									></span>
 								</button>
 
-								<div className='min-w-0 flex-1'>
+								<div
+									className={`min-w-0 flex-1 ${
+										!isGroupConversation && selectedConversation?.username ? "cursor-copy" : ""
+									}`}
+									data-copy-user={!isGroupConversation ? selectedConversation?.username : undefined}
+									title={!isGroupConversation && selectedConversation?.username ? "Click to copy username" : undefined}
+								>
 									<div className='flex flex-wrap items-center gap-2'>
 										<p className='truncate text-[15px] font-semibold text-slate-50 md:text-lg'>
 											{selectedConversation.fullName}

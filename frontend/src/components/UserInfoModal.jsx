@@ -442,7 +442,11 @@ const UserInfoModal = ({ user, open, onClose }) => {
 			>
 				<div className='shrink-0 border-b border-white/10 px-5 py-5 sm:px-6 sm:py-6'>
 					<div className='flex items-start justify-between gap-4'>
-						<div className='min-w-0'>
+							<div
+								className='min-w-0'
+								data-copy-user={!isGroupConversation ? user?.username : undefined}
+								title={!isGroupConversation ? "Click to copy username" : undefined}
+							>
 							<p className='text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-300/80'>User Info</p>
 							<div className='mt-2 flex flex-wrap items-center gap-2'>
 								<h2 className='text-2xl font-bold text-slate-50 sm:text-[2rem]'>{user.fullName}</h2>
@@ -722,10 +726,14 @@ const UserInfoModal = ({ user, open, onClose }) => {
 															<div className='h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/10'>
 																<img src={memberAvatar} alt={member.fullName} className='h-full w-full object-cover' />
 															</div>
-															<div className='min-w-0 flex-1'>
-																<p className='truncate text-sm font-medium text-slate-100'>{member.fullName}</p>
-																<p className='truncate text-xs text-slate-400'>@{member.username}</p>
-															</div>
+																<div
+																	className='min-w-0 flex-1'
+																	data-copy-user={member.username || undefined}
+																	title={member.username ? "Click to copy username" : undefined}
+																>
+																	<p className='truncate text-sm font-medium text-slate-100'>{member.fullName}</p>
+																	<p className='truncate text-xs text-slate-400'>@{member.username}</p>
+																</div>
 															<button
 																type='button'
 																onClick={() => handleAddMember(member._id)}
@@ -785,10 +793,14 @@ const UserInfoModal = ({ user, open, onClose }) => {
 															<div className='h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/10'>
 																<img src={memberAvatar} alt={member.fullName} className='h-full w-full object-cover' />
 															</div>
-															<div className='min-w-0 flex-1'>
-																<p className='truncate text-sm font-medium text-slate-100'>{member.fullName}</p>
-																<p className='truncate text-xs text-slate-400'>@{member.username}</p>
-															</div>
+																<div
+																	className='min-w-0 flex-1'
+																	data-copy-user={member.username || undefined}
+																	title={member.username ? "Click to copy username" : undefined}
+																>
+																	<p className='truncate text-sm font-medium text-slate-100'>{member.fullName}</p>
+																	<p className='truncate text-xs text-slate-400'>@{member.username}</p>
+																</div>
 															<button
 																type='button'
 																onClick={() => handleSendInvite(member._id)}
@@ -819,12 +831,16 @@ const UserInfoModal = ({ user, open, onClose }) => {
 										<div className='mt-3 space-y-2'>
 											{user.members.map((member) => (
 												<div key={member._id} className='flex items-center gap-3 rounded-[18px] bg-slate-900/60 px-3 py-3'>
-													<div className='min-w-0 flex-1'>
-														<p className='truncate text-sm font-medium text-slate-100'>
-															{member.fullName}
-															{member._id === authUser?._id ? " (You)" : ""}
-														</p>
-														<p className='truncate text-xs text-slate-400'>@{member.username}</p>
+														<div
+															className='min-w-0 flex-1'
+															data-copy-user={member.username || undefined}
+															title={member.username ? "Click to copy username" : undefined}
+														>
+															<p className='truncate text-sm font-medium text-slate-100'>
+																{member.fullName}
+																{member._id === authUser?._id ? " (You)" : ""}
+															</p>
+															<p className='truncate text-xs text-slate-400'>@{member.username}</p>
 													</div>
 													<div className='flex items-center gap-2'>
 														<span className='shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-300'>
@@ -900,10 +916,14 @@ const UserInfoModal = ({ user, open, onClose }) => {
 								) : null}
 
 								<div className='grid gap-3 sm:grid-cols-2'>
-									<div className='rounded-[24px] border border-slate-800 bg-slate-800/80 px-4 py-3.5'>
-										<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>Username</p>
-										<p className='mt-1 text-base font-medium text-slate-100'>@{user.username}</p>
-									</div>
+										<div
+											className='rounded-[24px] border border-slate-800 bg-slate-800/80 px-4 py-3.5'
+											data-copy-user={user.username || undefined}
+											title={user.username ? "Click to copy username" : undefined}
+										>
+											<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>Username</p>
+											<p className='mt-1 text-base font-medium text-slate-100'>@{user.username}</p>
+										</div>
 
 									<div className='rounded-[24px] border border-slate-800 bg-slate-800/80 px-4 py-3.5'>
 										<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>Gender</p>

@@ -76,6 +76,7 @@ const CALL_PARTICIPANT_STATUSES = {
 	DECLINED: "DECLINED",
 	MISSED: "MISSED",
 };
+const PEER_DISCONNECT_GRACE_MS = 6500;
 
 const INITIAL_CALL_STATE = {
 	phase: "idle",
@@ -397,6 +398,7 @@ export const CallContextProvider = ({ children }) => {
 	const participantDirectoryRef = useRef(new Map());
 	const pendingIceCandidatesRef = useRef(new Map());
 	const inboundRemoteStreamsRef = useRef(new Map());
+	const peerDisconnectTimersRef = useRef(new Map());
 	const durationIntervalRef = useRef(null);
 	const incomingCallRef = useRef(null);
 	const recentlyClosedCallsRef = useRef(new Map());
@@ -806,6 +808,11 @@ export const CallContextProvider = ({ children }) => {
 	const closePeerConnection = (userId) => {
 		const connection = peerConnectionsRef.current.get(userId);
 		if (!connection) return;
+		const pendingTimer = peerDisconnectTimersRef.current.get(userId);
+		if (pendingTimer) {
+			window.clearTimeout(pendingTimer);
+			peerDisconnectTimersRef.current.delete(userId);
+		}
 
 		connection.onicecandidate = null;
 		connection.ontrack = null;
@@ -817,7 +824,41 @@ export const CallContextProvider = ({ children }) => {
 		removeRemoteParticipant(userId);
 	};
 
+	const schedulePeerDisconnectCleanup = (userId, connection) => {
+		if (!userId || !connection) return;
+
+		const existingTimer = peerDisconnectTimersRef.current.get(userId);
+		if (existingTimer) {
+			window.clearTimeout(existingTimer);
+		}
+
+		const timeoutId = window.setTimeout(() => {
+			peerDisconnectTimersRef.current.delete(userId);
+			const activeConnection = peerConnectionsRef.current.get(userId);
+			if (!activeConnection || activeConnection !== connection) return;
+
+			const connectionState = activeConnection.connectionState;
+			const iceState = activeConnection.iceConnectionState;
+			if (
+				["disconnected", "failed", "closed"].includes(connectionState) ||
+				["disconnected", "failed", "closed"].includes(iceState)
+			) {
+				closePeerConnection(userId);
+			}
+		}, PEER_DISCONNECT_GRACE_MS);
+
+		peerDisconnectTimersRef.current.set(userId, timeoutId);
+	};
+
+	const clearAllPeerDisconnectTimers = () => {
+		peerDisconnectTimersRef.current.forEach((timeoutId) => {
+			window.clearTimeout(timeoutId);
+		});
+		peerDisconnectTimersRef.current.clear();
+	};
+
 	const closeAllPeerConnections = () => {
+		clearAllPeerDisconnectTimers();
 		Array.from(peerConnectionsRef.current.keys()).forEach((userId) => closePeerConnection(userId));
 	};
 
@@ -833,6 +874,7 @@ export const CallContextProvider = ({ children }) => {
 	const resetCallLocally = () => {
 		stopDurationTimer();
 		stopLocalStream();
+		clearAllPeerDisconnectTimers();
 		closeAllPeerConnections();
 		incomingCallRef.current = null;
 		participantDirectoryRef.current = new Map();
@@ -1025,6 +1067,25 @@ export const CallContextProvider = ({ children }) => {
 		}
 	};
 
+	const stopTracksNotUsedBySenders = (stream) => {
+		if (!stream) return;
+
+		const trackIdsInUse = new Set();
+		peerConnectionsRef.current.forEach((connection) => {
+			connection.getSenders().forEach((sender) => {
+				if (sender.track?.id) {
+					trackIdsInUse.add(sender.track.id);
+				}
+			});
+		});
+
+		stream.getTracks().forEach((track) => {
+			if (!trackIdsInUse.has(track.id)) {
+				track.stop();
+			}
+		});
+	};
+
 	const stopScreenShare = async ({ preserveCamera = true } = {}) => {
 		const displayStream = screenStreamRef.current;
 		if (!displayStream) {
@@ -1174,7 +1235,7 @@ export const CallContextProvider = ({ children }) => {
 		await replaceOutgoingMediaTracks(replacementStream);
 
 		if (currentLocalStream && currentLocalStream !== replacementStream) {
-			stopStreamTracks(currentLocalStream);
+			stopTracksNotUsedBySenders(currentLocalStream);
 		}
 
 		updateCallState((currentState) => ({
@@ -1368,31 +1429,51 @@ export const CallContextProvider = ({ children }) => {
 			markConnectionAsActive();
 		};
 
-		connection.onconnectionstatechange = () => {
-			const nextState = connection.connectionState;
+			connection.onconnectionstatechange = () => {
+				const nextState = connection.connectionState;
 
-			if (nextState === "connected") {
-				markConnectionAsActive();
-				return;
-			}
+				if (nextState === "connected") {
+					const pendingTimer = peerDisconnectTimersRef.current.get(targetUserId);
+					if (pendingTimer) {
+						window.clearTimeout(pendingTimer);
+						peerDisconnectTimersRef.current.delete(targetUserId);
+					}
+					markConnectionAsActive();
+					return;
+				}
 
-			if (["failed", "disconnected", "closed"].includes(nextState)) {
-				closePeerConnection(targetUserId);
-			}
-		};
+				if (["failed", "closed"].includes(nextState)) {
+					closePeerConnection(targetUserId);
+					return;
+				}
 
-		connection.oniceconnectionstatechange = () => {
-			const nextState = connection.iceConnectionState;
+				if (nextState === "disconnected") {
+					schedulePeerDisconnectCleanup(targetUserId, connection);
+				}
+			};
 
-			if (["connected", "completed"].includes(nextState)) {
-				markConnectionAsActive();
-				return;
-			}
+			connection.oniceconnectionstatechange = () => {
+				const nextState = connection.iceConnectionState;
 
-			if (["failed", "disconnected", "closed"].includes(nextState)) {
-				closePeerConnection(targetUserId);
-			}
-		};
+				if (["connected", "completed"].includes(nextState)) {
+					const pendingTimer = peerDisconnectTimersRef.current.get(targetUserId);
+					if (pendingTimer) {
+						window.clearTimeout(pendingTimer);
+						peerDisconnectTimersRef.current.delete(targetUserId);
+					}
+					markConnectionAsActive();
+					return;
+				}
+
+				if (["failed", "closed"].includes(nextState)) {
+					closePeerConnection(targetUserId);
+					return;
+				}
+
+				if (nextState === "disconnected") {
+					schedulePeerDisconnectCleanup(targetUserId, connection);
+				}
+			};
 
 		if (localStreamRef.current) {
 			localStreamRef.current.getTracks().forEach((track) => {
@@ -1939,11 +2020,13 @@ export const CallContextProvider = ({ children }) => {
 				});
 				await connection.setRemoteDescription(new RTCSessionDescription(offer));
 				await flushPendingIceCandidates(callerId);
-				await syncLocalStreamForMediaType(negotiatedMediaType);
-
-				if (!localStreamRef.current || callStateRef.current.callId !== callId) {
-					return;
+				try {
+					await syncLocalStreamForMediaType(negotiatedMediaType);
+				} catch (streamError) {
+					console.error("Error syncing local media before answer:", streamError);
+					// Keep negotiation alive even if media switching fails temporarily.
 				}
+				if (callStateRef.current.callId !== callId) return;
 				const answer = await connection.createAnswer();
 				await connection.setLocalDescription(answer);
 

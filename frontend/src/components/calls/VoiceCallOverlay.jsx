@@ -139,6 +139,41 @@ const resolveAvatar = (entity, size = 144) =>
 		gender: entity?.gender,
 	});
 
+const FLOAT_WIDGET_MARGIN = 12;
+
+const getViewportBounds = () => {
+	if (typeof window === "undefined") {
+		return { width: 0, height: 0 };
+	}
+
+	return {
+		width: window.visualViewport?.width || window.innerWidth,
+		height: window.visualViewport?.height || window.innerHeight,
+	};
+};
+
+const clampFloatingPosition = (x, y, widgetWidth, widgetHeight) => {
+	const { width: viewportWidth, height: viewportHeight } = getViewportBounds();
+	const maxX = Math.max(FLOAT_WIDGET_MARGIN, viewportWidth - widgetWidth - FLOAT_WIDGET_MARGIN);
+	const maxY = Math.max(FLOAT_WIDGET_MARGIN, viewportHeight - widgetHeight - FLOAT_WIDGET_MARGIN);
+
+	return {
+		x: Math.min(Math.max(x, FLOAT_WIDGET_MARGIN), maxX),
+		y: Math.min(Math.max(y, FLOAT_WIDGET_MARGIN), maxY),
+	};
+};
+
+const getDefaultFloatingPosition = (widgetWidth, widgetHeight) => {
+	const { width: viewportWidth, height: viewportHeight } = getViewportBounds();
+
+	return clampFloatingPosition(
+		viewportWidth - widgetWidth - FLOAT_WIDGET_MARGIN,
+		viewportHeight - widgetHeight - FLOAT_WIDGET_MARGIN,
+		widgetWidth,
+		widgetHeight
+	);
+};
+
 const VoiceCallOverlay = () => {
 	const {
 		callState,
@@ -157,9 +192,14 @@ const VoiceCallOverlay = () => {
 	} = useCallContext();
 	const ringtoneAudioRef = useRef(null);
 	const videoStageRef = useRef(null);
+	const floatingContainerRef = useRef(null);
+	const floatingDragRef = useRef(null);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [isLocalVideoPrimary, setIsLocalVideoPrimary] = useState(false);
 	const [isMinimized, setIsMinimized] = useState(false);
+	const [minimizedMode, setMinimizedMode] = useState("card");
+	const [floatingPosition, setFloatingPosition] = useState(null);
+	const [isDraggingFloating, setIsDraggingFloating] = useState(false);
 	const [showInviteModal, setShowInviteModal] = useState(false);
 	const [inviteCandidates, setInviteCandidates] = useState([]);
 	const [loadingInviteCandidates, setLoadingInviteCandidates] = useState(false);
@@ -222,13 +262,27 @@ const VoiceCallOverlay = () => {
 	useEffect(() => {
 		setIsLocalVideoPrimary(false);
 		setIsMinimized(false);
+		setMinimizedMode("card");
+		setFloatingPosition(null);
+		setIsDraggingFloating(false);
 	}, [callState.callId]);
 
 	useEffect(() => {
 		if (callState.phase === "incoming") {
 			setIsMinimized(false);
+			setMinimizedMode("card");
 		}
 	}, [callState.phase]);
+
+	useEffect(() => {
+		return () => {
+			const activeDrag = floatingDragRef.current;
+			if (!activeDrag) return;
+			window.removeEventListener("pointermove", activeDrag.onPointerMove);
+			window.removeEventListener("pointerup", activeDrag.onPointerUp);
+			window.removeEventListener("pointercancel", activeDrag.onPointerUp);
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!showInviteModal || !callState.callId) return;
@@ -294,8 +348,6 @@ const VoiceCallOverlay = () => {
 		[callState.conversationProfilePic, callState.conversationTitle]
 	);
 
-	if (!shouldShowOverlay) return null;
-
 	const statusLabel =
 		callState.phase === "incoming"
 			? isGroupCall
@@ -319,7 +371,7 @@ const VoiceCallOverlay = () => {
 							: "Connecting..."
 					: formatDuration(callDurationSeconds);
 
-	const title = isGroupCall ? conversationSummary.fullName : primaryUser.fullName;
+	const title = isGroupCall ? conversationSummary.fullName : primaryUser?.fullName || "Call";
 	const subtitle = isGroupCall
 		? primaryUser?._id
 			? `${primaryUser.fullName} is calling this group`
@@ -332,6 +384,129 @@ const VoiceCallOverlay = () => {
 
 	const leadAvatar = isGroupCall ? resolveAvatar(conversationSummary) : resolveAvatar(primaryUser);
 	const switchMediaLabel = isVideoCall ? "Switch to voice call" : "Switch to video call";
+	const hasFloatingPosition = Number.isFinite(floatingPosition?.x) && Number.isFinite(floatingPosition?.y);
+	const floatingWidgetStyle = hasFloatingPosition
+		? { left: `${floatingPosition.x}px`, top: `${floatingPosition.y}px` }
+		: { left: "0px", top: "0px" };
+
+	const clearFloatingDrag = () => {
+		const activeDrag = floatingDragRef.current;
+		if (!activeDrag) return;
+
+		window.removeEventListener("pointermove", activeDrag.onPointerMove);
+		window.removeEventListener("pointerup", activeDrag.onPointerUp);
+		window.removeEventListener("pointercancel", activeDrag.onPointerUp);
+		floatingDragRef.current = null;
+		setIsDraggingFloating(false);
+	};
+
+	const startFloatingDrag = (event, options = {}) => {
+		if (!canMinimizeCall) return;
+		if (event.pointerType === "mouse" && event.button !== 0) return;
+
+		const container = floatingContainerRef.current;
+		if (!container) return;
+
+		event.preventDefault();
+		clearFloatingDrag();
+
+		const rect = container.getBoundingClientRect();
+		const dragMeta = {
+			pointerId: event.pointerId,
+			startClientX: event.clientX,
+			startClientY: event.clientY,
+			offsetX: event.clientX - rect.left,
+			offsetY: event.clientY - rect.top,
+			moved: false,
+			onTap: typeof options.onTap === "function" ? options.onTap : null,
+			onPointerMove: null,
+			onPointerUp: null,
+		};
+
+		const onPointerMove = (moveEvent) => {
+			if (moveEvent.pointerId !== dragMeta.pointerId) return;
+
+			const currentContainer = floatingContainerRef.current;
+			if (!currentContainer) return;
+			const currentRect = currentContainer.getBoundingClientRect();
+			const distance = Math.hypot(
+				moveEvent.clientX - dragMeta.startClientX,
+				moveEvent.clientY - dragMeta.startClientY
+			);
+			if (distance > 4) {
+				dragMeta.moved = true;
+			}
+
+			setFloatingPosition(
+				clampFloatingPosition(
+					moveEvent.clientX - dragMeta.offsetX,
+					moveEvent.clientY - dragMeta.offsetY,
+					currentRect.width,
+					currentRect.height
+				)
+			);
+		};
+
+		const onPointerUp = (upEvent) => {
+			if (upEvent.pointerId !== dragMeta.pointerId) return;
+
+			window.removeEventListener("pointermove", onPointerMove);
+			window.removeEventListener("pointerup", onPointerUp);
+			window.removeEventListener("pointercancel", onPointerUp);
+			floatingDragRef.current = null;
+			setIsDraggingFloating(false);
+
+			if (!dragMeta.moved) {
+				dragMeta.onTap?.();
+			}
+		};
+
+		dragMeta.onPointerMove = onPointerMove;
+		dragMeta.onPointerUp = onPointerUp;
+		floatingDragRef.current = dragMeta;
+		setIsDraggingFloating(true);
+
+		window.addEventListener("pointermove", onPointerMove);
+		window.addEventListener("pointerup", onPointerUp);
+		window.addEventListener("pointercancel", onPointerUp);
+	};
+
+	useEffect(() => {
+		if (!isMinimized || !canMinimizeCall) {
+			clearFloatingDrag();
+			return undefined;
+		}
+
+		const syncFloatingPosition = () => {
+			const container = floatingContainerRef.current;
+			if (!container) return;
+			const rect = container.getBoundingClientRect();
+
+			setFloatingPosition((currentValue) => {
+				if (!currentValue || !Number.isFinite(currentValue.x) || !Number.isFinite(currentValue.y)) {
+					return getDefaultFloatingPosition(rect.width, rect.height);
+				}
+
+				return clampFloatingPosition(currentValue.x, currentValue.y, rect.width, rect.height);
+			});
+		};
+
+		const rafId = window.requestAnimationFrame(syncFloatingPosition);
+		window.addEventListener("resize", syncFloatingPosition);
+		window.addEventListener("orientationchange", syncFloatingPosition);
+		window.visualViewport?.addEventListener("resize", syncFloatingPosition);
+		window.visualViewport?.addEventListener("scroll", syncFloatingPosition);
+
+		return () => {
+			window.cancelAnimationFrame(rafId);
+			window.removeEventListener("resize", syncFloatingPosition);
+			window.removeEventListener("orientationchange", syncFloatingPosition);
+			window.visualViewport?.removeEventListener("resize", syncFloatingPosition);
+			window.visualViewport?.removeEventListener("scroll", syncFloatingPosition);
+		};
+	}, [isMinimized, canMinimizeCall, minimizedMode]);
+
+	if (!shouldShowOverlay) return null;
 
 	const toggleInvitee = (userId) => {
 		setSelectedInviteeIds((currentIds) =>
@@ -366,6 +541,15 @@ const VoiceCallOverlay = () => {
 			setShowInviteModal(false);
 		}
 		setIsMinimized((currentValue) => !currentValue);
+	};
+
+	const handleShowAvatarOnly = () => {
+		if (!canMinimizeCall) return;
+		setMinimizedMode("avatar");
+	};
+
+	const handleShowMiniCard = () => {
+		setMinimizedMode("card");
 	};
 
 	const toggleFullscreen = async () => {
@@ -459,68 +643,111 @@ const VoiceCallOverlay = () => {
 
 	if (isMinimized && canMinimizeCall) {
 		return createPortal(
-			<div className='pointer-events-none fixed inset-x-0 bottom-0 z-[205] flex justify-end px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.65rem)] sm:px-5'>
-				<div className='pointer-events-auto w-[min(90vw,360px)] rounded-[22px] border border-white/12 bg-[linear-gradient(145deg,rgba(5,12,25,0.96),rgba(9,18,34,0.94))] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.62)] backdrop-blur-xl'>
-					<div className='flex items-center gap-3'>
-						<div className='h-11 w-11 shrink-0 overflow-hidden rounded-full ring-1 ring-white/20'>
-							<img src={leadAvatar} alt={title} className='h-full w-full object-cover' />
+			<div className='pointer-events-none fixed inset-0 z-[205]'>
+				{minimizedMode === "avatar" ? (
+					<button
+						ref={floatingContainerRef}
+						type='button'
+						style={floatingWidgetStyle}
+						onPointerDown={(event) => startFloatingDrag(event, { onTap: handleShowMiniCard })}
+						className={`pointer-events-auto absolute h-14 w-14 overflow-hidden rounded-full border border-white/15 bg-slate-950/90 shadow-[0_20px_48px_rgba(2,6,23,0.56)] ring-1 ring-white/10 touch-none transition ${
+							hasFloatingPosition ? "opacity-100" : "opacity-0"
+						} ${isDraggingFloating ? "cursor-grabbing" : "cursor-grab"}`}
+						aria-label='Expand call controls'
+						title='Drag to move. Tap to expand.'
+					>
+						<img src={leadAvatar} alt={title} className='h-full w-full object-cover' />
+						<span className='absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-slate-950 bg-emerald-400'></span>
+					</button>
+				) : (
+					<div
+						ref={floatingContainerRef}
+						style={floatingWidgetStyle}
+						className={`pointer-events-auto absolute w-[min(90vw,360px)] rounded-[22px] border border-white/12 bg-[linear-gradient(145deg,rgba(5,12,25,0.96),rgba(9,18,34,0.94))] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.62)] backdrop-blur-xl transition ${
+							hasFloatingPosition ? "opacity-100" : "opacity-0"
+						}`}
+					>
+						<div className='flex items-center gap-3'>
+							<button
+								type='button'
+								onPointerDown={(event) => startFloatingDrag(event)}
+								className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-xs font-semibold tracking-[0.14em] text-slate-200 touch-none transition hover:bg-white/[0.1] ${
+									isDraggingFloating ? "cursor-grabbing" : "cursor-grab"
+								}`}
+								aria-label='Drag call widget'
+								title='Drag call widget'
+							>
+								::
+							</button>
+							<div className='h-11 w-11 shrink-0 overflow-hidden rounded-full ring-1 ring-white/20'>
+								<img src={leadAvatar} alt={title} className='h-full w-full object-cover' />
+							</div>
+							<div className='min-w-0 flex-1'>
+								<p className='truncate text-sm font-semibold text-white'>{title}</p>
+								<p className='mt-0.5 truncate text-xs text-slate-300'>{statusLabel}</p>
+							</div>
+							<button
+								type='button'
+								onClick={handleShowAvatarOnly}
+								className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-slate-100 transition hover:bg-white/[0.1]'
+								aria-label='Show avatar only'
+								title='Show avatar only'
+							>
+								<IoContractOutline className='h-4.5 w-4.5' />
+							</button>
+							<button
+								type='button'
+								onClick={handleToggleMinimized}
+								className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-slate-100 transition hover:bg-white/[0.1]'
+								aria-label='Restore call window'
+								title='Restore call window'
+							>
+								<IoChevronUp className='h-5 w-5' />
+							</button>
 						</div>
-						<div className='min-w-0 flex-1'>
-							<p className='truncate text-sm font-semibold text-white'>{title}</p>
-							<p className='mt-0.5 truncate text-xs text-slate-300'>{statusLabel}</p>
-						</div>
-						<button
-							type='button'
-							onClick={handleToggleMinimized}
-							className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-slate-100 transition hover:bg-white/[0.1]'
-							aria-label='Restore call window'
-							title='Restore call window'
-						>
-							<IoChevronUp className='h-5 w-5' />
-						</button>
-					</div>
 
-					<div className='mt-3 flex items-center justify-end gap-2'>
-						<button
-							type='button'
-							onClick={() => void handleSwitchMediaType()}
-							disabled={isSwitchingMedia}
-							className='inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-55'
-							aria-label={switchMediaLabel}
-							title={switchMediaLabel}
-						>
-							{isSwitchingMedia ? (
-								<span className='loading loading-spinner loading-xs'></span>
-							) : isVideoCall ? (
-								<HiMiniPhone className='h-4.5 w-4.5' />
-							) : (
-								<HiMiniVideoCamera className='h-4.5 w-4.5' />
-							)}
-						</button>
-						<button
-							type='button'
-							onClick={toggleMute}
-							className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 transition ${
-								callState.isMuted
-									? "bg-amber-500/14 text-amber-100 hover:bg-amber-500/20"
-									: "bg-white/[0.04] text-slate-100 hover:bg-white/[0.08]"
-							}`}
-							aria-label={callState.isMuted ? "Unmute microphone" : "Mute microphone"}
-							title={callState.isMuted ? "Unmute microphone" : "Mute microphone"}
-						>
-							{callState.isMuted ? <IoMicOffOutline className='h-4.5 w-4.5' /> : <IoMicOutline className='h-4.5 w-4.5' />}
-						</button>
-						<button
-							type='button'
-							onClick={endCurrentCall}
-							className='inline-flex h-11 w-11 items-center justify-center rounded-full bg-rose-500 text-white shadow-[0_14px_28px_rgba(244,63,94,0.3)] transition hover:bg-rose-400'
-							aria-label={isGroupCall ? "Leave or end group call" : "End call"}
-							title={isGroupCall ? "Leave or end group call" : "End call"}
-						>
-							<HiMiniPhoneXMark className='h-5 w-5' />
-						</button>
+						<div className='mt-3 flex items-center justify-end gap-2'>
+							<button
+								type='button'
+								onClick={() => void handleSwitchMediaType()}
+								disabled={isSwitchingMedia}
+								className='inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-55'
+								aria-label={switchMediaLabel}
+								title={switchMediaLabel}
+							>
+								{isSwitchingMedia ? (
+									<span className='loading loading-spinner loading-xs'></span>
+								) : isVideoCall ? (
+									<HiMiniPhone className='h-4.5 w-4.5' />
+								) : (
+									<HiMiniVideoCamera className='h-4.5 w-4.5' />
+								)}
+							</button>
+							<button
+								type='button'
+								onClick={toggleMute}
+								className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 transition ${
+									callState.isMuted
+										? "bg-amber-500/14 text-amber-100 hover:bg-amber-500/20"
+										: "bg-white/[0.04] text-slate-100 hover:bg-white/[0.08]"
+								}`}
+								aria-label={callState.isMuted ? "Unmute microphone" : "Mute microphone"}
+								title={callState.isMuted ? "Unmute microphone" : "Mute microphone"}
+							>
+								{callState.isMuted ? <IoMicOffOutline className='h-4.5 w-4.5' /> : <IoMicOutline className='h-4.5 w-4.5' />}
+							</button>
+							<button
+								type='button'
+								onClick={endCurrentCall}
+								className='inline-flex h-11 w-11 items-center justify-center rounded-full bg-rose-500 text-white shadow-[0_14px_28px_rgba(244,63,94,0.3)] transition hover:bg-rose-400'
+								aria-label={isGroupCall ? "Leave or end group call" : "End call"}
+								title={isGroupCall ? "Leave or end group call" : "End call"}
+							>
+								<HiMiniPhoneXMark className='h-5 w-5' />
+							</button>
+						</div>
 					</div>
-				</div>
+				)}
 				{remoteAudioElements}
 				<audio ref={ringtoneAudioRef} src={callRingtone} loop preload='auto' />
 			</div>,
