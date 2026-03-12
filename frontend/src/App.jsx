@@ -23,6 +23,16 @@ function App() {
 				: "neutral";
 	const isDeveloperRoute = location.pathname.startsWith("/developer");
 	const isWorkbenchRoute = location.pathname === "/profile" || location.pathname.startsWith("/developer");
+	const mobileViewportShell =
+		"h-[var(--app-viewport-height)] items-start justify-center overflow-x-hidden overflow-y-auto px-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)]";
+	const mobileDesktopShell = "sm:h-dvh sm:items-center sm:overflow-hidden sm:p-4";
+	const appShellClass = isAuthRoute
+		? `box-border flex min-h-[var(--app-viewport-height)] ${mobileViewportShell} sm:px-4 sm:py-4 lg:px-6 lg:py-6`
+		: isWorkbenchRoute
+			? isDeveloperRoute
+				? `box-border flex min-h-[var(--app-viewport-height)] ${mobileViewportShell} sm:min-h-screen sm:h-auto sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden`
+				: `box-border flex min-h-[var(--app-viewport-height)] ${mobileViewportShell} ${mobileDesktopShell}`
+			: `box-border flex min-h-[var(--app-viewport-height)] ${mobileViewportShell} ${mobileDesktopShell}`;
 	const renderAuthRoute = (screen) => (
 		<div key={`${location.pathname}-${location.key}`} className={`auth-route-transition auth-route-transition--${authSwitchDirection}`}>
 			{screen}
@@ -56,17 +66,7 @@ function App() {
 	}, []);
 
 	return (
-		<div
-			className={`box-border flex min-h-screen ${
-				isAuthRoute
-					? "h-dvh items-start justify-center overflow-y-auto overflow-x-hidden px-2 py-2 sm:px-4 sm:py-4 lg:items-center lg:overflow-hidden lg:px-6 lg:py-6"
-					: isWorkbenchRoute
-						? isDeveloperRoute
-							? "min-h-[var(--app-viewport-height)] items-start justify-center overflow-x-hidden p-1.5 sm:min-h-screen sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden"
-							: "h-[var(--app-viewport-height)] items-start justify-center overflow-hidden p-1.5 sm:h-dvh sm:items-center sm:p-4"
-						: "h-[var(--app-viewport-height)] items-start justify-center overflow-hidden p-1.5 sm:h-dvh sm:items-center sm:p-4"
-			}`}
-		>
+		<div className={appShellClass}>
 			<Routes>
 				<Route path='/' element={authUser ? <Home /> : <Navigate to={"/login"} />} />
 				<Route path='/login' element={authUser ? <Navigate to='/' /> : renderAuthRoute(<Login />)} />
