@@ -256,7 +256,7 @@ const Sidebar = () => {
 				onOpenStory={handleOpenStoryViewer}
 			/>
 
-			<div className='mt-3 flex flex-wrap items-center gap-2'>
+			<div className='mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0'>
 				{FILTERS.map((filter) => {
 					const isActive = activeFilter === filter.id;
 
@@ -265,7 +265,7 @@ const Sidebar = () => {
 							key={filter.id}
 							type='button'
 							onClick={() => setActiveFilter(filter.id)}
-							className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+							className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold transition sm:px-4 sm:py-2 sm:text-xs ${
 								isActive
 									? "bg-sky-500 text-white shadow-[0_12px_24px_rgba(14,165,233,0.24)]"
 									: "border border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/[0.06]"
@@ -278,9 +278,9 @@ const Sidebar = () => {
 				<button
 					type='button'
 					onClick={() => setShowCreateGroupModal(true)}
-					className='inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16'
+					className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
 				>
-					<HiOutlineUserGroup className='h-4 w-4' />
+					<HiOutlineUserGroup className='h-3.5 w-3.5 sm:h-4 sm:w-4' />
 					<span>New group</span>
 				</button>
 			</div>
