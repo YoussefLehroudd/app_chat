@@ -5,11 +5,14 @@ import {
 	addGroupMembers,
 	createGroupConversation,
 	deleteGroupConversationPermanently,
+	getDirectInvitations,
 	getSidebarConversations,
 	joinPublicGroupConversation,
 	leaveGroupConversation,
 	removeGroupMember,
+	respondToDirectInvitation,
 	respondToGroupInvitation,
+	sendDirectInvitation,
 	sendGroupInvitation,
 	updateGroupMemberRole,
 	updateGroupConversation,
@@ -18,6 +21,9 @@ import {
 const router = express.Router();
 
 router.get("/", protectRoute, getSidebarConversations);
+router.get("/direct-invitations", protectRoute, getDirectInvitations);
+router.post("/direct-invitations", protectRoute, sendDirectInvitation);
+router.post("/direct-invitations/:id/respond", protectRoute, respondToDirectInvitation);
 router.post("/groups", protectRoute, avatarUpload.single("profilePic"), createGroupConversation);
 router.patch("/groups/:id", protectRoute, avatarUpload.single("profilePic"), updateGroupConversation);
 router.post("/groups/:id/join", protectRoute, joinPublicGroupConversation);

@@ -1,5 +1,5 @@
 import { prisma } from "../db/prisma.js";
-import { findOrCreateDirectConversation } from "./conversations.js";
+import { DIRECT_CONVERSATION_STATUSES, findDirectConversationByUsers } from "./conversations.js";
 import { buildCallMessage } from "./systemMessages.js";
 import { toMessageDto, toUserDto } from "./formatters.js";
 
@@ -399,7 +399,11 @@ const resolveConversationForStart = async ({ userId, conversationId, targetUserI
 		return null;
 	}
 
-	const directConversation = await findOrCreateDirectConversation(userId, targetUserId);
+	const directConversation = await findDirectConversationByUsers(userId, targetUserId);
+	if (!directConversation || directConversation.directStatus !== DIRECT_CONVERSATION_STATUSES.ACCEPTED) {
+		return null;
+	}
+
 	return prisma.conversation.findUnique({
 		where: { id: directConversation.id },
 		select: conversationSelect,

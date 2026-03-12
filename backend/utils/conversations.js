@@ -5,6 +5,11 @@ export const CONVERSATION_TYPES = {
 	GROUP: "GROUP",
 };
 
+export const DIRECT_CONVERSATION_STATUSES = {
+	PENDING: "PENDING",
+	ACCEPTED: "ACCEPTED",
+};
+
 export const CONVERSATION_MEMBER_ROLES = {
 	OWNER: "OWNER",
 	ADMIN: "ADMIN",
@@ -41,6 +46,7 @@ export const findOrCreateDirectConversation = async (userAId, userBId) => {
 				type: CONVERSATION_TYPES.DIRECT,
 				userOneId,
 				userTwoId,
+				directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
 			},
 		});
 	}

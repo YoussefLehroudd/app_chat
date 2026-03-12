@@ -36,7 +36,7 @@ const AuthShell = ({
 			: undefined;
 
 	return (
-		<div className='auth-shell animate-authFadeUp'>
+		<div className='auth-shell'>
 			<div className='auth-shell__orb auth-shell__orb--one'></div>
 			<div className='auth-shell__orb auth-shell__orb--two'></div>
 
@@ -54,7 +54,7 @@ const AuthShell = ({
 
 						<div className='auth-shell__desktop-copy max-w-xl space-y-4'>
 							<p className='text-xs uppercase tracking-[0.38em] text-slate-400'>Private messaging</p>
-							<h1 className='auth-shell__desktop-title font-["Sora"] text-4xl font-semibold leading-[1.02] text-white xl:text-5xl'>
+							<h1 className='auth-shell__desktop-title text-4xl font-semibold leading-[1.02] text-white xl:text-5xl'>
 								{title}{" "}
 								<span className='text-amber-200/95'>
 									{accent}
@@ -109,7 +109,7 @@ const AuthShell = ({
 							<div className='inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-300/60 bg-white text-lg font-bold text-slate-900 shadow-[0_10px_30px_rgba(15,23,42,0.08)]'>
 								C
 							</div>
-							<h2 className='auth-panel-title font-["Sora"] text-3xl font-semibold tracking-[-0.03em] text-slate-900 sm:text-4xl'>
+							<h2 className='auth-panel-title text-3xl font-semibold tracking-[-0.03em] text-slate-900 sm:text-4xl'>
 								{title}
 								<span className='block text-slate-500'>{accent}</span>
 							</h2>

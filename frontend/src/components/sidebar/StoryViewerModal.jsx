@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HiOutlineEye, HiOutlineTrash, HiOutlineXMark } from "react-icons/hi2";
 import { IoPause, IoPlay, IoSend } from "react-icons/io5";
+import useModalBodyScrollLock from "../../hooks/useModalBodyScrollLock";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
 
@@ -90,6 +91,7 @@ const StoryViewerModal = ({
 	const [sendingReply, setSendingReply] = useState(false);
 	const [sendingReactionEmoji, setSendingReactionEmoji] = useState("");
 	const reactionChoices = ["❤️", "🔥", "😂", "😍", "👏", "👍"];
+	useModalBodyScrollLock(open);
 
 	const clearAutoNextTimeout = useCallback(() => {
 		if (autoNextTimeoutRef.current) {
@@ -442,7 +444,7 @@ const StoryViewerModal = ({
 	const shouldShowTextFallback = activeStory.mediaType === "TEXT" || !activeStory.mediaUrl || mediaLoadError;
 
 	return createPortal(
-		<div className='fixed inset-0 z-[220] h-[var(--app-viewport-height)] bg-[rgba(2,6,23,0.985)] backdrop-blur-md'>
+		<div className='fixed inset-0 z-[220] h-[var(--app-viewport-height)] bg-[rgba(2,6,23,0.985)]'>
 			<div className='relative mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col px-2.5 pb-[calc(env(safe-area-inset-bottom,0px)+0.95rem)] pt-2 sm:px-5 sm:pb-5 sm:pt-4'>
 				<div className='shrink-0 flex items-center gap-1.5 pb-2 sm:pb-3'>
 					{activeStories.map((story, storyIndex) => {
@@ -473,7 +475,12 @@ const StoryViewerModal = ({
 				<div className='mb-2.5 shrink-0 flex items-center justify-between gap-3 sm:mb-3'>
 					<div className='flex min-w-0 items-center gap-3'>
 						<div className='h-10 w-10 overflow-hidden rounded-full ring-1 ring-white/20'>
-							<img src={authorAvatar} alt={activeAuthor?.fullName || "Story author"} className='h-full w-full object-cover' />
+							<img
+								src={authorAvatar}
+								alt={activeAuthor?.fullName || "Story author"}
+								decoding='async'
+								className='h-full w-full object-cover'
+							/>
 						</div>
 						<div className='min-w-0'>
 							<p className='truncate text-sm font-semibold text-white'>{activeAuthor?.fullName || "Unknown user"}</p>
@@ -487,7 +494,7 @@ const StoryViewerModal = ({
 							onClick={() => setManualPaused((currentValue) => !currentValue)}
 							title={manualPaused ? "Start story" : "Pause story"}
 							aria-label={manualPaused ? "Start story" : "Pause story"}
-							className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/5 text-slate-200 transition hover:bg-white/10'
+							className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
 						>
 							{manualPaused ? <IoPlay className='h-4.5 w-4.5' /> : <IoPause className='h-4.5 w-4.5' />}
 						</button>
@@ -495,7 +502,7 @@ const StoryViewerModal = ({
 							<button
 								type='button'
 								onClick={openViewersModal}
-								className='inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-slate-200 transition hover:bg-white/10'
+								className='inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-slate-200 hover:bg-white/10'
 							>
 								<HiOutlineEye className='h-4 w-4' />
 								{viewersOpen ? viewers.length : Number.isFinite(activeStory.viewCount) ? activeStory.viewCount : 0}
@@ -504,7 +511,7 @@ const StoryViewerModal = ({
 						<button
 							type='button'
 							onClick={onClose}
-							className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/8 text-white transition hover:bg-white/15'
+							className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/8 text-white hover:bg-white/15'
 							aria-label='Close stories'
 						>
 							<HiOutlineXMark className='h-5 w-5' />
@@ -532,6 +539,7 @@ const StoryViewerModal = ({
 						<img
 							src={activeStory.mediaUrl}
 							alt='Story media'
+							decoding='async'
 							className='h-full w-full object-contain'
 							onError={() => setMediaLoadError(true)}
 						/>
@@ -566,54 +574,54 @@ const StoryViewerModal = ({
 					) : null}
 				</div>
 
-				<div className='mt-2.5 shrink-0 flex items-center justify-between sm:mt-3'>
-					{isOwnStory ? (
-						<p className='shrink-0 whitespace-nowrap text-xs text-slate-400'>
-							Story {activeStoryIndex + 1} of {activeStories.length}
-						</p>
-					) : null}
-					{isOwnStory ? (
-						<button
-							type='button'
-							onClick={async () => {
-								const result = await onDelete?.(activeStory._id);
-								if (result?.ok) {
-									if (activeStories.length > 1 && activeStoryIndex === activeStories.length - 1) {
-										goPreviousStory({ bypassLock: true });
-										return;
-									}
+					<div className='mt-2.5 shrink-0 flex items-center justify-between sm:mt-3'>
+						{isOwnStory ? (
+							<p className='shrink-0 whitespace-nowrap text-xs text-slate-400'>
+								Story {activeStoryIndex + 1} of {activeStories.length}
+							</p>
+						) : null}
+						{isOwnStory ? (
+							<button
+								type='button'
+								onClick={async () => {
+									const result = await onDelete?.(activeStory._id);
+									if (result?.ok) {
+										if (activeStories.length > 1 && activeStoryIndex === activeStories.length - 1) {
+											goPreviousStory({ bypassLock: true });
+											return;
+										}
 
-									goNextStory({ bypassLock: true });
-								}
-							}}
-							className='inline-flex items-center gap-2 rounded-full border border-rose-300/25 bg-rose-500/12 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:border-rose-300/45 hover:bg-rose-500/18'
-						>
-							<HiOutlineTrash className='h-4 w-4' />
-							Delete
-						</button>
-					) : (
-						<div className='w-full'>
+										goNextStory({ bypassLock: true });
+									}
+								}}
+								className='inline-flex items-center gap-2 rounded-full border border-rose-300/25 bg-rose-500/12 px-3 py-1.5 text-xs font-semibold text-rose-100 hover:border-rose-300/45 hover:bg-rose-500/18'
+							>
+								<HiOutlineTrash className='h-4 w-4' />
+								Delete
+							</button>
+						) : (
+							<div className='w-full'>
 							<div className='mb-2 flex items-center justify-between gap-2'>
-								<p className='shrink-0 whitespace-nowrap text-xs text-slate-400'>
-									Story {activeStoryIndex + 1} of {activeStories.length}
-								</p>
-								<div className='custom-scrollbar flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5'>
-								{reactionChoices.map((emoji) => (
-									<button
-										key={`${activeStory?._id || "story"}-reaction-${emoji}`}
-										type='button'
-										onClick={() => void handleReaction(emoji)}
-										disabled={Boolean(sendingReactionEmoji)}
-										className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm transition hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-60 ${
-											sendingReactionEmoji === emoji ? "scale-110 bg-cyan-500/20" : ""
-										}`}
-									>
-											{emoji}
-										</button>
-									))}
+									<p className='shrink-0 whitespace-nowrap text-xs text-slate-400'>
+										Story {activeStoryIndex + 1} of {activeStories.length}
+									</p>
+									<div className='custom-scrollbar flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5'>
+										{reactionChoices.map((emoji) => (
+											<button
+												key={`${activeStory?._id || "story"}-reaction-${emoji}`}
+												type='button'
+												onClick={() => void handleReaction(emoji)}
+												disabled={Boolean(sendingReactionEmoji)}
+												className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm hover:bg-white/12 disabled:cursor-not-allowed disabled:opacity-60 ${
+													sendingReactionEmoji === emoji ? "scale-110 bg-cyan-500/20" : ""
+												}`}
+											>
+												{emoji}
+											</button>
+										))}
+									</div>
 								</div>
-							</div>
-							<form className='flex items-center gap-1.5' onSubmit={handleCommentSubmit}>
+								<form className='flex items-center gap-1.5' onSubmit={handleCommentSubmit}>
 								<input
 									type='text'
 									value={replyText}
@@ -625,7 +633,7 @@ const StoryViewerModal = ({
 								<button
 									type='submit'
 									disabled={sendingReply || !replyText.trim()}
-									className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-cyan-300/25 bg-cyan-500/20 text-cyan-100 transition hover:bg-cyan-500/28 disabled:cursor-not-allowed disabled:opacity-55'
+									className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-cyan-300/25 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/28 disabled:cursor-not-allowed disabled:opacity-55'
 									aria-label='Send story reply'
 								>
 									<IoSend className='h-4 w-4' />
@@ -638,7 +646,7 @@ const StoryViewerModal = ({
 
 			{viewersOpen ? (
 				<div
-					className='fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/72 p-3 backdrop-blur-sm sm:p-5'
+					className='fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/72 p-3 sm:p-5'
 					onClick={() => setViewersOpen(false)}
 				>
 					<div
@@ -655,13 +663,13 @@ const StoryViewerModal = ({
 							<button
 								type='button'
 								onClick={() => setViewersOpen(false)}
-								className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/[0.12]'
+								className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/[0.06] text-slate-200 hover:bg-white/[0.12]'
 							>
 								<HiOutlineXMark className='h-5 w-5' />
 							</button>
 						</div>
 
-						<div className='custom-scrollbar max-h-[60vh] overflow-y-auto p-3 sm:p-4'>
+						<div className='custom-scrollbar modal-scroll-region max-h-[60vh] overflow-y-auto p-3 sm:p-4'>
 							{loadingViewers ? (
 								<div className='space-y-2'>
 									{Array.from({ length: 5 }).map((_, index) => (
@@ -688,7 +696,13 @@ const StoryViewerModal = ({
 										return (
 											<div key={`${viewer?._id || "viewer"}-${entry?.seenAt || index}`} className='flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3'>
 												<div className='h-10 w-10 overflow-hidden rounded-full ring-1 ring-white/15'>
-													<img src={viewerAvatar} alt={viewer?.fullName || "Viewer"} className='h-full w-full object-cover' />
+													<img
+														src={viewerAvatar}
+														alt={viewer?.fullName || "Viewer"}
+														loading='lazy'
+														decoding='async'
+														className='h-full w-full object-cover'
+													/>
 												</div>
 												<div className='min-w-0 flex-1'>
 													<p className='truncate text-sm font-semibold text-slate-100'>

@@ -204,7 +204,7 @@ const MessageContainer = () => {
 			) : (
 				<>
 					<div className='shrink-0 px-2 pb-2 pt-2 sm:px-3 sm:pb-3 sm:pt-3 md:px-5 md:pb-4 md:pt-4 lg:px-6'>
-						<div className='flex flex-wrap items-center gap-2.5 rounded-[22px] border border-white/10 bg-[linear-gradient(135deg,rgba(15,23,42,0.72),rgba(30,41,59,0.5))] px-2.5 py-2.5 shadow-[0_20px_42px_rgba(2,6,23,0.22)] backdrop-blur-xl sm:gap-3 sm:rounded-[28px] sm:px-3 sm:py-3 md:px-4'>
+						<div className='flex flex-wrap items-center gap-2.5 rounded-[22px] border border-white/10 bg-[linear-gradient(135deg,rgba(15,23,42,0.72),rgba(30,41,59,0.5))] px-2.5 py-2.5 shadow-[0_14px_32px_rgba(2,6,23,0.2)] sm:gap-3 sm:rounded-[28px] sm:px-3 sm:py-3 md:px-4'>
 							<div className='flex min-w-0 flex-1 items-center gap-2.5 sm:gap-3'>
 								<button
 									type='button'
@@ -373,7 +373,7 @@ const MessageContainer = () => {
 						</>
 					) : (
 						<div className='flex min-h-0 flex-1 items-center justify-center px-4 py-6 md:px-6 lg:px-8'>
-							<div className='w-full max-w-2xl rounded-[30px] border border-white/10 bg-[linear-gradient(135deg,rgba(9,14,28,0.82),rgba(17,24,39,0.62))] p-6 text-center shadow-[0_26px_70px_rgba(2,6,23,0.34)] backdrop-blur-xl md:p-8'>
+							<div className='w-full max-w-2xl rounded-[30px] border border-white/10 bg-[linear-gradient(135deg,rgba(9,14,28,0.82),rgba(17,24,39,0.62))] p-6 text-center shadow-[0_18px_46px_rgba(2,6,23,0.26)] md:p-8'>
 								<p className='text-[11px] font-semibold uppercase tracking-[0.34em] text-cyan-200/70'>Public group</p>
 								<h2 className='mt-4 text-2xl font-semibold text-white md:text-3xl'>{selectedConversation.fullName}</h2>
 								<p className='mx-auto mt-3 max-w-xl text-sm leading-7 text-slate-400 md:text-base'>
@@ -408,7 +408,7 @@ const MessageContainer = () => {
 					<UserInfoModal user={selectedConversation} open={showUserInfo} onClose={() => setShowUserInfo(false)} />
 					{showDeleteConversationModal
 						? createPortal(
-								<div className='fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/72 px-4 backdrop-blur-sm'>
+								<div className='fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/72 px-4'>
 									<div className='w-full max-w-md rounded-[28px] border border-white/10 bg-slate-950/95 p-6 shadow-[0_32px_80px_rgba(2,6,23,0.55)]'>
 										<h2 className='text-xl font-semibold text-white'>Delete conversation?</h2>
 										<p className='mt-3 text-sm leading-7 text-slate-400'>
@@ -463,7 +463,7 @@ const NoChatSelected = () => {
 
 	return (
 		<div className='flex h-full items-center justify-center px-4 py-6 md:px-6 lg:px-8'>
-			<div className='w-full max-w-3xl rounded-[34px] border border-white/10 bg-[linear-gradient(135deg,rgba(9,14,28,0.78),rgba(17,24,39,0.56))] p-6 text-center shadow-[0_26px_70px_rgba(2,6,23,0.34)] backdrop-blur-xl md:p-8'>
+			<div className='w-full max-w-3xl rounded-[34px] border border-white/10 bg-[linear-gradient(135deg,rgba(9,14,28,0.78),rgba(17,24,39,0.56))] p-6 text-center shadow-[0_18px_46px_rgba(2,6,23,0.26)] md:p-8'>
 				<div className='mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-sky-500/15 text-sky-300'>
 					<TiMessages className='h-8 w-8' />
 				</div>

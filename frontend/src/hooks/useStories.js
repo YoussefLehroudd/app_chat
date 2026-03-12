@@ -240,21 +240,31 @@ const useStories = () => {
 	const markStoryAsSeen = useCallback(async (storyId) => {
 		if (!storyId) return;
 
-		setStoryGroups((currentGroups) =>
-			currentGroups.map((group) => {
-				if (!Array.isArray(group?.stories)) return group;
+		setStoryGroups((currentGroups) => {
+			let didChange = false;
 
-				const nextStories = group.stories.map((story) =>
-					story?._id === storyId
-						? {
-								...story,
-								isSeen: true,
-						  }
-						: story
-				);
+			const nextGroups = currentGroups.map((group) => {
+				if (!Array.isArray(group?.stories) || group.stories.length === 0) return group;
+
+				let hasTargetStory = false;
+				const nextStories = group.stories.map((story) => {
+					if (story?._id !== storyId) return story;
+					hasTargetStory = true;
+					if (story.isSeen) return story;
+					didChange = true;
+					return {
+						...story,
+						isSeen: true,
+					};
+				});
+
+				if (!hasTargetStory) return group;
+				if (!didChange) return group;
 				return normalizeGroupShape({ ...group, stories: nextStories });
-			})
-		);
+			});
+
+			return didChange ? nextGroups : currentGroups;
+		});
 
 		try {
 			await fetch(`/api/stories/${storyId}/seen`, {

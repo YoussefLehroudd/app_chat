@@ -10,6 +10,7 @@ import {
 	HiOutlineUserPlus,
 } from "react-icons/hi2";
 import { useAuthContext } from "../context/AuthContext";
+import useModalBodyScrollLock from "../hooks/useModalBodyScrollLock";
 import useConversation from "../zustand/useConversation";
 import getConversationFallbackAvatar from "../utils/conversationAvatar";
 import { getAvatarUrl } from "../utils/avatar";
@@ -43,6 +44,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const imgRef = useRef(null);
 	const fileInputRef = useRef(null);
 	const previewUrlRef = useRef(null);
+	useModalBodyScrollLock(open);
 
 	const currentGroupMember = useMemo(
 		() => user?.members?.find((member) => member._id === authUser?._id) || null,
@@ -153,7 +155,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		const loadSelectableUsers = async () => {
 			setLoadingSelectableUsers(true);
 			try {
-				const response = await fetch("/api/users/selectable");
+				const response = await fetch("/api/users/selectable?scope=contacts");
 				const data = await response.json();
 
 				if (!response.ok) {
@@ -431,7 +433,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 
 	return (
 		<div
-			className='fixed inset-0 z-50 flex items-center justify-center bg-slate-950/78 p-3 backdrop-blur-md sm:p-5'
+			className='fixed inset-0 z-50 flex items-center justify-center bg-slate-950/78 p-3 sm:p-5'
 			onClick={onClose}
 		>
 			<div
@@ -466,7 +468,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 					</div>
 				</div>
 
-				<div className='custom-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6'>
+				<div className='custom-scrollbar modal-scroll-region min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6'>
 					<div className='space-y-4'>
 						<div className='flex justify-center'>
 							<div className='relative h-28 w-28 overflow-hidden rounded-full border-4 border-sky-400/30 bg-slate-800 shadow-[0_20px_40px_rgba(14,165,233,0.14)]'>
@@ -482,9 +484,9 @@ const UserInfoModal = ({ user, open, onClose }) => {
 									className={`h-full w-full object-cover transition-opacity duration-200 ${
 										avatarLoaded ? "opacity-100" : "opacity-0"
 									}`}
-									loading='eager'
+									loading='lazy'
 									decoding='async'
-									fetchpriority='high'
+									fetchPriority='low'
 									onLoad={() => setAvatarLoaded(true)}
 									onError={() => {
 										setAvatarSrc(fallbackAvatar);

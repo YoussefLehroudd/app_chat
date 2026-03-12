@@ -2,35 +2,76 @@ import bcrypt from "bcryptjs";
 import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import { toUserDto } from "../utils/formatters.js";
 import { DEVELOPER_ROLE } from "../utils/roles.js";
+import { CONVERSATION_TYPES, DIRECT_CONVERSATION_STATUSES } from "../utils/conversations.js";
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
 
 export const getSelectableUsers = async (req, res) => {
 	try {
 		const loggedInUserId = req.user._id;
-		const users = await prisma.user.findMany({
-			where: {
-				id: { not: loggedInUserId },
-				isArchived: false,
-				isBanned: false,
-			},
-			select: {
-				id: true,
-				fullName: true,
-				username: true,
-				role: true,
-				isPrimaryDeveloper: true,
-				isVerified: true,
-				verifiedAt: true,
-				profilePic: true,
-				gender: true,
-				bio: true,
-				lastSeen: true,
-				createdAt: true,
-				updatedAt: true,
-			},
-			orderBy: [{ fullName: "asc" }, { username: "asc" }],
-		});
+		const scope = typeof req.query?.scope === "string" ? req.query.scope.trim().toLowerCase() : "all";
+		const userSelect = {
+			id: true,
+			fullName: true,
+			username: true,
+			isArchived: true,
+			isBanned: true,
+			role: true,
+			isPrimaryDeveloper: true,
+			isVerified: true,
+			verifiedAt: true,
+			profilePic: true,
+			gender: true,
+			bio: true,
+			lastSeen: true,
+			createdAt: true,
+			updatedAt: true,
+		};
+
+		let users = [];
+		if (scope === "contacts") {
+			const directConversations = await prisma.conversation.findMany({
+				where: {
+					type: CONVERSATION_TYPES.DIRECT,
+					directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
+					OR: [{ userOneId: loggedInUserId }, { userTwoId: loggedInUserId }],
+				},
+				select: {
+					userOneId: true,
+					userTwoId: true,
+					userOne: { select: userSelect },
+					userTwo: { select: userSelect },
+				},
+			});
+
+			const contactMap = new Map();
+			for (const conversation of directConversations) {
+				const counterpart =
+					conversation.userOneId === loggedInUserId ? conversation.userTwo : conversation.userOne;
+				if (!counterpart) continue;
+				if (counterpart.id === loggedInUserId) continue;
+				if (counterpart.isArchived || counterpart.isBanned) continue;
+				if (!contactMap.has(counterpart.id)) {
+					contactMap.set(counterpart.id, counterpart);
+				}
+			}
+
+			users = Array.from(contactMap.values()).sort((userA, userB) => {
+				const nameCompare = (userA.fullName || "").localeCompare(userB.fullName || "");
+				if (nameCompare !== 0) return nameCompare;
+				return (userA.username || "").localeCompare(userB.username || "");
+			});
+		} else {
+			users = await prisma.user.findMany({
+				where: {
+					id: { not: loggedInUserId },
+					isArchived: false,
+					isBanned: false,
+				},
+				select: userSelect,
+				orderBy: [{ fullName: "asc" }, { username: "asc" }],
+			});
+		}
 
 		res.status(200).json(users.map((user) => toUserDto(user)));
 	} catch (error) {

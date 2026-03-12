@@ -1,7 +1,11 @@
 import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import { toMessageDto, toUserDto } from "../utils/formatters.js";
 import { emitToUsers } from "../utils/realtime.js";
-import { findOrCreateDirectConversation } from "../utils/conversations.js";
+import {
+	CONVERSATION_TYPES,
+	DIRECT_CONVERSATION_STATUSES,
+	findDirectConversationByUsers,
+} from "../utils/conversations.js";
 import { buildStoryInteractionMessage } from "../utils/systemMessages.js";
 
 const STORY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -161,15 +165,24 @@ const groupStoriesByAuthor = (stories, viewerId) => {
 	return ownStoryGroup ? [ownStoryGroup, ...otherGroups] : otherGroups;
 };
 
-const getActiveUserIds = async () => {
-	const users = await prisma.user.findMany({
-		where: activeUserWhere,
+const getAcceptedDirectContactIds = async (userId) => {
+	const directConversations = await prisma.conversation.findMany({
+		where: {
+			type: CONVERSATION_TYPES.DIRECT,
+			directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
+			OR: [{ userOneId: userId }, { userTwoId: userId }],
+		},
 		select: {
-			id: true,
+			userOneId: true,
+			userTwoId: true,
 		},
 	});
 
-	return users.map((user) => user.id);
+	return [...new Set(
+		directConversations
+			.map((conversation) => (conversation.userOneId === userId ? conversation.userTwoId : conversation.userOneId))
+			.filter((contactId) => typeof contactId === "string" && contactId)
+	)];
 };
 
 const getActiveStoryById = async (storyId) =>
@@ -237,7 +250,11 @@ const buildStoryCommentMessageText = ({ story, comment }) => {
 };
 
 const dispatchStoryInteractionMessage = async ({ actorId, ownerId, messageText }) => {
-	const conversation = await findOrCreateDirectConversation(actorId, ownerId);
+	const conversation = await findDirectConversationByUsers(actorId, ownerId);
+	if (!conversation || conversation.directStatus !== DIRECT_CONVERSATION_STATUSES.ACCEPTED) {
+		throw new Error("Direct conversation not available");
+	}
+
 	const createdMessage = await prisma.message.create({
 		data: {
 			conversationId: conversation.id,
@@ -260,8 +277,11 @@ export const getStoriesFeed = async (req, res) => {
 	try {
 		const viewerId = req.user._id;
 		const now = new Date();
+		const contactIds = await getAcceptedDirectContactIds(viewerId);
+		const visibleAuthorIds = [viewerId, ...contactIds];
 		const stories = await prisma.story.findMany({
 			where: {
+				userId: { in: visibleAuthorIds },
 				expiresAt: {
 					gt: now,
 				},
@@ -352,7 +372,8 @@ export const createStory = async (req, res) => {
 		});
 
 		const storyDto = toStoryDto(createdStory, userId);
-		const audienceIds = await getActiveUserIds();
+		const contactIds = await getAcceptedDirectContactIds(userId);
+		const audienceIds = [...new Set([userId, ...contactIds])];
 		emitToUsers(audienceIds, "story:created", { story: storyDto });
 
 		return res.status(201).json(storyDto);
@@ -476,7 +497,8 @@ export const deleteStory = async (req, res) => {
 			},
 		});
 
-		const audienceIds = await getActiveUserIds();
+		const contactIds = await getAcceptedDirectContactIds(userId);
+		const audienceIds = [...new Set([userId, ...contactIds])];
 		emitToUsers(audienceIds, "story:deleted", {
 			storyId,
 			userId,
@@ -584,6 +606,9 @@ export const reactToStory = async (req, res) => {
 		});
 	} catch (error) {
 		console.error("Error in reactToStory:", error.message);
+		if (error.message === "Direct conversation not available") {
+			return res.status(403).json({ error: "Invite this user and wait for acceptance first" });
+		}
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
@@ -641,6 +666,9 @@ export const commentOnStory = async (req, res) => {
 		});
 	} catch (error) {
 		console.error("Error in commentOnStory:", error.message);
+		if (error.message === "Direct conversation not available") {
+			return res.status(403).json({ error: "Invite this user and wait for acceptance first" });
+		}
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}

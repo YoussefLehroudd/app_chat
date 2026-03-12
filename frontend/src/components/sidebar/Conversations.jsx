@@ -1,3 +1,4 @@
+import { memo } from "react";
 import Conversation from "./Conversation";
 
 const ConversationSkeleton = () => {
@@ -41,4 +42,4 @@ const Conversations = ({ loading, conversations, emptyTitle, emptyDescription })
 	);
 };
 
-export default Conversations;
+export default memo(Conversations);

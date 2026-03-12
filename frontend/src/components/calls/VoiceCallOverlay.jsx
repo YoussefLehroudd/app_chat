@@ -237,7 +237,7 @@ const VoiceCallOverlay = () => {
 		const loadInviteCandidates = async () => {
 			setLoadingInviteCandidates(true);
 			try {
-				const response = await fetch("/api/users/selectable");
+				const response = await fetch("/api/users/selectable?scope=contacts");
 				const data = await response.json();
 				if (!response.ok) {
 					throw new Error(data.error || "Failed to load users");

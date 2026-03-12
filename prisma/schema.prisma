@@ -22,6 +22,11 @@ enum ConversationType {
   GROUP
 }
 
+enum DirectConversationStatus {
+  PENDING
+  ACCEPTED
+}
+
 enum ConversationMemberRole {
   OWNER
   ADMIN
@@ -110,6 +115,9 @@ model Conversation {
   type        ConversationType @default(DIRECT)
   userOneId   String?
   userTwoId   String?
+  directStatus DirectConversationStatus @default(ACCEPTED)
+  directInitiatorId String?
+  directRespondedAt DateTime?
   createdById String?
   title       String?
   description String?          @default("")
@@ -130,6 +138,8 @@ model Conversation {
   @@unique([userOneId, userTwoId, type])
   @@index([userOneId])
   @@index([userTwoId])
+  @@index([directStatus])
+  @@index([directInitiatorId])
   @@index([createdById])
   @@index([type])
 }

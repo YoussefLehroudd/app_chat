@@ -4,8 +4,8 @@ import { getUserSocketIds, io } from "../socket/socket.js";
 import { deleteMessageEverywhere } from "../utils/messageModeration.js";
 import {
 	CONVERSATION_TYPES,
+	DIRECT_CONVERSATION_STATUSES,
 	findDirectConversationByUsers,
-	findOrCreateDirectConversation,
 	getGroupConversationForMember,
 } from "../utils/conversations.js";
 import { toMessageDto } from "../utils/formatters.js";
@@ -126,7 +126,7 @@ const emitMessageToUsers = (userIds, payload) => {
 const getDirectConversationMessages = async (viewerId, userToChatId, { before = null, limit = DEFAULT_MESSAGE_PAGE_LIMIT } = {}) => {
 	const conversation = await findDirectConversationByUsers(viewerId, userToChatId);
 
-	if (!conversation) {
+	if (!conversation || conversation.directStatus !== DIRECT_CONVERSATION_STATUSES.ACCEPTED) {
 		return {
 			messages: [],
 			pageInfo: {
@@ -225,7 +225,17 @@ export const sendMessage = async (req, res) => {
 			return res.status(403).json({ error: "You cannot send messages to this account" });
 		}
 
-		const conversation = await findOrCreateDirectConversation(senderId, receiverId);
+		const conversation = await findDirectConversationByUsers(senderId, receiverId);
+		if (!conversation) {
+			return res.status(403).json({ error: "Send an invitation first" });
+		}
+
+		if (conversation.directStatus !== DIRECT_CONVERSATION_STATUSES.ACCEPTED) {
+			if (conversation.directInitiatorId === senderId) {
+				return res.status(403).json({ error: "Wait until this user accepts your invitation" });
+			}
+			return res.status(403).json({ error: "Accept the invitation before chatting" });
+		}
 
 		const newMessage = await prisma.message.create({
 			data: {

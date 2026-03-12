@@ -139,44 +139,6 @@ const applyUserUpdateToConversation = (conversation, userUpdate) => {
 	return conversation._id === updatedUserId ? { ...conversation, ...userUpdate } : conversation;
 };
 
-const toDirectSidebarItem = (user) => ({
-	...user,
-	conversationId: user?.conversationId ?? null,
-	type: "DIRECT",
-	isGroup: false,
-	isPrivate: false,
-	memberLimit: null,
-	memberCount: 2,
-	groupRole: null,
-	members: [],
-});
-
-const mergeDirectUsersWithConversations = (conversations, users) => {
-	const existingDirectUserIds = new Set(
-		conversations
-			.filter((conversation) => conversation?.type === "DIRECT" && !conversation?.isGroup && conversation?._id)
-			.map((conversation) => conversation._id)
-	);
-
-	const missingDirectItems = users
-		.map((user) => {
-			const userId = getUserId(user);
-			return userId ? { ...user, _id: userId, id: userId } : null;
-		})
-		.filter((user) => user && !existingDirectUserIds.has(user._id))
-		.map(toDirectSidebarItem);
-
-	return normalizeConversationList(sortConversationsByRecentMessage([...conversations, ...missingDirectItems]));
-};
-
-const fetchSelectableUsers = async (signal) => {
-	const selectableUsersResponse = await fetch("/api/users/selectable", { signal });
-	if (!selectableUsersResponse.ok) return [];
-
-	const selectableUsersData = await selectableUsersResponse.json();
-	return Array.isArray(selectableUsersData) ? selectableUsersData : [];
-};
-
 const useGetConversations = () => {
 	const { authUser } = useAuthContext();
 	const storageUserId = getUserId(authUser);
@@ -246,25 +208,10 @@ const useGetConversations = () => {
 			setLoading(true);
 
 			try {
-				const [conversationsResponse, selectableUsersResponse] = await Promise.all([
-					fetch("/api/conversations", { signal: controller.signal }),
-					fetchSelectableUsers(controller.signal),
-				]);
-
-				const selectableUsers = Array.isArray(selectableUsersResponse) ? selectableUsersResponse : [];
-
-				let normalizedConversations = [];
-				if (conversationsResponse.ok) {
-					const conversationsData = await conversationsResponse.json();
-					if (conversationsData?.error) {
-						throw new Error(conversationsData.error || "Failed to load conversations");
-					}
-					normalizedConversations = Array.isArray(conversationsData) ? conversationsData : [];
-				} else {
-					const conversationsErrorPayload = await conversationsResponse.json().catch(() => null);
-					if (selectableUsers.length === 0) {
-						throw new Error(conversationsErrorPayload?.error || "Failed to load conversations");
-					}
+				const conversationsResponse = await fetch("/api/conversations", { signal: controller.signal });
+				const conversationsData = await conversationsResponse.json().catch(() => null);
+				if (!conversationsResponse.ok || conversationsData?.error) {
+					throw new Error(conversationsData?.error || "Failed to load conversations");
 				}
 
 				if (!isMountedRef.current || requestId !== requestSequenceRef.current) {
@@ -272,7 +219,7 @@ const useGetConversations = () => {
 				}
 
 				const nextConversations = normalizeConversationList(
-					mergeDirectUsersWithConversations(normalizedConversations, selectableUsers)
+					Array.isArray(conversationsData) ? conversationsData : []
 				);
 				lastFetchedAtRef.current = Date.now();
 				cacheConversations(storageUserId, nextConversations);
@@ -382,42 +329,6 @@ const useGetConversations = () => {
 	}, [getConversations, hasFetchError, loading, storageUserId]);
 
 	useEffect(() => {
-		if (!storageUserId || conversations.length > 0) return undefined;
-
-		let isCancelled = false;
-
-		const hydrateConversationsFromSelectableUsers = async () => {
-			try {
-				const selectableUsers = await fetchSelectableUsers();
-				if (!Array.isArray(selectableUsers) || selectableUsers.length === 0 || isCancelled) {
-					return;
-				}
-
-				setConversations((currentConversations) => {
-					if (currentConversations.length > 0) return currentConversations;
-
-					const nextConversations = mergeDirectUsersWithConversations(currentConversations, selectableUsers);
-					cacheConversations(storageUserId, nextConversations);
-					preloadAvatars(nextConversations);
-					return nextConversations;
-				});
-			} catch {
-				// Ignore hydration errors, regular fetch cycle keeps retrying.
-			}
-		};
-
-		void hydrateConversationsFromSelectableUsers();
-		const hydrationInterval = setInterval(() => {
-			void hydrateConversationsFromSelectableUsers();
-		}, 4500);
-
-		return () => {
-			isCancelled = true;
-			clearInterval(hydrationInterval);
-		};
-	}, [conversations.length, storageUserId]);
-
-	useEffect(() => {
 		if (!socket || !authUserId) return undefined;
 
 		const handleConversationPreview = (newMessage) => {
@@ -519,16 +430,9 @@ const useGetConversations = () => {
 
 			const normalizedUser = { ...updatedUser, _id: updatedUserId, id: updatedUserId };
 			setConversations((currentConversations) => {
-				const hasDirectConversation = currentConversations.some(
-					(conversation) =>
-						conversation?.type === "DIRECT" &&
-						!conversation?.isGroup &&
-						getUserId(conversation) === updatedUserId
+				const nextConversations = currentConversations.map((conversation) =>
+					applyUserUpdateToConversation(conversation, normalizedUser)
 				);
-
-				const nextConversations = hasDirectConversation
-					? currentConversations.map((conversation) => applyUserUpdateToConversation(conversation, normalizedUser))
-					: sortConversationsByRecentMessage([...currentConversations, toDirectSidebarItem(normalizedUser)]);
 
 				cacheConversations(storageUserId, nextConversations);
 				preloadAvatars(nextConversations);

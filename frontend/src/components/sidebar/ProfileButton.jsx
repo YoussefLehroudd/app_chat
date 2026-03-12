@@ -31,7 +31,7 @@ const ProfileButton = () => {
 	return (
 		<Link
 			to='/profile'
-			className='group flex items-center gap-3 rounded-[24px] border border-white/10 bg-white/[0.035] p-3 text-left transition hover:border-sky-400/25 hover:bg-white/[0.06]'
+			className='group flex items-center gap-3 rounded-[24px] border border-white/10 bg-white/[0.035] p-3 text-left transition-colors hover:border-sky-400/25 hover:bg-white/[0.06]'
 		>
 			<div className='avatar shrink-0'>
 				<div className='relative h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/10'>
@@ -47,9 +47,8 @@ const ProfileButton = () => {
 						className={`h-full w-full object-cover transition-opacity duration-200 ${
 							avatarLoaded ? "opacity-100" : "opacity-0"
 						}`}
-						loading='eager'
+						loading='lazy'
 						decoding='async'
-						fetchpriority='high'
 						onLoad={() => setAvatarLoaded(true)}
 						onError={() => {
 							setAvatarSrc(fallbackAvatar);
@@ -67,7 +66,7 @@ const ProfileButton = () => {
 				<span className='mt-1 block truncate text-xs text-slate-400'>@{authUser.username}</span>
 			</div>
 
-			<span className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-slate-300 transition group-hover:border-sky-400/25 group-hover:text-slate-100'>
+			<span className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-slate-300 transition-colors group-hover:border-sky-400/25 group-hover:text-slate-100'>
 				Profile
 			</span>
 		</Link>

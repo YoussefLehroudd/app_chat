@@ -4,7 +4,9 @@ import { toConversationItemDto, toMessageDto, toUserDto } from "../utils/formatt
 import {
 	CONVERSATION_MEMBER_ROLES,
 	CONVERSATION_TYPES,
-	findOrCreateDirectConversation,
+	DIRECT_CONVERSATION_STATUSES,
+	findDirectConversationByUsers,
+	getConversationPair,
 	getGroupConversationForMember,
 } from "../utils/conversations.js";
 import {
@@ -220,6 +222,66 @@ const emitMessageUpdated = (userIds, payload) => {
 	emitToUsers(userIds, "messageUpdated", payload);
 };
 
+const emitDirectInvitationsChanged = (userIds) => {
+	emitToUsers(userIds, "directInvitationsChanged", {
+		updatedAt: new Date().toISOString(),
+	});
+};
+
+const buildDirectConversationItemForUser = async (conversationId, viewerId) => {
+	const conversation = await prisma.conversation.findFirst({
+		where: {
+			id: conversationId,
+			type: CONVERSATION_TYPES.DIRECT,
+			directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
+			OR: [{ userOneId: viewerId }, { userTwoId: viewerId }],
+		},
+		include: {
+			userOne: { select: userSelect },
+			userTwo: { select: userSelect },
+			messages: buildVisibleMessageInclude(viewerId),
+		},
+	});
+
+	if (!conversation) return null;
+
+	const latestMessage = conversation.messages[0];
+	const unreadCount = await prisma.message.count({
+		where: {
+			conversationId: conversation.id,
+			receiverId: viewerId,
+			isSeen: false,
+			NOT: {
+				deletedFor: {
+					has: viewerId,
+				},
+			},
+		},
+	});
+
+	return toConversationItemDto(
+		{
+			...conversation,
+			lastMessage: getLatestMessagePreview(latestMessage),
+			lastMessageAt: latestMessage?.createdAt ?? null,
+			unreadCount,
+		},
+		viewerId
+	);
+};
+
+const emitDirectConversationUpsert = async (conversationId, userIds) => {
+	const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+
+	await Promise.all(
+		uniqueUserIds.map(async (userId) => {
+			const conversation = await buildDirectConversationItemForUser(conversationId, userId);
+			if (!conversation) return;
+			emitToUsers([userId], "conversationUpserted", conversation);
+		})
+	);
+};
+
 const emitPublicGroupsChanged = () => {
 	io.emit("publicGroupsChanged");
 };
@@ -271,6 +333,43 @@ const getAvailableUsersByIds = async (userIds) =>
 		select: { id: true },
 	});
 
+const getDirectParticipants = (conversation) => {
+	if (!conversation) return { senderId: null, receiverId: null };
+
+	const senderId = conversation.directInitiatorId || null;
+	if (!senderId) {
+		return { senderId: null, receiverId: null };
+	}
+
+	const receiverId = conversation.userOneId === senderId ? conversation.userTwoId : conversation.userOneId;
+	return { senderId, receiverId: receiverId || null };
+};
+
+const toDirectInvitationDto = (conversation, viewerId) => {
+	if (!conversation) return null;
+
+	const { senderId, receiverId } = getDirectParticipants(conversation);
+	if (!senderId || !receiverId) return null;
+
+	const sender = conversation.userOneId === senderId ? conversation.userOne : conversation.userTwo;
+	const receiver = conversation.userOneId === receiverId ? conversation.userOne : conversation.userTwo;
+
+	return {
+		_id: conversation.id,
+		conversationId: conversation.id,
+		status: conversation.directStatus,
+		direction: senderId === viewerId ? "OUTGOING" : "INCOMING",
+		senderId,
+		receiverId,
+		sender: toUserDto(sender),
+		receiver: toUserDto(receiver),
+		counterpart: toUserDto(senderId === viewerId ? receiver : sender),
+		createdAt: conversation.createdAt,
+		updatedAt: conversation.updatedAt,
+		respondedAt: conversation.directRespondedAt ?? null,
+	};
+};
+
 const emitGroupSystemMessage = async ({ conversationId, senderId, rawMessage, userIds }) => {
 	const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
 	if (!rawMessage || uniqueUserIds.length === 0) {
@@ -293,7 +392,11 @@ const emitGroupSystemMessage = async ({ conversationId, senderId, rawMessage, us
 };
 
 const sendDirectPayloadMessage = async ({ senderId, receiverId, rawMessage }) => {
-	const directConversation = await findOrCreateDirectConversation(senderId, receiverId);
+	const directConversation = await findDirectConversationByUsers(senderId, receiverId);
+	if (!directConversation || directConversation.directStatus !== DIRECT_CONVERSATION_STATUSES.ACCEPTED) {
+		throw new Error("Direct conversation not available");
+	}
+
 	const message = await prisma.message.create({
 		data: {
 			conversationId: directConversation.id,
@@ -313,10 +416,11 @@ export const getSidebarConversations = async (req, res) => {
 	try {
 		const loggedInUserId = req.user._id;
 
-		const [directConversations, groupConversations, users] = await Promise.all([
+		const [directConversations, groupConversations] = await Promise.all([
 			prisma.conversation.findMany({
 				where: {
 					type: CONVERSATION_TYPES.DIRECT,
+					directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
 					OR: [{ userOneId: loggedInUserId }, { userTwoId: loggedInUserId }],
 				},
 				include: {
@@ -344,23 +448,10 @@ export const getSidebarConversations = async (req, res) => {
 					messages: buildVisibleMessageInclude(loggedInUserId),
 				},
 			}),
-			prisma.user.findMany({
-				where: {
-					id: { not: loggedInUserId },
-					isArchived: false,
-					isBanned: false,
-				},
-				select: userSelect,
-			}),
 		]);
 
-		const directPreviewByUserId = new Map();
-
-		await Promise.all(
+		const directItems = await Promise.all(
 			directConversations.map(async (conversation) => {
-				const otherUserId = conversation.userOneId === loggedInUserId ? conversation.userTwoId : conversation.userOneId;
-				if (!otherUserId) return;
-
 				const latestMessage = conversation.messages[0];
 				const unreadCount = await prisma.message.count({
 					where: {
@@ -375,36 +466,17 @@ export const getSidebarConversations = async (req, res) => {
 					},
 				});
 
-				directPreviewByUserId.set(otherUserId, {
-					conversationId: conversation.id,
-					lastMessage: getLatestMessagePreview(latestMessage),
-					lastMessageAt: latestMessage?.createdAt ?? null,
-					unreadCount,
-				});
+				return toConversationItemDto(
+					{
+						...conversation,
+						lastMessage: getLatestMessagePreview(latestMessage),
+						lastMessageAt: latestMessage?.createdAt ?? null,
+						unreadCount,
+					},
+					loggedInUserId
+				);
 			})
 		);
-
-		const directItems = users.map((user) => {
-			const preview = directPreviewByUserId.get(user.id);
-			const dto = toUserDto({
-				...user,
-				lastMessage: preview?.lastMessage ?? null,
-				lastMessageAt: preview?.lastMessageAt ?? null,
-				unreadCount: preview?.unreadCount ?? 0,
-			});
-
-			return {
-				...dto,
-				conversationId: preview?.conversationId ?? null,
-				type: CONVERSATION_TYPES.DIRECT,
-				isGroup: false,
-				isPrivate: false,
-				memberLimit: null,
-				memberCount: 2,
-				groupRole: null,
-				members: [],
-			};
-		});
 
 		const groupItems = await Promise.all(
 			groupConversations.map(async (conversation) => {
@@ -447,7 +519,7 @@ export const getSidebarConversations = async (req, res) => {
 			})
 		);
 
-		const sidebarItems = [...directItems, ...groupItems].sort((itemA, itemB) => {
+		const sidebarItems = [...directItems, ...groupItems].filter(Boolean).sort((itemA, itemB) => {
 			const itemATime = itemA.lastMessageAt ? new Date(itemA.lastMessageAt).getTime() : 0;
 			const itemBTime = itemB.lastMessageAt ? new Date(itemB.lastMessageAt).getTime() : 0;
 			return itemBTime - itemATime;
@@ -460,6 +532,202 @@ export const getSidebarConversations = async (req, res) => {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
 		res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const getDirectInvitations = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const invitations = await prisma.conversation.findMany({
+			where: {
+				type: CONVERSATION_TYPES.DIRECT,
+				directStatus: DIRECT_CONVERSATION_STATUSES.PENDING,
+				OR: [{ userOneId: userId }, { userTwoId: userId }],
+			},
+			include: {
+				userOne: { select: userSelect },
+				userTwo: { select: userSelect },
+			},
+			orderBy: { createdAt: "desc" },
+		});
+
+		const formattedInvitations = invitations
+			.map((conversation) => toDirectInvitationDto(conversation, userId))
+			.filter(Boolean);
+
+		return res.status(200).json(formattedInvitations);
+	} catch (error) {
+		console.error("Error in getDirectInvitations:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const sendDirectInvitation = async (req, res) => {
+	try {
+		const senderId = req.user._id;
+		const receiverId = typeof req.body?.recipientId === "string" ? req.body.recipientId.trim() : "";
+
+		if (!receiverId) {
+			return res.status(400).json({ error: "Recipient is required" });
+		}
+
+		if (receiverId === senderId) {
+			return res.status(400).json({ error: "You cannot invite yourself" });
+		}
+
+		const [receiver] = await getAvailableUsersByIds([receiverId]);
+		if (!receiver) {
+			return res.status(404).json({ error: "User not found" });
+		}
+
+		const { userOneId, userTwoId } = getConversationPair(senderId, receiverId);
+		const existingConversation = await prisma.conversation.findUnique({
+			where: {
+				userOneId_userTwoId_type: {
+					userOneId,
+					userTwoId,
+					type: CONVERSATION_TYPES.DIRECT,
+				},
+			},
+		});
+
+		if (existingConversation?.directStatus === DIRECT_CONVERSATION_STATUSES.ACCEPTED) {
+			return res.status(400).json({ error: "You are already connected with this user" });
+		}
+
+		if (existingConversation?.directStatus === DIRECT_CONVERSATION_STATUSES.PENDING) {
+			if (existingConversation.directInitiatorId === senderId) {
+				return res.status(400).json({ error: "Invitation already sent" });
+			}
+
+			const participants = getDirectParticipants(existingConversation);
+			if (participants.receiverId !== senderId) {
+				return res.status(400).json({ error: "Invitation state is invalid" });
+			}
+
+			const acceptedConversation = await prisma.conversation.update({
+				where: { id: existingConversation.id },
+				data: {
+					directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
+					directInitiatorId: null,
+					directRespondedAt: new Date(),
+				},
+			});
+
+			await emitDirectConversationUpsert(acceptedConversation.id, [senderId, receiverId]);
+			emitDirectInvitationsChanged([senderId, receiverId]);
+
+			const senderConversation = await buildDirectConversationItemForUser(acceptedConversation.id, senderId);
+			return res.status(200).json({
+				status: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
+				autoAccepted: true,
+				conversation: senderConversation,
+			});
+		}
+
+		const createdInvitation = await prisma.conversation.create({
+			data: {
+				type: CONVERSATION_TYPES.DIRECT,
+				userOneId,
+				userTwoId,
+				directStatus: DIRECT_CONVERSATION_STATUSES.PENDING,
+				directInitiatorId: senderId,
+			},
+			include: {
+				userOne: { select: userSelect },
+				userTwo: { select: userSelect },
+			},
+		});
+
+		emitDirectInvitationsChanged([senderId, receiverId]);
+
+		return res.status(201).json({
+			status: DIRECT_CONVERSATION_STATUSES.PENDING,
+			invitation: toDirectInvitationDto(createdInvitation, senderId),
+		});
+	} catch (error) {
+		console.error("Error in sendDirectInvitation:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const respondToDirectInvitation = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const { id } = req.params;
+		const action = typeof req.body?.action === "string" ? req.body.action.trim().toUpperCase() : "";
+
+		if (!["ACCEPT", "DECLINE"].includes(action)) {
+			return res.status(400).json({ error: "Invalid invitation action" });
+		}
+
+		const invitation = await prisma.conversation.findFirst({
+			where: {
+				id,
+				type: CONVERSATION_TYPES.DIRECT,
+				directStatus: DIRECT_CONVERSATION_STATUSES.PENDING,
+				OR: [{ userOneId: userId }, { userTwoId: userId }],
+			},
+			include: {
+				userOne: { select: userSelect },
+				userTwo: { select: userSelect },
+			},
+		});
+
+		if (!invitation) {
+			return res.status(404).json({ error: "Invitation not found" });
+		}
+
+		const participants = getDirectParticipants(invitation);
+		if (!participants.senderId || !participants.receiverId) {
+			return res.status(400).json({ error: "Invitation data is invalid" });
+		}
+
+		if (participants.receiverId !== userId) {
+			return res.status(403).json({ error: "Only the invited user can respond" });
+		}
+
+		if (action === "ACCEPT") {
+			const acceptedConversation = await prisma.conversation.update({
+				where: { id: invitation.id },
+				data: {
+					directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
+					directInitiatorId: null,
+					directRespondedAt: new Date(),
+				},
+			});
+
+			await emitDirectConversationUpsert(acceptedConversation.id, [
+				participants.senderId,
+				participants.receiverId,
+			]);
+			emitDirectInvitationsChanged([participants.senderId, participants.receiverId]);
+
+			const responderConversation = await buildDirectConversationItemForUser(acceptedConversation.id, userId);
+			return res.status(200).json({
+				status: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
+				conversation: responderConversation,
+			});
+		}
+
+		await prisma.conversation.delete({
+			where: { id: invitation.id },
+		});
+		emitDirectInvitationsChanged([participants.senderId, participants.receiverId]);
+
+		return res.status(200).json({ status: "DECLINED", conversationId: invitation.id });
+	} catch (error) {
+		console.error("Error in respondToDirectInvitation:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
 	}
 };
 
@@ -928,6 +1196,11 @@ export const sendGroupInvitation = async (req, res) => {
 		return res.status(201).json(invitationMessage);
 	} catch (error) {
 		console.error("Error in sendGroupInvitation:", error.message);
+		if (error.message === "Direct conversation not available") {
+			return res.status(400).json({
+				error: "You can invite this user after they accept your direct invitation",
+			});
+		}
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}

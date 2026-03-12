@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { IoClose, IoSearchSharp } from "react-icons/io5";
 
 const SearchInput = ({
@@ -20,7 +21,7 @@ const SearchInput = ({
 	return (
 		<div className={compact ? "space-y-0" : "space-y-2.5"}>
 			<div
-				className={`flex items-center gap-3 border border-white/10 bg-slate-950/45 shadow-[0_18px_32px_rgba(2,6,23,0.22)] backdrop-blur-xl transition focus-within:border-sky-400/45 focus-within:bg-slate-950/65 ${
+				className={`flex items-center gap-3 border border-white/10 bg-slate-950/45 shadow-[0_10px_20px_rgba(2,6,23,0.2)] focus-within:border-sky-400/45 focus-within:bg-slate-950/65 ${
 					compact ? "rounded-full px-3 py-2" : "rounded-[22px] px-3.5 py-2.5"
 				}`}
 			>
@@ -44,7 +45,7 @@ const SearchInput = ({
 					<button
 						type='button'
 						onClick={onClear}
-						className='inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white'
+						className='inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 hover:border-white/20 hover:bg-white/10 hover:text-white'
 						aria-label='Clear search'
 					>
 						<IoClose className='h-4 w-4' />
@@ -62,4 +63,4 @@ const SearchInput = ({
 	);
 };
 
-export default SearchInput;
+export default memo(SearchInput);

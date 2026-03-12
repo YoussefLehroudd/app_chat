@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { HiOutlinePhoto, HiOutlineVideoCamera, HiOutlineXMark } from "react-icons/hi2";
+import useModalBodyScrollLock from "../../hooks/useModalBodyScrollLock";
 
 const StoryComposerModal = ({ open, onClose, onSubmit, isSubmitting = false }) => {
 	const fileInputRef = useRef(null);
 	const [text, setText] = useState("");
 	const [selectedFile, setSelectedFile] = useState(null);
+	useModalBodyScrollLock(open);
 
 	useEffect(() => {
 		if (!open) {
@@ -74,7 +76,7 @@ const StoryComposerModal = ({ open, onClose, onSubmit, isSubmitting = false }) =
 
 	return (
 		<div
-			className='fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/82 p-3 backdrop-blur-md sm:p-6'
+			className='fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/82 p-3 sm:p-6'
 			onClick={onClose}
 		>
 			<div
@@ -104,7 +106,7 @@ const StoryComposerModal = ({ open, onClose, onSubmit, isSubmitting = false }) =
 							onChange={(event) => setText(event.target.value)}
 							maxLength={700}
 							placeholder='What are you up to?'
-							className='custom-scrollbar w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-white/[0.06]'
+							className='custom-scrollbar w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-white/[0.06]'
 						/>
 						<p className='mt-2 text-right text-[11px] text-slate-500'>{text.length}/700</p>
 					</label>
@@ -122,7 +124,12 @@ const StoryComposerModal = ({ open, onClose, onSubmit, isSubmitting = false }) =
 								{isVideo ? (
 									<video src={previewUrl} controls className='max-h-[280px] w-full object-cover' />
 								) : (
-									<img src={previewUrl} alt='Story preview' className='max-h-[280px] w-full object-cover' />
+									<img
+										src={previewUrl}
+										alt='Story preview'
+										decoding='async'
+										className='max-h-[280px] w-full object-cover'
+									/>
 								)}
 								<button
 									type='button'
@@ -165,14 +172,14 @@ const StoryComposerModal = ({ open, onClose, onSubmit, isSubmitting = false }) =
 						<button
 							type='button'
 							onClick={onClose}
-							className='rounded-full border border-white/10 bg-white/[0.04] px-5 py-2.5 text-sm text-slate-300 transition hover:bg-white/[0.08] hover:text-white'
+							className='rounded-full border border-white/10 bg-white/[0.04] px-5 py-2.5 text-sm text-slate-300 hover:bg-white/[0.08] hover:text-white'
 						>
 							Cancel
 						</button>
 						<button
 							type='submit'
 							disabled={!canSubmit || isSubmitting}
-							className='rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-6 py-2.5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(14,165,233,0.28)] transition hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70'
+							className='rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-6 py-2.5 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(14,165,233,0.28)] hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70'
 						>
 							{isSubmitting ? "Posting..." : "Post story"}
 						</button>

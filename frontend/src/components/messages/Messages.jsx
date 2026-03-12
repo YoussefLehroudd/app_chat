@@ -250,7 +250,7 @@ const Messages = () => {
 			<div className='h-full overflow-hidden rounded-[24px] border border-white/8 bg-[linear-gradient(180deg,rgba(2,6,23,0.34),rgba(15,23,42,0.18))] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:rounded-[30px]'>
 				<div
 					ref={scrollContainerRef}
-					className='custom-scrollbar chat-scrollbar h-full overflow-x-hidden overflow-y-auto px-2.5 py-3 sm:px-3 sm:py-4 md:px-5'
+					className='custom-scrollbar chat-scrollbar messages-scroll-region h-full overflow-x-hidden overflow-y-auto px-2.5 py-3 sm:px-3 sm:py-4 md:px-5'
 				>
 					<div className='space-y-2 pr-1 md:space-y-3'>
 						{loadingOlder ? (
@@ -286,7 +286,7 @@ const Messages = () => {
 
 						{!loading && messages.length === 0 ? (
 							<div className='flex min-h-[340px] items-center justify-center py-4'>
-								<div className='w-full max-w-lg rounded-[30px] border border-dashed border-white/10 bg-slate-950/30 px-6 py-8 text-center backdrop-blur-xl'>
+								<div className='w-full max-w-lg rounded-[30px] border border-dashed border-white/10 bg-slate-950/30 px-6 py-8 text-center'>
 									<p className='text-[11px] font-semibold uppercase tracking-[0.34em] text-sky-300/65'>
 										New conversation
 									</p>

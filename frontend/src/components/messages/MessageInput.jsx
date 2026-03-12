@@ -617,7 +617,7 @@ const MessageInput = () => {
 			className='shrink-0 px-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.55rem)] pt-1.5 sm:px-3 sm:pb-3 sm:pt-2 md:px-5 md:pb-4 lg:px-6'
 			onSubmit={handleSubmit}
 		>
-			<div className='relative rounded-[22px] border border-white/10 bg-[#0b1428]/90 p-2 shadow-[0_22px_52px_rgba(2,6,23,0.24)] backdrop-blur-xl sm:rounded-[26px] sm:p-2.5 md:p-3'>
+			<div className='relative rounded-[22px] border border-white/10 bg-[#0b1428]/90 p-2 shadow-[0_16px_38px_rgba(2,6,23,0.2)] sm:rounded-[26px] sm:p-2.5 md:p-3'>
 				<div>
 					{repliedMessage ? (
 						<div className='mb-2 flex items-start justify-between gap-3 rounded-[18px] border border-white/10 bg-white/[0.04] px-3 py-2 sm:mb-2.5 sm:rounded-[22px] sm:px-3.5 sm:py-2.5'>

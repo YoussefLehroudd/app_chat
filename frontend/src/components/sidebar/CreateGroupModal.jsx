@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { HiMagnifyingGlass, HiOutlineUserGroup, HiOutlineXMark } from "react-icons/hi2";
+import useModalBodyScrollLock from "../../hooks/useModalBodyScrollLock";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
 
@@ -14,6 +15,7 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 	const [memberLimit, setMemberLimit] = useState("");
 	const [isPrivate, setIsPrivate] = useState(false);
 	const [selectedMemberIds, setSelectedMemberIds] = useState([]);
+	useModalBodyScrollLock(open);
 
 	useEffect(() => {
 		if (!open) return undefined;
@@ -34,7 +36,7 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 		const loadUsers = async () => {
 			setLoadingUsers(true);
 			try {
-				const res = await fetch("/api/users/selectable");
+				const res = await fetch("/api/users/selectable?scope=contacts");
 				const data = await res.json();
 				if (!res.ok) {
 					throw new Error(data.error || "Failed to load users");
@@ -71,6 +73,7 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 				.some((value) => value.toLowerCase().includes(normalizedSearch))
 		);
 	}, [searchValue, users]);
+	const selectedMemberIdSet = useMemo(() => new Set(selectedMemberIds), [selectedMemberIds]);
 
 	const toggleMember = (userId) => {
 		setSelectedMemberIds((currentIds) =>
@@ -126,7 +129,7 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 
 	return (
 		<div
-			className='fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/78 p-3 backdrop-blur-md sm:p-5'
+			className='fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/78 p-3 sm:p-5'
 			onClick={onClose}
 		>
 			<div
@@ -153,7 +156,7 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 				</div>
 
 				<form className='flex min-h-0 flex-1 flex-col' onSubmit={handleSubmit}>
-					<div className='custom-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6'>
+					<div className='custom-scrollbar modal-scroll-region min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6'>
 						<div className='space-y-5'>
 							<div className='grid gap-4 md:grid-cols-2'>
 								<label className='block'>
@@ -236,7 +239,7 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 										</div>
 									) : (
 										filteredUsers.map((user) => {
-											const isSelected = selectedMemberIds.includes(user._id);
+											const isSelected = selectedMemberIdSet.has(user._id);
 											const avatarSrc = getAvatarUrl(user.profilePic, 72) || getConversationFallbackAvatar(user);
 
 											return (
@@ -244,14 +247,20 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 													key={user._id}
 													type='button'
 													onClick={() => toggleMember(user._id)}
-													className={`flex w-full items-center gap-3 rounded-[22px] border px-3 py-3 text-left transition ${
+													className={`modal-member-row flex w-full items-center gap-3 rounded-[22px] border px-3 py-3 text-left transition-colors duration-150 ${
 														isSelected
 															? "border-sky-300/30 bg-sky-500/10"
 															: "border-white/10 bg-white/[0.03] hover:bg-white/[0.05]"
 													}`}
 												>
 													<div className='h-11 w-11 overflow-hidden rounded-full ring-1 ring-white/10'>
-														<img src={avatarSrc} alt={user.fullName} className='h-full w-full object-cover' />
+														<img
+															src={avatarSrc}
+															alt={user.fullName}
+															loading='lazy'
+															decoding='async'
+															className='h-full w-full object-cover'
+														/>
 													</div>
 													<div className='min-w-0 flex-1'>
 														<p className='truncate text-sm font-medium text-slate-100'>{user.fullName}</p>
@@ -275,25 +284,25 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 						</div>
 					</div>
 
-					<div className='shrink-0 border-t border-white/10 bg-slate-950/70 px-5 py-4 sm:px-6'>
-						<div className='flex flex-col gap-3 sm:flex-row sm:justify-end'>
-							<button
-								type='button'
-								className='rounded-full border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/[0.08]'
-								onClick={onClose}
-							>
-								Cancel
-							</button>
-							<button
-								type='submit'
-								className='inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_18px_38px_rgba(14,165,233,0.28)] transition hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70'
-								disabled={creatingGroup}
-							>
-								<HiOutlineUserGroup className='h-5 w-5' />
-								{creatingGroup ? "Creating..." : "Create group"}
-							</button>
+						<div className='shrink-0 border-t border-white/10 bg-slate-950/70 px-5 py-4 sm:px-6'>
+							<div className='flex flex-col gap-3 sm:flex-row sm:justify-end'>
+								<button
+									type='button'
+									className='rounded-full border border-white/10 bg-white/[0.04] px-5 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/[0.08]'
+									onClick={onClose}
+								>
+									Cancel
+								</button>
+								<button
+									type='submit'
+									className='inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_18px_38px_rgba(14,165,233,0.28)] hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70'
+									disabled={creatingGroup}
+								>
+									<HiOutlineUserGroup className='h-5 w-5' />
+									{creatingGroup ? "Creating..." : "Create group"}
+								</button>
+							</div>
 						</div>
-					</div>
 				</form>
 			</div>
 		</div>

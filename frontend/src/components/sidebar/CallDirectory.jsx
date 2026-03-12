@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { HiOutlinePhoneArrowDownLeft, HiOutlinePhoneArrowUpRight, HiOutlineVideoCamera, HiOutlinePhone } from "react-icons/hi2";
 import { useCallContext } from "../../context/CallContext";
 import { extractTime } from "../../utils/extractTime";
@@ -133,4 +134,4 @@ const CallDirectory = ({ calls, loading, emptyTitle, emptyDescription, onOpenCon
 	);
 };
 
-export default CallDirectory;
+export default memo(CallDirectory);

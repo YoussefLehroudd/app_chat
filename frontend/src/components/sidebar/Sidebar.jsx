@@ -1,11 +1,13 @@
 import { Link } from "react-router-dom";
 import { IoChevronDownOutline, IoChevronUpOutline, IoCodeSlashOutline } from "react-icons/io5";
-import { HiOutlineUserGroup } from "react-icons/hi2";
-import { useEffect, useMemo, useState } from "react";
+import { HiOutlineUserGroup, HiOutlineUserPlus } from "react-icons/hi2";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import CallDirectory from "./CallDirectory";
 import Conversations from "./Conversations";
 import CreateGroupModal from "./CreateGroupModal";
+import DirectInviteModal from "./DirectInviteModal";
+import DirectInvitationsPanel from "./DirectInvitationsPanel";
 import LogoutButton from "./LogoutButton";
 import SearchInput from "./SearchInput";
 import ProfileButton from "./ProfileButton";
@@ -14,6 +16,7 @@ import StoryComposerModal from "./StoryComposerModal";
 import StoryViewerModal from "./StoryViewerModal";
 import useCallDirectory from "../../hooks/useCallDirectory";
 import useGetConversations from "../../hooks/useGetConversations";
+import useDirectInvitations from "../../hooks/useDirectInvitations";
 import useStories from "../../hooks/useStories";
 import { useSocketContext } from "../../context/SocketContext";
 import { useAuthContext } from "../../context/AuthContext";
@@ -34,11 +37,22 @@ const Sidebar = () => {
 	const [activeFilter, setActiveFilter] = useState("all");
 	const [showQuickActions, setShowQuickActions] = useState(false);
 	const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+	const [showDirectInviteModal, setShowDirectInviteModal] = useState(false);
+	const [showInvitationsPanel, setShowInvitationsPanel] = useState(false);
 	const [showStoryComposer, setShowStoryComposer] = useState(false);
 	const [showStoryViewer, setShowStoryViewer] = useState(false);
 	const [storyViewerTarget, setStoryViewerTarget] = useState(null);
 	const [storyViewerGroupsOverride, setStoryViewerGroupsOverride] = useState(null);
 	const { loading, conversations } = useGetConversations();
+	const {
+		incomingInvitations,
+		outgoingInvitations,
+		pendingCounterpartIds,
+		sendInvitation,
+		respondInvitation,
+		isSendingToUser,
+		isRespondingToInvitation,
+	} = useDirectInvitations();
 	const { loading: loadingCalls, calls } = useCallDirectory();
 	const {
 		storyGroups,
@@ -62,6 +76,19 @@ const Sidebar = () => {
 	const onlineCount = useMemo(
 		() => conversations.filter((conversation) => onlineUsers.includes(conversation._id)).length,
 		[conversations, onlineUsers]
+	);
+	const directFriendConversations = useMemo(
+		() => conversations.filter((conversation) => conversation?.type === "DIRECT" && !conversation?.isGroup),
+		[conversations]
+	);
+	const directConnectedUserIds = useMemo(
+		() =>
+			new Set(
+				directFriendConversations
+					.map((conversation) => getUserId(conversation))
+					.filter((userId) => typeof userId === "string" && userId)
+			),
+		[directFriendConversations]
 	);
 
 	const filteredConversations = useMemo(() => {
@@ -110,7 +137,7 @@ const Sidebar = () => {
 			? "Switch back to all conversations or wait for someone to come online."
 			: "Your contacts will appear here as soon as the sidebar data loads.";
 
-	const handleOpenCallConversation = (call) => {
+	const handleOpenCallConversation = useCallback((call) => {
 		const relatedConversation = conversations.find((conversation) =>
 			conversation.type === "GROUP"
 				? conversation._id === call.conversationId
@@ -124,19 +151,51 @@ const Sidebar = () => {
 
 		setSelectedConversation(relatedConversation);
 		setShowSidebar(false);
-	};
+	}, [conversations, setSelectedConversation, setShowSidebar]);
 
-	const handleOpenStoryViewer = (group, storyId) => {
+	const handleOpenFriendConversation = useCallback((friendConversation) => {
+		if (!friendConversation?._id) return;
+		startTransition(() => {
+			setSelectedConversation(friendConversation);
+			setShowSidebar(false);
+		});
+	}, [setSelectedConversation, setShowSidebar]);
+
+	const handleOpenStoryViewer = useCallback((group, storyId) => {
 		const targetUserId = getUserId(group?.user);
 		if (!targetUserId || !storyId) return;
-		setStoryViewerGroupsOverride(null);
-		setStoryViewerTarget({
-			userId: targetUserId,
-			storyId,
+		startTransition(() => {
+			setStoryViewerGroupsOverride(null);
+			setStoryViewerTarget({
+				userId: targetUserId,
+				storyId,
+			});
+			setShowSidebar(true);
+			setShowStoryViewer(true);
 		});
-		setShowSidebar(true);
-		setShowStoryViewer(true);
-	};
+	}, [setShowSidebar]);
+
+	const handleOpenStoryComposer = useCallback(() => {
+		startTransition(() => {
+			setShowStoryComposer(true);
+		});
+	}, []);
+
+	const handleOpenCreateGroupModal = useCallback(() => {
+		startTransition(() => {
+			setShowCreateGroupModal(true);
+		});
+	}, []);
+
+	const handleOpenDirectInviteModal = useCallback(() => {
+		startTransition(() => {
+			setShowDirectInviteModal(true);
+		});
+	}, []);
+
+	const handleClearSearch = useCallback(() => {
+		setSearchValue("");
+	}, []);
 
 	useEffect(() => {
 		const buildFallbackStoryGroup = (story, userId) => {
@@ -242,8 +301,13 @@ const Sidebar = () => {
 				<div className='mb-2'>
 					<div className='flex items-start justify-between gap-4'>
 						<p className='pt-1 text-[11px] font-semibold uppercase tracking-[0.34em] text-sky-300/70'>Chat Space</p>
-						<div className='rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200'>
-							{onlineCount} online
+						<div className='flex items-center gap-2'>
+							<div className='rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-100'>
+								{directFriendConversations.length} friends
+							</div>
+							<div className='rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200'>
+								{onlineCount} online
+							</div>
 						</div>
 					</div>
 				</div>
@@ -253,11 +317,11 @@ const Sidebar = () => {
 					ownStoryGroup={ownStoryGroup}
 					loading={loadingStories}
 					authUser={authUser}
-					onAddStory={() => setShowStoryComposer(true)}
+					onAddStory={handleOpenStoryComposer}
 					onOpenStory={handleOpenStoryViewer}
 				/>
 
-				<div className='mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0'>
+				<div className='sidebar-filter-row mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden pb-1 sm:gap-2'>
 					{FILTERS.map((filter) => {
 						const isActive = activeFilter === filter.id;
 
@@ -266,7 +330,7 @@ const Sidebar = () => {
 								key={filter.id}
 								type='button'
 								onClick={() => setActiveFilter(filter.id)}
-								className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold transition sm:px-4 sm:py-2 sm:text-xs ${
+								className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold sm:px-4 sm:py-2 sm:text-xs ${
 									isActive
 										? "bg-sky-500 text-white shadow-[0_12px_24px_rgba(14,165,233,0.24)]"
 										: "border border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/[0.06]"
@@ -278,13 +342,43 @@ const Sidebar = () => {
 					})}
 					<button
 						type='button'
-						onClick={() => setShowCreateGroupModal(true)}
-						className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
+						onClick={handleOpenCreateGroupModal}
+						className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:border-cyan-300/35 hover:bg-cyan-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
 					>
 						<HiOutlineUserGroup className='h-3.5 w-3.5 sm:h-4 sm:w-4' />
 						<span>New group</span>
 					</button>
+					<button
+						type='button'
+						onClick={handleOpenDirectInviteModal}
+						className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-300/20 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-100 hover:border-amber-300/35 hover:bg-amber-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
+					>
+						<HiOutlineUserPlus className='h-3.5 w-3.5 sm:h-4 sm:w-4' />
+						<span>Invite</span>
+					</button>
+					<button
+						type='button'
+						onClick={() => setShowInvitationsPanel((currentValue) => !currentValue)}
+						className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-sky-300/20 bg-sky-500/10 px-3 py-1.5 text-[11px] font-semibold text-sky-100 hover:border-sky-300/35 hover:bg-sky-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
+						aria-expanded={showInvitationsPanel}
+					>
+						<span>Invitations</span>
+						<span className='rounded-full border border-sky-300/30 bg-sky-500/16 px-2 py-0.5 text-[10px] leading-none'>
+							{incomingInvitations.length}
+						</span>
+					</button>
 				</div>
+
+				{showInvitationsPanel ? (
+					<DirectInvitationsPanel
+						friends={directFriendConversations}
+						onOpenFriend={handleOpenFriendConversation}
+						incomingInvitations={incomingInvitations}
+						outgoingInvitations={outgoingInvitations}
+						onRespond={respondInvitation}
+						isRespondingToInvitation={isRespondingToInvitation}
+					/>
+				) : null}
 			</div>
 
 			<div className='sidebar-mobile-heading mb-2.5 mt-4 flex items-center justify-between gap-3'>
@@ -313,13 +407,13 @@ const Sidebar = () => {
 				/>
 			)}
 
-			<div className='sidebar-mobile-bottom sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pt-2'>
+			<div className='sidebar-mobile-bottom sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pt-2 md:static md:bottom-auto md:z-auto md:bg-transparent md:pb-0 md:pt-0'>
 				<div className='flex items-center gap-2.5'>
 					<div className='min-w-0 flex-1'>
 						<SearchInput
 							value={searchValue}
 							onChange={setSearchValue}
-							onClear={() => setSearchValue("")}
+							onClear={handleClearSearch}
 							totalCount={activeFilter === "calls" ? calls.length : conversations.length}
 							visibleCount={activeFilter === "calls" ? filteredCalls.length : filteredConversations.length}
 							activeFilter={activeFilter}
@@ -329,11 +423,15 @@ const Sidebar = () => {
 					</div>
 					<button
 						type='button'
-						onClick={() => setShowQuickActions((currentValue) => !currentValue)}
+						onClick={() =>
+							startTransition(() => {
+								setShowQuickActions((currentValue) => !currentValue);
+							})
+						}
 						aria-expanded={showQuickActions}
 						aria-label={showQuickActions ? "Hide quick actions" : "Show quick actions"}
 						title={showQuickActions ? "Hide quick actions" : "Show quick actions"}
-						className='inline-flex shrink-0 items-center gap-2 rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-sky-100 transition hover:border-sky-300/35 hover:bg-sky-500/16'
+						className='inline-flex shrink-0 items-center gap-2 rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-sky-100 hover:border-sky-300/35 hover:bg-sky-500/16'
 					>
 						<IoCodeSlashOutline className='h-4 w-4' />
 						<span>{isDeveloper ? "Tools" : "Menu"}</span>
@@ -345,17 +443,13 @@ const Sidebar = () => {
 					</button>
 				</div>
 
-				<div
-					className={`grid transition-all duration-300 ease-out ${
-						showQuickActions ? "mt-3 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-					}`}
-				>
-					<div className='overflow-hidden'>
-						<div className='space-y-3 rounded-[28px] border border-white/10 bg-white/[0.025] p-3 backdrop-blur-xl'>
+				{showQuickActions ? (
+					<div className='mt-3'>
+						<div className='space-y-3 rounded-[28px] border border-white/10 bg-white/[0.025] p-3'>
 							{isDeveloper ? (
 								<Link
 									to='/developer'
-									className='group flex items-center justify-between gap-3 rounded-[24px] border border-sky-400/20 bg-sky-500/10 p-3 text-left transition hover:border-sky-300/35 hover:bg-sky-500/14'
+									className='group flex items-center justify-between gap-3 rounded-[24px] border border-sky-400/20 bg-sky-500/10 p-3 text-left transition-colors hover:border-sky-300/35 hover:bg-sky-500/14'
 								>
 									<div className='flex min-w-0 items-center gap-3'>
 										<div className='inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-400/15 text-sky-200'>
@@ -377,7 +471,7 @@ const Sidebar = () => {
 							<LogoutButton />
 						</div>
 					</div>
-				</div>
+				) : null}
 			</div>
 
 			<CreateGroupModal
@@ -392,6 +486,15 @@ const Sidebar = () => {
 					setSelectedConversation(conversation);
 					setShowSidebar(false);
 				}}
+			/>
+
+			<DirectInviteModal
+				open={showDirectInviteModal}
+				onClose={() => setShowDirectInviteModal(false)}
+				onSendInvitation={sendInvitation}
+				isSendingToUser={isSendingToUser}
+				connectedUserIds={directConnectedUserIds}
+				pendingCounterpartIds={pendingCounterpartIds}
 			/>
 
 			<StoryComposerModal

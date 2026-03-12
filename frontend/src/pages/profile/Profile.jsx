@@ -151,9 +151,9 @@ const Profile = () => {
 	};
 
 	const shellCardClassName =
-		"relative overflow-hidden rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,14,28,0.92),rgba(8,15,30,0.7))] shadow-[0_28px_80px_rgba(2,6,23,0.45)] backdrop-blur-2xl";
+		"profile-shell-card relative isolate overflow-visible rounded-[24px] border border-white/10 bg-slate-950/88 shadow-[0_16px_40px_rgba(2,6,23,0.34)] sm:overflow-hidden sm:rounded-[28px] sm:bg-[linear-gradient(180deg,rgba(8,14,28,0.92),rgba(8,15,30,0.7))] sm:shadow-[0_20px_56px_rgba(2,6,23,0.38)]";
 	const panelClassName =
-		"relative shrink-0 overflow-hidden rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,15,30,0.88),rgba(13,24,42,0.68))] p-5 shadow-[0_24px_70px_rgba(2,6,23,0.36)] backdrop-blur-2xl sm:p-6 lg:p-7";
+		"profile-panel-card relative isolate shrink-0 overflow-visible rounded-[24px] border border-white/10 bg-slate-950/88 p-4 shadow-[0_14px_36px_rgba(2,6,23,0.28)] sm:overflow-hidden sm:rounded-[30px] sm:bg-[linear-gradient(180deg,rgba(8,15,30,0.88),rgba(13,24,42,0.68))] sm:p-6 sm:shadow-[0_18px_46px_rgba(2,6,23,0.3)] lg:p-7";
 	const fieldClassName =
 		"h-14 w-full rounded-[20px] border border-white/10 bg-slate-950/35 px-4 text-[15px] text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 focus:bg-slate-950/55";
 	const textAreaClassName =
@@ -162,17 +162,17 @@ const Profile = () => {
 		"mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400";
 
 	return (
-		<div className='relative flex h-full min-h-0 w-full flex-1 overflow-hidden'>
-			<div className='pointer-events-none absolute inset-0 overflow-hidden'>
+		<div className='relative isolate flex w-full flex-1 overflow-x-hidden'>
+			<div className='pointer-events-none absolute inset-0 hidden overflow-hidden'>
 				<div className='absolute left-[-10%] top-[-12%] h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl'></div>
 				<div className='absolute bottom-[-14%] right-[-8%] h-96 w-96 rounded-full bg-orange-400/10 blur-3xl'></div>
 				<div className='absolute left-[42%] top-[24%] h-48 w-48 rounded-full bg-sky-300/8 blur-3xl'></div>
 			</div>
 
-			<div className='relative mx-auto flex h-full w-full max-w-[1540px] flex-col px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-6'>
-				<div className={`${shellCardClassName} flex h-full min-h-0 flex-col p-3 sm:p-4 lg:p-5`}>
+			<div className='relative mx-auto flex w-full max-w-[1540px] flex-col px-3 py-3 sm:px-4 sm:py-4 lg:px-6 lg:py-6'>
+				<div className={`${shellCardClassName} flex w-full flex-col p-3 sm:p-4 lg:p-5`}>
 					<div className='pointer-events-none absolute inset-x-12 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/35 to-transparent'></div>
-					<div className='custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto pr-1'>
+					<div className='flex w-full flex-col gap-4'>
 
 					<div className='flex flex-col gap-3 rounded-[26px] border border-white/8 bg-white/[0.03] px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between lg:px-6'>
 						<div className='max-w-2xl'>
@@ -198,13 +198,10 @@ const Profile = () => {
 						</Link>
 					</div>
 
-					<div className='mt-4 grid min-h-0 gap-4 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[390px_minmax(0,1fr)]'>
-						<aside className='flex min-h-0 flex-col gap-4'>
-							<div className={`${panelClassName} lg:sticky lg:top-0`}>
-								<div className='pointer-events-none absolute right-[-20%] top-[-14%] h-44 w-44 rounded-full bg-sky-400/10 blur-3xl'></div>
-								<div className='pointer-events-none absolute bottom-[-18%] left-[-10%] h-40 w-40 rounded-full bg-cyan-300/10 blur-3xl'></div>
-
-								<div className='relative'>
+					<div className='mt-1 grid min-w-0 grid-cols-1 gap-4 lg:gap-5 xl:grid-cols-[360px_minmax(0,1fr)] 2xl:grid-cols-[390px_minmax(0,1fr)]'>
+							<aside className='relative z-10 flex min-w-0 flex-col gap-4'>
+								<div className={panelClassName}>
+									<div className='relative'>
 									<div className='flex items-start justify-between gap-4'>
 										<div className='space-y-2'>
 											<p className='text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400'>
@@ -305,7 +302,7 @@ const Profile = () => {
 							</div>
 						</aside>
 
-						<form onSubmit={handleSubmit} className='flex flex-col gap-4'>
+								<form onSubmit={handleSubmit} className='relative z-10 flex min-w-0 flex-col gap-4'>
 							<div className={panelClassName}>
 								<div className='grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]'>
 									<section className='rounded-[28px] border border-white/8 bg-slate-950/28 p-4 sm:p-5'>

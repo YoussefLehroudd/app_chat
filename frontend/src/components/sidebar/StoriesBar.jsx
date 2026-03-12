@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { HiOutlinePlusSmall } from "react-icons/hi2";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
@@ -15,7 +16,7 @@ const StoryCircle = ({ label, imageSrc, hasUnseen = false, isOwn = false, onClic
 		<button
 			type='button'
 			onClick={onClick}
-			className={`relative h-[56px] w-[56px] rounded-full p-[2px] transition duration-200 hover:scale-[1.03] ${
+			className={`relative h-[56px] w-[56px] rounded-full p-[2px] transition-colors duration-150 ${
 				hasUnseen
 					? "bg-gradient-to-br from-cyan-300 via-sky-400 to-blue-500"
 					: "bg-gradient-to-br from-white/20 via-white/10 to-white/5"
@@ -23,7 +24,7 @@ const StoryCircle = ({ label, imageSrc, hasUnseen = false, isOwn = false, onClic
 			title={label}
 		>
 			<span className='absolute inset-[2px] overflow-hidden rounded-full border border-slate-900/65 bg-slate-900'>
-				<img src={imageSrc} alt={label} className='h-full w-full object-cover' />
+				<img src={imageSrc} alt={label} loading='lazy' decoding='async' className='h-full w-full object-cover' />
 			</span>
 			{isOwn ? (
 				<span
@@ -111,4 +112,4 @@ const StoriesBar = ({ storyGroups, ownStoryGroup, loading, authUser, onAddStory,
 	);
 };
 
-export default StoriesBar;
+export default memo(StoriesBar);

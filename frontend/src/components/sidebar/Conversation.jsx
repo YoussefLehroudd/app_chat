@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { useSocketContext } from "../../context/SocketContext";
 import useConversation from "../../zustand/useConversation";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
@@ -54,8 +54,10 @@ const Conversation = ({ conversation }) => {
 	}, [avatarSrc]);
 
 	const handleClick = () => {
-		setSelectedConversation(conversation);
-		setShowSidebar(false);
+		startTransition(() => {
+			setSelectedConversation(conversation);
+			setShowSidebar(false);
+		});
 	};
 
 	const handleAvatarClick = (event) => {
@@ -66,7 +68,7 @@ const Conversation = ({ conversation }) => {
 	return (
 		<>
 			<div
-				className={`group flex cursor-pointer items-center gap-2.5 rounded-[22px] border px-3 py-2.5 transition-all duration-200 ${
+				className={`conversation-row group flex cursor-pointer items-center gap-2.5 rounded-[22px] border px-3 py-2.5 transition-colors duration-150 ${
 					isSelected
 						? "border-sky-300/45 bg-[linear-gradient(135deg,rgba(14,165,233,0.85),rgba(6,182,212,0.9))] shadow-[0_20px_42px_rgba(14,165,233,0.22)]"
 						: "border-transparent bg-white/[0.015] hover:border-white/10 hover:bg-white/[0.04]"
@@ -92,9 +94,9 @@ const Conversation = ({ conversation }) => {
 							className={`h-full w-full object-cover transition-opacity duration-200 ${
 								avatarLoaded ? "opacity-100" : "opacity-0"
 							}`}
-							loading='eager'
+							loading='lazy'
 							decoding='async'
-							fetchPriority='high'
+							fetchPriority='low'
 							onLoad={() => setAvatarLoaded(true)}
 							onError={() => {
 								setAvatarSrc(fallbackAvatar);
