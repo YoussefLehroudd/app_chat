@@ -28,6 +28,10 @@ const ProfileButton = () => {
 		}
 	}, [avatarSrc]);
 
+	const handleUsernameCopyClick = (event) => {
+		event.preventDefault();
+	};
+
 	return (
 		<Link
 			to='/profile'
@@ -58,12 +62,19 @@ const ProfileButton = () => {
 				</div>
 			</div>
 
-			<div className='min-w-0 flex-1' data-copy-user={authUser.username} title='Click to copy username'>
+			<div className='min-w-0 flex-1'>
 				<span className='flex items-center gap-2 truncate text-sm font-semibold text-slate-100'>
 					<span className='truncate'>{authUser.fullName}</span>
 					<VerifiedBadge user={authUser} compact />
 				</span>
-				<span className='mt-1 block truncate text-xs text-slate-400'>@{authUser.username}</span>
+				<span
+					className='mt-1 inline-block max-w-full cursor-pointer truncate align-top text-xs text-slate-400'
+					data-copy-user={authUser.username}
+					title='Click to copy username'
+					onClick={handleUsernameCopyClick}
+				>
+					@{authUser.username}
+				</span>
 			</div>
 
 			<span className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-medium text-slate-300 transition-colors group-hover:border-sky-400/25 group-hover:text-slate-100'>

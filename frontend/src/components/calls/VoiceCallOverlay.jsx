@@ -138,8 +138,18 @@ const resolveAvatar = (entity, size = 144) =>
 		profilePic: entity?.profilePic,
 		gender: entity?.gender,
 	});
+const getParticipantUserId = (participant) => participant?.userId || participant?.user?._id || "";
+const createEmptySpeakingDetector = () => ({
+	audioContext: null,
+	entries: [],
+	rafId: null,
+});
 
 const FLOAT_WIDGET_MARGIN = 12;
+const FLOATING_AVATAR_SIZE = 56;
+const MOBILE_CARD_SNAP_TO_AVATAR_ZONE = 30;
+const SPEAKING_RMS_THRESHOLD = 0.028;
+const SPEAKING_HOLD_MS = 220;
 
 const getViewportBounds = () => {
 	if (typeof window === "undefined") {
@@ -150,6 +160,17 @@ const getViewportBounds = () => {
 		width: window.visualViewport?.width || window.innerWidth,
 		height: window.visualViewport?.height || window.innerHeight,
 	};
+};
+
+const getAvatarFloatingPosition = (preferredY = FLOAT_WIDGET_MARGIN) => {
+	const { width: viewportWidth } = getViewportBounds();
+
+	return clampFloatingPosition(
+		viewportWidth - FLOATING_AVATAR_SIZE - FLOAT_WIDGET_MARGIN,
+		preferredY,
+		FLOATING_AVATAR_SIZE,
+		FLOATING_AVATAR_SIZE
+	);
 };
 
 const clampFloatingPosition = (x, y, widgetWidth, widgetHeight) => {
@@ -194,12 +215,17 @@ const VoiceCallOverlay = () => {
 	const videoStageRef = useRef(null);
 	const floatingContainerRef = useRef(null);
 	const floatingDragRef = useRef(null);
+	const speakingDetectorRef = useRef(createEmptySpeakingDetector());
+	const isRemoteSpeakingRef = useRef(false);
+	const activeSpeakerUserIdRef = useRef("");
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [isLocalVideoPrimary, setIsLocalVideoPrimary] = useState(false);
 	const [isMinimized, setIsMinimized] = useState(false);
 	const [minimizedMode, setMinimizedMode] = useState("card");
 	const [floatingPosition, setFloatingPosition] = useState(null);
 	const [isDraggingFloating, setIsDraggingFloating] = useState(false);
+	const [isRemoteSpeaking, setIsRemoteSpeaking] = useState(false);
+	const [activeSpeakerUserId, setActiveSpeakerUserId] = useState("");
 	const [showInviteModal, setShowInviteModal] = useState(false);
 	const [inviteCandidates, setInviteCandidates] = useState([]);
 	const [loadingInviteCandidates, setLoadingInviteCandidates] = useState(false);
@@ -339,6 +365,23 @@ const VoiceCallOverlay = () => {
 	const participantCount = isGroupCall ? groupParticipants.length : primaryUser?._id ? 2 : 1;
 	const primaryRemoteParticipant = remoteParticipants[0] || null;
 	const remoteHasVideo = Boolean(primaryRemoteParticipant?.stream?.getVideoTracks?.().length);
+	const remoteAudioParticipants = useMemo(
+		() =>
+			(remoteParticipants || [])
+				.map((participant) => {
+					const userId = getParticipantUserId(participant);
+					const stream = participant?.stream || null;
+					const hasLiveAudio = Boolean(stream?.getAudioTracks?.().some((track) => track.readyState === "live"));
+					if (!userId || !stream || !hasLiveAudio) return null;
+					return {
+						userId,
+						user: participant?.user || null,
+						stream,
+					};
+				})
+				.filter(Boolean),
+		[remoteParticipants]
+	);
 
 	const conversationSummary = useMemo(
 		() => ({
@@ -383,11 +426,55 @@ const VoiceCallOverlay = () => {
 	const canMinimizeCall = callState.phase !== "incoming";
 
 	const leadAvatar = isGroupCall ? resolveAvatar(conversationSummary) : resolveAvatar(primaryUser);
+	const activeSpeakerParticipant = useMemo(
+		() => remoteParticipants.find((participant) => getParticipantUserId(participant) === activeSpeakerUserId) || null,
+		[remoteParticipants, activeSpeakerUserId]
+	);
+	const floatingAvatar = activeSpeakerParticipant?.user ? resolveAvatar(activeSpeakerParticipant.user) : leadAvatar;
 	const switchMediaLabel = isVideoCall ? "Switch to voice call" : "Switch to video call";
 	const hasFloatingPosition = Number.isFinite(floatingPosition?.x) && Number.isFinite(floatingPosition?.y);
+	const avatarSpeakingClass = isRemoteSpeaking
+		? "border-emerald-300/95 ring-2 ring-emerald-400/65 shadow-[0_0_0_3px_rgba(16,185,129,0.25),0_22px_54px_rgba(16,185,129,0.2)] animate-pulse"
+		: "border-white/15 ring-1 ring-white/10 shadow-[0_20px_48px_rgba(2,6,23,0.56)]";
 	const floatingWidgetStyle = hasFloatingPosition
 		? { left: `${floatingPosition.x}px`, top: `${floatingPosition.y}px` }
 		: { left: "0px", top: "0px" };
+
+	const clearSpeakingDetector = () => {
+		const detector = speakingDetectorRef.current;
+		if (detector.rafId) {
+			window.cancelAnimationFrame(detector.rafId);
+		}
+		(detector.entries || []).forEach((entry) => {
+			entry.sourceNode?.disconnect?.();
+			entry.analyserNode?.disconnect?.();
+		});
+		if (detector.audioContext) {
+			void detector.audioContext.close().catch(() => {});
+		}
+
+		speakingDetectorRef.current = createEmptySpeakingDetector();
+		if (isRemoteSpeakingRef.current) {
+			isRemoteSpeakingRef.current = false;
+			setIsRemoteSpeaking(false);
+		}
+		if (activeSpeakerUserIdRef.current) {
+			activeSpeakerUserIdRef.current = "";
+			setActiveSpeakerUserId("");
+		}
+	};
+
+	const setRemoteSpeakingState = (isSpeaking, speakerUserId = "") => {
+		const normalizedSpeakerUserId = isSpeaking && speakerUserId ? speakerUserId : "";
+		if (isRemoteSpeakingRef.current !== isSpeaking) {
+			isRemoteSpeakingRef.current = isSpeaking;
+			setIsRemoteSpeaking(isSpeaking);
+		}
+		if (activeSpeakerUserIdRef.current !== normalizedSpeakerUserId) {
+			activeSpeakerUserIdRef.current = normalizedSpeakerUserId;
+			setActiveSpeakerUserId(normalizedSpeakerUserId);
+		}
+	};
 
 	const clearFloatingDrag = () => {
 		const activeDrag = floatingDragRef.current;
@@ -399,6 +486,127 @@ const VoiceCallOverlay = () => {
 		floatingDragRef.current = null;
 		setIsDraggingFloating(false);
 	};
+
+	useEffect(() => {
+		if (
+			typeof window === "undefined" ||
+			!isMinimized ||
+			minimizedMode !== "avatar" ||
+			callState.phase === "incoming" ||
+			remoteAudioParticipants.length === 0
+		) {
+			clearSpeakingDetector();
+			return undefined;
+		}
+
+		const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+		if (!AudioContextConstructor) {
+			clearSpeakingDetector();
+			return undefined;
+		}
+
+		clearSpeakingDetector();
+
+		let cancelled = false;
+		let detectorReady = false;
+		let resumeOnPointerDown = null;
+
+		try {
+			const audioContext = new AudioContextConstructor();
+			const entries = remoteAudioParticipants
+				.map((participant) => {
+					try {
+						const analyserNode = audioContext.createAnalyser();
+						analyserNode.fftSize = 1024;
+						analyserNode.smoothingTimeConstant = 0.62;
+						const sourceNode = audioContext.createMediaStreamSource(participant.stream);
+						sourceNode.connect(analyserNode);
+						return {
+							userId: participant.userId,
+							sourceNode,
+							analyserNode,
+							dataArray: new Uint8Array(analyserNode.fftSize),
+							lastAboveThresholdAt: 0,
+						};
+					} catch {
+						return null;
+					}
+				})
+				.filter(Boolean);
+
+			if (entries.length === 0) {
+				void audioContext.close().catch(() => {});
+				clearSpeakingDetector();
+				return undefined;
+			}
+
+			speakingDetectorRef.current = {
+				audioContext,
+				entries,
+				rafId: null,
+			};
+			detectorReady = true;
+
+			if (audioContext.state === "suspended") {
+				void audioContext.resume().catch(() => {});
+			}
+			resumeOnPointerDown = () => {
+				if (audioContext.state === "suspended") {
+					void audioContext.resume().catch(() => {});
+				}
+			};
+			window.addEventListener("pointerdown", resumeOnPointerDown, { passive: true });
+
+			const detectFrame = () => {
+				if (cancelled) return;
+
+				const detector = speakingDetectorRef.current;
+				if (!detector.entries?.length) return;
+				const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+				let loudestSpeakerUserId = "";
+				let loudestSpeakerRms = 0;
+
+				detector.entries.forEach((entry) => {
+					if (!entry.analyserNode || !entry.dataArray) return;
+					entry.analyserNode.getByteTimeDomainData(entry.dataArray);
+
+					let sumSquares = 0;
+					for (let index = 0; index < entry.dataArray.length; index += 1) {
+						const sample = (entry.dataArray[index] - 128) / 128;
+						sumSquares += sample * sample;
+					}
+
+					const rms = Math.sqrt(sumSquares / entry.dataArray.length);
+					if (rms >= SPEAKING_RMS_THRESHOLD) {
+						entry.lastAboveThresholdAt = now;
+					}
+
+					const currentlySpeaking = now - entry.lastAboveThresholdAt <= SPEAKING_HOLD_MS;
+					if (currentlySpeaking && rms >= loudestSpeakerRms) {
+						loudestSpeakerRms = rms;
+						loudestSpeakerUserId = entry.userId;
+					}
+				});
+
+				setRemoteSpeakingState(Boolean(loudestSpeakerUserId), loudestSpeakerUserId);
+				detector.rafId = window.requestAnimationFrame(detectFrame);
+			};
+
+			detectFrame();
+		} catch {
+			clearSpeakingDetector();
+		}
+
+		return () => {
+			cancelled = true;
+			if (resumeOnPointerDown) {
+				window.removeEventListener("pointerdown", resumeOnPointerDown);
+			}
+			if (detectorReady) {
+				clearSpeakingDetector();
+			}
+		};
+	}, [isMinimized, minimizedMode, callState.phase, remoteAudioParticipants]);
 
 	const isFloatingDragExcludedTarget = (target) => {
 		if (!(target instanceof Element)) return false;
@@ -424,6 +632,7 @@ const VoiceCallOverlay = () => {
 			offsetX: event.clientX - rect.left,
 			offsetY: event.clientY - rect.top,
 			moved: false,
+			modeAtStart: minimizedMode,
 			onTap: typeof options.onTap === "function" ? options.onTap : null,
 			onPointerMove: null,
 			onPointerUp: null,
@@ -464,6 +673,26 @@ const VoiceCallOverlay = () => {
 
 			if (!dragMeta.moved) {
 				dragMeta.onTap?.();
+				return;
+			}
+
+			if (dragMeta.modeAtStart !== "card") {
+				return;
+			}
+
+			const currentContainer = floatingContainerRef.current;
+			if (!currentContainer) {
+				return;
+			}
+
+			const currentRect = currentContainer.getBoundingClientRect();
+			const { width: viewportWidth } = getViewportBounds();
+			const isNearRightEdge =
+				currentRect.right >= viewportWidth - FLOAT_WIDGET_MARGIN - MOBILE_CARD_SNAP_TO_AVATAR_ZONE;
+
+			if (isNearRightEdge) {
+				setMinimizedMode("avatar");
+				setFloatingPosition(getAvatarFloatingPosition(currentRect.top));
 			}
 		};
 
@@ -656,14 +885,20 @@ const VoiceCallOverlay = () => {
 						type='button'
 						style={floatingWidgetStyle}
 						onPointerDown={(event) => startFloatingDrag(event, { onTap: handleShowMiniCard })}
-						className={`pointer-events-auto absolute h-14 w-14 overflow-hidden rounded-full border border-white/15 bg-slate-950/90 shadow-[0_20px_48px_rgba(2,6,23,0.56)] ring-1 ring-white/10 touch-none transition ${
+						className={`pointer-events-auto absolute h-14 w-14 overflow-hidden rounded-full border bg-slate-950/90 touch-none transition ${
+							avatarSpeakingClass
+						} ${
 							hasFloatingPosition ? "opacity-100" : "opacity-0"
 						} ${isDraggingFloating ? "cursor-grabbing" : "cursor-grab"}`}
 						aria-label='Expand call controls'
 						title='Drag to move. Tap to expand.'
 					>
-						<img src={leadAvatar} alt={title} className='h-full w-full object-cover' />
-						<span className='absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-slate-950 bg-emerald-400'></span>
+						<img src={floatingAvatar} alt={title} className='h-full w-full object-cover' />
+						<span
+							className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-slate-950 transition-all ${
+								isRemoteSpeaking ? "scale-125 bg-emerald-300 shadow-[0_0_0_4px_rgba(16,185,129,0.24)]" : "bg-emerald-400"
+							}`}
+						></span>
 					</button>
 				) : (
 					<div
