@@ -443,8 +443,8 @@ const StoryViewerModal = ({
 
 	return createPortal(
 		<div className='fixed inset-0 z-[220] h-[var(--app-viewport-height)] bg-[rgba(2,6,23,0.985)] backdrop-blur-md'>
-			<div className='relative mx-auto flex h-full w-full max-w-3xl flex-col px-2.5 pb-[calc(env(safe-area-inset-bottom,0px)+0.95rem)] pt-2 sm:px-5 sm:pb-5 sm:pt-4'>
-				<div className='flex items-center gap-1.5 pb-2 sm:pb-3'>
+			<div className='relative mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col px-2.5 pb-[calc(env(safe-area-inset-bottom,0px)+0.95rem)] pt-2 sm:px-5 sm:pb-5 sm:pt-4'>
+				<div className='shrink-0 flex items-center gap-1.5 pb-2 sm:pb-3'>
 					{activeStories.map((story, storyIndex) => {
 						const isPastStory = storyIndex < activeStoryIndex;
 						const isCurrentStory = storyIndex === activeStoryIndex;
@@ -470,7 +470,7 @@ const StoryViewerModal = ({
 					})}
 				</div>
 
-				<div className='mb-2.5 flex items-center justify-between gap-3 sm:mb-3'>
+				<div className='mb-2.5 shrink-0 flex items-center justify-between gap-3 sm:mb-3'>
 					<div className='flex min-w-0 items-center gap-3'>
 						<div className='h-10 w-10 overflow-hidden rounded-full ring-1 ring-white/20'>
 							<img src={authorAvatar} alt={activeAuthor?.fullName || "Story author"} className='h-full w-full object-cover' />
@@ -512,7 +512,7 @@ const StoryViewerModal = ({
 					</div>
 				</div>
 
-				<div className='relative h-[min(58svh,30rem)] min-h-0 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-slate-900/78 sm:flex sm:h-auto sm:flex-1 sm:rounded-[24px]'>
+				<div className='relative flex min-h-[14rem] flex-1 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-slate-900/78 sm:rounded-[24px]'>
 					<button
 						type='button'
 						className='absolute inset-y-0 left-0 z-20 w-1/2 cursor-pointer'
@@ -566,7 +566,7 @@ const StoryViewerModal = ({
 					) : null}
 				</div>
 
-				<div className='mt-2.5 flex items-center justify-between sm:mt-3'>
+				<div className='mt-2.5 shrink-0 flex items-center justify-between sm:mt-3'>
 					{isOwnStory ? (
 						<p className='shrink-0 whitespace-nowrap text-xs text-slate-400'>
 							Story {activeStoryIndex + 1} of {activeStories.length}
