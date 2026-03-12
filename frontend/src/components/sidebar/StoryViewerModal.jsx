@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { HiOutlineEye, HiOutlineTrash, HiOutlineXMark } from "react-icons/hi2";
 import { IoPause, IoPlay, IoSend } from "react-icons/io5";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
@@ -440,9 +441,9 @@ const StoryViewerModal = ({
 	const shouldShowVideo = activeStory.mediaType === "VIDEO" && Boolean(activeStory.mediaUrl) && !mediaLoadError;
 	const shouldShowTextFallback = activeStory.mediaType === "TEXT" || !activeStory.mediaUrl || mediaLoadError;
 
-	return (
-		<div className='fixed inset-x-0 top-0 z-[220] h-[var(--app-viewport-height)] bg-slate-950/96 backdrop-blur-md'>
-			<div className='relative mx-auto flex h-full w-full max-w-3xl flex-col px-2.5 pb-[calc(env(safe-area-inset-bottom,0px)+0.7rem)] pt-2 sm:px-5 sm:pb-5 sm:pt-4'>
+	return createPortal(
+		<div className='fixed inset-0 z-[220] h-[var(--app-viewport-height)] bg-[rgba(2,6,23,0.985)] backdrop-blur-md'>
+			<div className='relative mx-auto flex h-full w-full max-w-3xl flex-col px-2.5 pb-[calc(env(safe-area-inset-bottom,0px)+0.95rem)] pt-2 sm:px-5 sm:pb-5 sm:pt-4'>
 				<div className='flex items-center gap-1.5 pb-2 sm:pb-3'>
 					{activeStories.map((story, storyIndex) => {
 						const isPastStory = storyIndex < activeStoryIndex;
@@ -511,7 +512,7 @@ const StoryViewerModal = ({
 					</div>
 				</div>
 
-				<div className='relative h-[min(56vh,29rem)] min-h-0 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-slate-900/70 sm:flex sm:h-auto sm:flex-1 sm:rounded-[24px]'>
+				<div className='relative h-[min(58svh,30rem)] min-h-0 items-center justify-center overflow-hidden rounded-[20px] border border-white/10 bg-slate-900/78 sm:flex sm:h-auto sm:flex-1 sm:rounded-[24px]'>
 					<button
 						type='button'
 						className='absolute inset-y-0 left-0 z-20 w-1/2 cursor-pointer'
@@ -708,7 +709,8 @@ const StoryViewerModal = ({
 					</div>
 				</div>
 			) : null}
-		</div>
+		</div>,
+		document.body
 	);
 };
 

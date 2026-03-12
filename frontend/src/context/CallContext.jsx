@@ -385,6 +385,7 @@ export const CallContextProvider = ({ children }) => {
 	const [localStream, setLocalStream] = useState(null);
 	const [remoteParticipants, setRemoteParticipants] = useState([]);
 	const [callDurationSeconds, setCallDurationSeconds] = useState(0);
+	const [isSwitchingMedia, setIsSwitchingMedia] = useState(false);
 
 	const callStateRef = useRef(INITIAL_CALL_STATE);
 	const socketRef = useRef(null);
@@ -838,6 +839,7 @@ export const CallContextProvider = ({ children }) => {
 		pendingIceCandidatesRef.current = new Map();
 		inboundRemoteStreamsRef.current = new Map();
 		setRemoteParticipants([]);
+		setIsSwitchingMedia(false);
 		callStateRef.current = INITIAL_CALL_STATE;
 		setCallState(INITIAL_CALL_STATE);
 	};
@@ -955,6 +957,42 @@ export const CallContextProvider = ({ children }) => {
 		}
 	};
 
+	const replaceOutgoingMediaTracks = async (nextStream) => {
+		const nextAudioTrack = nextStream?.getAudioTracks?.()[0] || null;
+		const nextVideoTrack = nextStream?.getVideoTracks?.()[0] || null;
+		const replaceOperations = [];
+
+		peerConnectionsRef.current.forEach((connection) => {
+			const senders = connection.getSenders();
+			const audioSender = senders.find((sender) => sender.track?.kind === "audio");
+			const videoSender = senders.find((sender) => sender.track?.kind === "video");
+
+			if (audioSender) {
+				replaceOperations.push(audioSender.replaceTrack(nextAudioTrack));
+			} else if (nextAudioTrack) {
+				try {
+					connection.addTrack(nextAudioTrack, nextStream);
+				} catch (error) {
+					console.error("Error adding audio track to peer connection:", error);
+				}
+			}
+
+			if (videoSender) {
+				replaceOperations.push(videoSender.replaceTrack(nextVideoTrack));
+			} else if (nextVideoTrack) {
+				try {
+					connection.addTrack(nextVideoTrack, nextStream);
+				} catch (error) {
+					console.error("Error adding video track to peer connection:", error);
+				}
+			}
+		});
+
+		if (replaceOperations.length > 0) {
+			await Promise.allSettled(replaceOperations);
+		}
+	};
+
 	const stopScreenShare = async ({ preserveCamera = true } = {}) => {
 		const displayStream = screenStreamRef.current;
 		if (!displayStream) {
@@ -1056,6 +1094,107 @@ export const CallContextProvider = ({ children }) => {
 		} catch (error) {
 			console.error("Error starting screen share:", error);
 			toast.error(error.message || "Unable to share your screen");
+		}
+	};
+
+	const switchCallMediaType = async (nextMediaType) => {
+		const normalizedMediaType = nextMediaType === "video" ? "video" : "voice";
+		const activeCall = callStateRef.current;
+		if (!activeCall.callId || activeCall.phase === "idle" || activeCall.phase === "incoming") {
+			toast.error("Join the call first");
+			return false;
+		}
+
+		if (isSwitchingMedia) {
+			return false;
+		}
+
+		const hasLocalVideoTrack = Boolean(localStreamRef.current?.getVideoTracks?.().length);
+		if (normalizedMediaType === activeCall.mediaType && (normalizedMediaType !== "video" || hasLocalVideoTrack)) {
+			return true;
+		}
+
+		setIsSwitchingMedia(true);
+		let nextStream = null;
+		const previousLocalStream = localStreamRef.current;
+		const previousCameraStream = cameraStreamRef.current;
+
+		try {
+			if (normalizedMediaType === "voice" && callStateRef.current.isScreenSharing) {
+				await stopScreenShare({ preserveCamera: false });
+			}
+
+			nextStream = await getUserMediaStream(normalizedMediaType, {
+				allowAudioFallback: normalizedMediaType === "video",
+			});
+
+			if (callStateRef.current.isMuted) {
+				nextStream.getAudioTracks().forEach((track) => {
+					track.enabled = false;
+				});
+			}
+
+			if (normalizedMediaType === "video") {
+				cameraStreamRef.current = nextStream;
+			} else {
+				cameraStreamRef.current = null;
+			}
+
+			localStreamRef.current = nextStream;
+			setLocalStream(nextStream);
+			await replaceOutgoingMediaTracks(nextStream);
+
+			const currentUserId = authUserRef.current?._id || "";
+			const activeParticipants = (callStateRef.current.participants || []).filter(
+				(participant) =>
+					participant.userId &&
+					participant.userId !== currentUserId &&
+					participant.joinedAt &&
+					!participant.leftAt
+			);
+
+			for (const participant of activeParticipants) {
+				const targetUser =
+					participant.user || participantDirectoryRef.current.get(participant.userId) || { _id: participant.userId };
+				try {
+					// eslint-disable-next-line no-await-in-loop
+					await createOfferForTarget(targetUser, {
+						callId: callStateRef.current.callId,
+						mediaType: normalizedMediaType,
+					});
+				} catch (error) {
+					console.error("Error renegotiating call media:", error);
+				}
+			}
+
+			updateCallState((currentState) => ({
+				...currentState,
+				mediaType: normalizedMediaType,
+				isScreenSharing: normalizedMediaType === "video" ? currentState.isScreenSharing : false,
+			}));
+
+			if (previousLocalStream && previousLocalStream !== nextStream) {
+				stopStreamTracks(previousLocalStream);
+			}
+
+			if (normalizedMediaType === "video" && nextStream.getVideoTracks().length === 0) {
+				toast("Camera unavailable. Staying on voice only.");
+			}
+
+			return true;
+		} catch (error) {
+			console.error("Error switching call media type:", error);
+			if (nextStream) {
+				stopStreamTracks(nextStream);
+			}
+
+			localStreamRef.current = previousLocalStream;
+			cameraStreamRef.current = previousCameraStream;
+			setLocalStream(previousLocalStream || null);
+			toast.error(error.message || `Unable to switch to ${normalizedMediaType} call`);
+			return false;
+		} finally {
+			setIsSwitchingMedia(false);
 		}
 	};
 
@@ -1782,13 +1921,15 @@ export const CallContextProvider = ({ children }) => {
 				updateCallState((currentState) => ({
 					...currentState,
 					phase: currentState.phase === "active" ? "active" : "connecting",
+					mediaType: mediaType === "video" ? "video" : "voice",
+					isScreenSharing: mediaType === "video" ? currentState.isScreenSharing : false,
 				}));
 			} catch (error) {
 				console.error("Error handling call offer:", error);
 			}
 		};
 
-		const handleAnswer = async ({ answer, responder, responderId, callId } = {}) => {
+		const handleAnswer = async ({ answer, responder, responderId, callId, mediaType = "voice" } = {}) => {
 			const targetUserId = responderId || responder?._id;
 			if (!answer || !targetUserId || callStateRef.current.callId !== callId) return;
 
@@ -1802,6 +1943,8 @@ export const CallContextProvider = ({ children }) => {
 				updateCallState((currentState) => ({
 					...currentState,
 					phase: currentState.phase === "active" ? "active" : "connecting",
+					mediaType: mediaType === "video" ? "video" : "voice",
+					isScreenSharing: mediaType === "video" ? currentState.isScreenSharing : false,
 				}));
 			} catch (error) {
 				console.error("Error handling call answer:", error);
@@ -1914,6 +2057,8 @@ export const CallContextProvider = ({ children }) => {
 		inviteUsersToCurrentCall,
 		toggleMute,
 		toggleScreenShare,
+		switchCallMediaType,
+		isSwitchingMedia,
 		isCallClosedForUi,
 		getClosedCallInfo,
 	};

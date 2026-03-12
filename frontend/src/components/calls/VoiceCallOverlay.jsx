@@ -7,7 +7,7 @@ import {
 	HiMiniVideoCamera,
 	HiOutlineUserPlus,
 } from "react-icons/hi2";
-import { IoContractOutline, IoExpandOutline, IoMicOffOutline, IoMicOutline } from "react-icons/io5";
+import { IoChevronDown, IoChevronUp, IoContractOutline, IoExpandOutline, IoMicOffOutline, IoMicOutline } from "react-icons/io5";
 import { MdOutlineScreenShare, MdStopScreenShare } from "react-icons/md";
 import { useCallContext } from "../../context/CallContext";
 import callRingtone from "../../assets/sounds/call-ringtone.wav";
@@ -152,11 +152,14 @@ const VoiceCallOverlay = () => {
 		inviteUsersToCurrentCall,
 		toggleScreenShare,
 		toggleMute,
+		switchCallMediaType,
+		isSwitchingMedia,
 	} = useCallContext();
 	const ringtoneAudioRef = useRef(null);
 	const videoStageRef = useRef(null);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [isLocalVideoPrimary, setIsLocalVideoPrimary] = useState(false);
+	const [isMinimized, setIsMinimized] = useState(false);
 	const [showInviteModal, setShowInviteModal] = useState(false);
 	const [inviteCandidates, setInviteCandidates] = useState([]);
 	const [loadingInviteCandidates, setLoadingInviteCandidates] = useState(false);
@@ -218,7 +221,14 @@ const VoiceCallOverlay = () => {
 
 	useEffect(() => {
 		setIsLocalVideoPrimary(false);
+		setIsMinimized(false);
 	}, [callState.callId]);
+
+	useEffect(() => {
+		if (callState.phase === "incoming") {
+			setIsMinimized(false);
+		}
+	}, [callState.phase]);
 
 	useEffect(() => {
 		if (!showInviteModal || !callState.callId) return;
@@ -318,8 +328,10 @@ const VoiceCallOverlay = () => {
 			? `@${primaryUser.username}`
 			: "";
 	const isScreenSharing = Boolean(callState.isScreenSharing);
+	const canMinimizeCall = callState.phase !== "incoming";
 
 	const leadAvatar = isGroupCall ? resolveAvatar(conversationSummary) : resolveAvatar(primaryUser);
+	const switchMediaLabel = isVideoCall ? "Switch to voice call" : "Switch to video call";
 
 	const toggleInvitee = (userId) => {
 		setSelectedInviteeIds((currentIds) =>
@@ -341,6 +353,19 @@ const VoiceCallOverlay = () => {
 		} finally {
 			setIsInviting(false);
 		}
+	};
+
+	const handleSwitchMediaType = async () => {
+		if (callState.phase === "incoming" || isSwitchingMedia) return;
+		await switchCallMediaType(isVideoCall ? "voice" : "video");
+	};
+
+	const handleToggleMinimized = () => {
+		if (!canMinimizeCall) return;
+		if (showInviteModal) {
+			setShowInviteModal(false);
+		}
+		setIsMinimized((currentValue) => !currentValue);
 	};
 
 	const toggleFullscreen = async () => {
@@ -428,6 +453,81 @@ const VoiceCallOverlay = () => {
 		);
 	};
 
+	const remoteAudioElements = remoteParticipants.map((participant) => (
+		<StreamAudio key={`remote-audio-${participant.userId || participant.user?._id || "participant"}`} stream={participant.stream} />
+	));
+
+	if (isMinimized && canMinimizeCall) {
+		return createPortal(
+			<div className='pointer-events-none fixed inset-x-0 bottom-0 z-[205] flex justify-end px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.65rem)] sm:px-5'>
+				<div className='pointer-events-auto w-[min(90vw,360px)] rounded-[22px] border border-white/12 bg-[linear-gradient(145deg,rgba(5,12,25,0.96),rgba(9,18,34,0.94))] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.62)] backdrop-blur-xl'>
+					<div className='flex items-center gap-3'>
+						<div className='h-11 w-11 shrink-0 overflow-hidden rounded-full ring-1 ring-white/20'>
+							<img src={leadAvatar} alt={title} className='h-full w-full object-cover' />
+						</div>
+						<div className='min-w-0 flex-1'>
+							<p className='truncate text-sm font-semibold text-white'>{title}</p>
+							<p className='mt-0.5 truncate text-xs text-slate-300'>{statusLabel}</p>
+						</div>
+						<button
+							type='button'
+							onClick={handleToggleMinimized}
+							className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.05] text-slate-100 transition hover:bg-white/[0.1]'
+							aria-label='Restore call window'
+							title='Restore call window'
+						>
+							<IoChevronUp className='h-5 w-5' />
+						</button>
+					</div>
+
+					<div className='mt-3 flex items-center justify-end gap-2'>
+						<button
+							type='button'
+							onClick={() => void handleSwitchMediaType()}
+							disabled={isSwitchingMedia}
+							className='inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-55'
+							aria-label={switchMediaLabel}
+							title={switchMediaLabel}
+						>
+							{isSwitchingMedia ? (
+								<span className='loading loading-spinner loading-xs'></span>
+							) : isVideoCall ? (
+								<HiMiniPhone className='h-4.5 w-4.5' />
+							) : (
+								<HiMiniVideoCamera className='h-4.5 w-4.5' />
+							)}
+						</button>
+						<button
+							type='button'
+							onClick={toggleMute}
+							className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 transition ${
+								callState.isMuted
+									? "bg-amber-500/14 text-amber-100 hover:bg-amber-500/20"
+									: "bg-white/[0.04] text-slate-100 hover:bg-white/[0.08]"
+							}`}
+							aria-label={callState.isMuted ? "Unmute microphone" : "Mute microphone"}
+							title={callState.isMuted ? "Unmute microphone" : "Mute microphone"}
+						>
+							{callState.isMuted ? <IoMicOffOutline className='h-4.5 w-4.5' /> : <IoMicOutline className='h-4.5 w-4.5' />}
+						</button>
+						<button
+							type='button'
+							onClick={endCurrentCall}
+							className='inline-flex h-11 w-11 items-center justify-center rounded-full bg-rose-500 text-white shadow-[0_14px_28px_rgba(244,63,94,0.3)] transition hover:bg-rose-400'
+							aria-label={isGroupCall ? "Leave or end group call" : "End call"}
+							title={isGroupCall ? "Leave or end group call" : "End call"}
+						>
+							<HiMiniPhoneXMark className='h-5 w-5' />
+						</button>
+					</div>
+				</div>
+				{remoteAudioElements}
+				<audio ref={ringtoneAudioRef} src={callRingtone} loop preload='auto' />
+			</div>,
+			document.body
+		);
+	}
+
 	return createPortal(
 		<div className='fixed inset-x-0 top-0 z-[200] flex h-[var(--app-viewport-height)] items-center justify-center bg-slate-950/78 px-3 py-[calc(env(safe-area-inset-bottom,0px)+0.6rem)] backdrop-blur-md sm:px-4 sm:py-4'>
 			<div
@@ -435,9 +535,42 @@ const VoiceCallOverlay = () => {
 					isVideoCall ? "max-w-5xl" : "max-w-xl"
 				}`}
 			>
-				<p className='text-[11px] font-semibold uppercase tracking-[0.3em] text-sky-300/70'>
-					{isGroupCall ? (isVideoCall ? "Group video call" : "Group voice call") : isVideoCall ? "Video call" : "Voice call"}
-				</p>
+				<div className='flex items-center justify-between gap-2'>
+					<p className='text-[11px] font-semibold uppercase tracking-[0.3em] text-sky-300/70'>
+						{isGroupCall ? (isVideoCall ? "Group video call" : "Group voice call") : isVideoCall ? "Video call" : "Voice call"}
+					</p>
+					<div className='flex items-center gap-2'>
+						{callState.phase !== "incoming" ? (
+							<button
+								type='button'
+								onClick={() => void handleSwitchMediaType()}
+								disabled={isSwitchingMedia}
+								className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-55'
+								aria-label={switchMediaLabel}
+								title={switchMediaLabel}
+							>
+								{isSwitchingMedia ? (
+									<span className='loading loading-spinner loading-xs'></span>
+								) : isVideoCall ? (
+									<HiMiniPhone className='h-4.5 w-4.5' />
+								) : (
+									<HiMiniVideoCamera className='h-4.5 w-4.5' />
+								)}
+							</button>
+						) : null}
+						{canMinimizeCall ? (
+							<button
+								type='button'
+								onClick={handleToggleMinimized}
+								className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-100 transition hover:bg-white/[0.08]'
+								aria-label='Minimize call window'
+								title='Minimize call window'
+							>
+								<IoChevronDown className='h-5 w-5' />
+							</button>
+						) : null}
+					</div>
+				</div>
 
 				{isVideoCall ? (
 					<div className='mt-4 flex min-h-0 flex-1'>
@@ -628,6 +761,22 @@ const VoiceCallOverlay = () => {
 									<HiOutlineUserPlus className='h-5 w-5' />
 								</button>
 							) : null}
+							<button
+								type='button'
+								onClick={() => void handleSwitchMediaType()}
+								disabled={isSwitchingMedia}
+								className='inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-55'
+								aria-label={switchMediaLabel}
+								title={switchMediaLabel}
+							>
+								{isSwitchingMedia ? (
+									<span className='loading loading-spinner loading-xs'></span>
+								) : isVideoCall ? (
+									<HiMiniPhone className='h-5 w-5' />
+								) : (
+									<HiMiniVideoCamera className='h-5 w-5' />
+								)}
+							</button>
 							{isVideoCall ? (
 								<button
 									type='button'
@@ -760,9 +909,7 @@ const VoiceCallOverlay = () => {
 					</div>
 				) : null}
 
-				{remoteParticipants.map((participant) => (
-					<StreamAudio key={`remote-audio-${participant.userId || participant.user?._id || "participant"}`} stream={participant.stream} />
-				))}
+				{remoteAudioElements}
 				<audio ref={ringtoneAudioRef} src={callRingtone} loop preload='auto' />
 			</div>
 		</div>,
