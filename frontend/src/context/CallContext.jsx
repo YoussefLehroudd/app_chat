@@ -941,13 +941,34 @@ export const CallContextProvider = ({ children }) => {
 		return stream;
 	};
 
+	const getConnectionSenderByKind = (connection, kind) => {
+		if (!connection || !kind) return null;
+		return connection.getSenders().find((sender) => sender.track?.kind === kind) || null;
+	};
+
+	const getConnectionTransceiverByKind = (connection, kind) => {
+		if (!connection || !kind || typeof connection.getTransceivers !== "function") return null;
+		return (
+			connection.getTransceivers().find((transceiver) => {
+				const senderKind = transceiver.sender?.track?.kind || null;
+				const receiverKind = transceiver.receiver?.track?.kind || null;
+				return senderKind === kind || receiverKind === kind;
+			}) || null
+		);
+	};
+
+	const ensureTransceiverCanSend = (transceiver) => {
+		if (!transceiver) return;
+		if (transceiver.direction === "recvonly" || transceiver.direction === "inactive") {
+			transceiver.direction = "sendrecv";
+		}
+	};
+
 	const replaceOutgoingVideoTrack = async (nextTrack) => {
 		const replaceOperations = [];
 
 		peerConnectionsRef.current.forEach((connection) => {
-			const videoSender = connection
-				.getSenders()
-				.find((sender) => sender.track?.kind === "video" || sender.track === null);
+			const videoSender = getConnectionSenderByKind(connection, "video");
 			if (!videoSender) return;
 			replaceOperations.push(videoSender.replaceTrack(nextTrack || null));
 		});
@@ -963,27 +984,38 @@ export const CallContextProvider = ({ children }) => {
 		const replaceOperations = [];
 
 		peerConnectionsRef.current.forEach((connection) => {
-			const senders = connection.getSenders();
-			const audioSender = senders.find((sender) => sender.track?.kind === "audio");
-			const videoSender = senders.find((sender) => sender.track?.kind === "video");
+			const audioSender = getConnectionSenderByKind(connection, "audio");
+			const videoSender = getConnectionSenderByKind(connection, "video");
+			const audioTransceiver = getConnectionTransceiverByKind(connection, "audio");
+			const videoTransceiver = getConnectionTransceiverByKind(connection, "video");
 
 			if (audioSender) {
 				replaceOperations.push(audioSender.replaceTrack(nextAudioTrack));
 			} else if (nextAudioTrack) {
-				try {
-					connection.addTrack(nextAudioTrack, nextStream);
-				} catch (error) {
-					console.error("Error adding audio track to peer connection:", error);
+				if (audioTransceiver?.sender) {
+					ensureTransceiverCanSend(audioTransceiver);
+					replaceOperations.push(audioTransceiver.sender.replaceTrack(nextAudioTrack));
+				} else {
+					try {
+						connection.addTrack(nextAudioTrack, nextStream);
+					} catch (error) {
+						console.error("Error adding audio track to peer connection:", error);
+					}
 				}
 			}
 
 			if (videoSender) {
 				replaceOperations.push(videoSender.replaceTrack(nextVideoTrack));
 			} else if (nextVideoTrack) {
-				try {
-					connection.addTrack(nextVideoTrack, nextStream);
-				} catch (error) {
-					console.error("Error adding video track to peer connection:", error);
+				if (videoTransceiver?.sender) {
+					ensureTransceiverCanSend(videoTransceiver);
+					replaceOperations.push(videoTransceiver.sender.replaceTrack(nextVideoTrack));
+				} else {
+					try {
+						connection.addTrack(nextVideoTrack, nextStream);
+					} catch (error) {
+						console.error("Error adding video track to peer connection:", error);
+					}
 				}
 			}
 		});
@@ -1097,6 +1129,63 @@ export const CallContextProvider = ({ children }) => {
 		}
 	};
 
+	const syncLocalStreamForMediaType = async (nextMediaType) => {
+		const normalizedMediaType = nextMediaType === "video" ? "video" : "voice";
+		const currentLocalStream = localStreamRef.current;
+		const currentHasAudio = Boolean(currentLocalStream?.getAudioTracks?.().length);
+		const currentHasVideo = Boolean(currentLocalStream?.getVideoTracks?.().length);
+		const isCurrentlyScreenSharing = Boolean(callStateRef.current.isScreenSharing);
+
+		if (normalizedMediaType === "video" && currentHasAudio && currentHasVideo && !isCurrentlyScreenSharing) {
+			updateCallState((currentState) => ({
+				...currentState,
+				mediaType: "video",
+			}));
+			return currentLocalStream;
+		}
+
+		if (normalizedMediaType === "voice" && currentHasAudio && !currentHasVideo && !isCurrentlyScreenSharing) {
+			updateCallState((currentState) => ({
+				...currentState,
+				mediaType: "voice",
+				isScreenSharing: false,
+			}));
+			return currentLocalStream;
+		}
+
+		if (normalizedMediaType === "voice" && isCurrentlyScreenSharing) {
+			await stopScreenShare({ preserveCamera: false });
+		}
+
+		const replacementStream = await getUserMediaStream(normalizedMediaType, {
+			allowAudioFallback: normalizedMediaType === "video",
+		});
+
+		if (callStateRef.current.isMuted) {
+			replacementStream.getAudioTracks().forEach((track) => {
+				track.enabled = false;
+			});
+		}
+
+		localStreamRef.current = replacementStream;
+		setLocalStream(replacementStream);
+		cameraStreamRef.current = normalizedMediaType === "video" ? replacementStream : null;
+
+		await replaceOutgoingMediaTracks(replacementStream);
+
+		if (currentLocalStream && currentLocalStream !== replacementStream) {
+			stopStreamTracks(currentLocalStream);
+		}
+
+		updateCallState((currentState) => ({
+			...currentState,
+			mediaType: normalizedMediaType,
+			isScreenSharing: normalizedMediaType === "video" ? currentState.isScreenSharing : false,
+		}));
+
+		return replacementStream;
+	};
+
 	const switchCallMediaType = async (nextMediaType) => {
 		const normalizedMediaType = nextMediaType === "video" ? "video" : "voice";
 		const activeCall = callStateRef.current;
@@ -1115,34 +1204,9 @@ export const CallContextProvider = ({ children }) => {
 		}
 
 		setIsSwitchingMedia(true);
-		let nextStream = null;
-		const previousLocalStream = localStreamRef.current;
-		const previousCameraStream = cameraStreamRef.current;
 
 		try {
-			if (normalizedMediaType === "voice" && callStateRef.current.isScreenSharing) {
-				await stopScreenShare({ preserveCamera: false });
-			}
-
-			nextStream = await getUserMediaStream(normalizedMediaType, {
-				allowAudioFallback: normalizedMediaType === "video",
-			});
-
-			if (callStateRef.current.isMuted) {
-				nextStream.getAudioTracks().forEach((track) => {
-					track.enabled = false;
-				});
-			}
-
-			if (normalizedMediaType === "video") {
-				cameraStreamRef.current = nextStream;
-			} else {
-				cameraStreamRef.current = null;
-			}
-
-			localStreamRef.current = nextStream;
-			setLocalStream(nextStream);
-			await replaceOutgoingMediaTracks(nextStream);
+			const nextStream = await syncLocalStreamForMediaType(normalizedMediaType);
 
 			const currentUserId = authUserRef.current?._id || "";
 			const activeParticipants = (callStateRef.current.participants || []).filter(
@@ -1157,7 +1221,6 @@ export const CallContextProvider = ({ children }) => {
 				const targetUser =
 					participant.user || participantDirectoryRef.current.get(participant.userId) || { _id: participant.userId };
 				try {
-					// eslint-disable-next-line no-await-in-loop
 					await createOfferForTarget(targetUser, {
 						callId: callStateRef.current.callId,
 						mediaType: normalizedMediaType,
@@ -1167,30 +1230,13 @@ export const CallContextProvider = ({ children }) => {
 				}
 			}
 
-			updateCallState((currentState) => ({
-				...currentState,
-				mediaType: normalizedMediaType,
-				isScreenSharing: normalizedMediaType === "video" ? currentState.isScreenSharing : false,
-			}));
-
-			if (previousLocalStream && previousLocalStream !== nextStream) {
-				stopStreamTracks(previousLocalStream);
-			}
-
 			if (normalizedMediaType === "video" && nextStream.getVideoTracks().length === 0) {
-				toast("Camera unavailable. Staying on voice only.");
+				toast("Camera unavailable. Joined video call with microphone only.");
 			}
 
 			return true;
 		} catch (error) {
 			console.error("Error switching call media type:", error);
-			if (nextStream) {
-				stopStreamTracks(nextStream);
-			}
-
-			localStreamRef.current = previousLocalStream;
-			cameraStreamRef.current = previousCameraStream;
-			setLocalStream(previousLocalStream || null);
 			toast.error(error.message || `Unable to switch to ${normalizedMediaType} call`);
 			return false;
 		} finally {
@@ -1885,28 +1931,19 @@ export const CallContextProvider = ({ children }) => {
 			}
 
 			try {
-				if (!localStreamRef.current) {
-					// Wait briefly for `getUserMedia` to settle before dropping the offer.
-					for (let attempt = 0; attempt < 18 && !localStreamRef.current; attempt += 1) {
-						if (callStateRef.current.callId !== callId) {
-							return;
-						}
-						// eslint-disable-next-line no-await-in-loop
-						await wait(80);
-					}
-				}
+				const negotiatedMediaType = mediaType === "video" ? "video" : "voice";
+				registerParticipant(caller);
+				const connection = createPeerConnection(callerId, {
+					callId,
+					mediaType: negotiatedMediaType,
+				});
+				await connection.setRemoteDescription(new RTCSessionDescription(offer));
+				await flushPendingIceCandidates(callerId);
+				await syncLocalStreamForMediaType(negotiatedMediaType);
 
 				if (!localStreamRef.current || callStateRef.current.callId !== callId) {
 					return;
 				}
-
-				registerParticipant(caller);
-				const connection = createPeerConnection(callerId, {
-					callId,
-					mediaType,
-				});
-				await connection.setRemoteDescription(new RTCSessionDescription(offer));
-				await flushPendingIceCandidates(callerId);
 				const answer = await connection.createAnswer();
 				await connection.setLocalDescription(answer);
 
@@ -1915,14 +1952,14 @@ export const CallContextProvider = ({ children }) => {
 					callId,
 					answer,
 					responder: authUserRef.current,
-					mediaType,
+					mediaType: negotiatedMediaType,
 				});
 
 				updateCallState((currentState) => ({
 					...currentState,
 					phase: currentState.phase === "active" ? "active" : "connecting",
-					mediaType: mediaType === "video" ? "video" : "voice",
-					isScreenSharing: mediaType === "video" ? currentState.isScreenSharing : false,
+					mediaType: negotiatedMediaType,
+					isScreenSharing: negotiatedMediaType === "video" ? currentState.isScreenSharing : false,
 				}));
 			} catch (error) {
 				console.error("Error handling call offer:", error);
