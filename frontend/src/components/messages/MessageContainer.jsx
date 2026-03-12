@@ -252,13 +252,7 @@ const MessageContainer = () => {
 									></span>
 								</button>
 
-								<div
-									className={`min-w-0 flex-1 ${
-										!isGroupConversation && selectedConversation?.username ? "cursor-copy" : ""
-									}`}
-									data-copy-user={!isGroupConversation ? selectedConversation?.username : undefined}
-									title={!isGroupConversation && selectedConversation?.username ? "Click to copy username" : undefined}
-								>
+								<div className='min-w-0 flex-1'>
 									<div className='flex flex-wrap items-center gap-2'>
 										<p className='truncate text-[15px] font-semibold text-slate-50 md:text-lg'>
 											{selectedConversation.fullName}
@@ -271,7 +265,11 @@ const MessageContainer = () => {
 											<>
 												<VerifiedBadge user={selectedConversation} compact />
 												<DeveloperBadge user={selectedConversation} compact className='hidden sm:inline-flex' />
-												<span className='hidden rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-300 sm:inline-flex'>
+												<span
+													className='hidden cursor-pointer rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-medium text-slate-300 sm:inline-flex'
+													data-copy-user={selectedConversation?.username || undefined}
+													title={selectedConversation?.username ? "Click to copy username" : undefined}
+												>
 													@{selectedConversation.username}
 												</span>
 											</>

@@ -400,9 +400,15 @@ const VoiceCallOverlay = () => {
 		setIsDraggingFloating(false);
 	};
 
+	const isFloatingDragExcludedTarget = (target) => {
+		if (!(target instanceof Element)) return false;
+		return Boolean(target.closest("button, a, input, textarea, select, [role='button'], [data-floating-no-drag='true']"));
+	};
+
 	const startFloatingDrag = (event, options = {}) => {
 		if (!canMinimizeCall) return;
 		if (event.pointerType === "mouse" && event.button !== 0) return;
+		if (options.ignoreInteractiveTargets && isFloatingDragExcludedTarget(event.target)) return;
 
 		const container = floatingContainerRef.current;
 		if (!container) return;
@@ -663,7 +669,8 @@ const VoiceCallOverlay = () => {
 					<div
 						ref={floatingContainerRef}
 						style={floatingWidgetStyle}
-						className={`pointer-events-auto absolute w-[min(90vw,360px)] rounded-[22px] border border-white/12 bg-[linear-gradient(145deg,rgba(5,12,25,0.96),rgba(9,18,34,0.94))] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.62)] backdrop-blur-xl transition ${
+						onPointerDown={(event) => startFloatingDrag(event, { ignoreInteractiveTargets: true })}
+						className={`pointer-events-auto absolute w-[min(90vw,360px)] touch-none rounded-[22px] border border-white/12 bg-[linear-gradient(145deg,rgba(5,12,25,0.96),rgba(9,18,34,0.94))] p-3 shadow-[0_24px_60px_rgba(2,6,23,0.62)] backdrop-blur-xl transition ${
 							hasFloatingPosition ? "opacity-100" : "opacity-0"
 						}`}
 					>
