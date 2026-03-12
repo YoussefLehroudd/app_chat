@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import "./App.css";
 import Home from "./pages/home/Home";
@@ -13,6 +13,7 @@ import { useAuthContext } from "./context/AuthContext";
 function App() {
 	const { authUser } = useAuthContext();
 	const location = useLocation();
+	const [isMobileKeyboardOpen, setIsMobileKeyboardOpen] = useState(false);
 	const isAuthRoute = location.pathname === "/login" || location.pathname === "/signup";
 	const authSwitchFrom = location.state?.authSwitchFrom;
 	const authSwitchDirection =
@@ -23,8 +24,11 @@ function App() {
 				: "neutral";
 	const isDeveloperRoute = location.pathname.startsWith("/developer");
 	const isWorkbenchRoute = location.pathname === "/profile" || location.pathname.startsWith("/developer");
-	const mobileViewportShell =
-		"h-[var(--app-viewport-height)] items-start justify-center overflow-x-hidden overflow-y-auto px-1.5 pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)]";
+	const mobileViewportShell = `h-[var(--app-viewport-height)] items-start justify-center overflow-x-hidden overflow-y-auto px-1.5 ${
+		isMobileKeyboardOpen
+			? "pt-1 pb-1"
+			: "pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)]"
+	}`;
 	const mobileDesktopShell = "sm:h-dvh sm:items-center sm:overflow-hidden sm:p-4";
 	const appShellClass = isAuthRoute
 		? `box-border flex min-h-[var(--app-viewport-height)] ${mobileViewportShell} sm:px-4 sm:py-4 lg:px-6 lg:py-6`
@@ -46,9 +50,16 @@ function App() {
 
 		const root = document.documentElement;
 		const updateViewportHeight = () => {
+			const layoutViewportHeight = window.innerHeight;
 			const viewportHeight = window.visualViewport?.height || window.innerHeight;
+			const viewportOffsetTop = window.visualViewport?.offsetTop || 0;
 			if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return;
 			root.style.setProperty("--app-viewport-height", `${Math.round(viewportHeight)}px`);
+
+			const keyboardHeight = Math.max(0, layoutViewportHeight - viewportHeight - viewportOffsetTop);
+			const keyboardOpen = window.innerWidth < 1024 && keyboardHeight > 120;
+			setIsMobileKeyboardOpen(keyboardOpen);
+			root.setAttribute("data-mobile-keyboard", keyboardOpen ? "open" : "closed");
 		};
 
 		updateViewportHeight();
@@ -62,6 +73,7 @@ function App() {
 			window.removeEventListener("orientationchange", updateViewportHeight);
 			window.visualViewport?.removeEventListener("resize", updateViewportHeight);
 			window.visualViewport?.removeEventListener("scroll", updateViewportHeight);
+			root.setAttribute("data-mobile-keyboard", "closed");
 		};
 	}, []);
 

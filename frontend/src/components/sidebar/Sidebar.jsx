@@ -238,54 +238,56 @@ const Sidebar = () => {
 
 	return (
 		<aside className='flex h-full min-h-0 w-full flex-col border-r border-white/10 bg-[linear-gradient(180deg,rgba(7,12,25,0.92),rgba(3,8,20,0.84))] p-3 md:w-[390px] lg:w-[430px] lg:p-5 xl:w-[460px]'>
-			<div className='mb-2'>
-				<div className='flex items-start justify-between gap-4'>
-					<p className='pt-1 text-[11px] font-semibold uppercase tracking-[0.34em] text-sky-300/70'>Chat Space</p>
-					<div className='rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200'>
-						{onlineCount} online
+			<div className='sidebar-mobile-collapsible'>
+				<div className='mb-2'>
+					<div className='flex items-start justify-between gap-4'>
+						<p className='pt-1 text-[11px] font-semibold uppercase tracking-[0.34em] text-sky-300/70'>Chat Space</p>
+						<div className='rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200'>
+							{onlineCount} online
+						</div>
 					</div>
+				</div>
+
+				<StoriesBar
+					storyGroups={storyGroups}
+					ownStoryGroup={ownStoryGroup}
+					loading={loadingStories}
+					authUser={authUser}
+					onAddStory={() => setShowStoryComposer(true)}
+					onOpenStory={handleOpenStoryViewer}
+				/>
+
+				<div className='mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0'>
+					{FILTERS.map((filter) => {
+						const isActive = activeFilter === filter.id;
+
+						return (
+							<button
+								key={filter.id}
+								type='button'
+								onClick={() => setActiveFilter(filter.id)}
+								className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold transition sm:px-4 sm:py-2 sm:text-xs ${
+									isActive
+										? "bg-sky-500 text-white shadow-[0_12px_24px_rgba(14,165,233,0.24)]"
+										: "border border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/[0.06]"
+								}`}
+							>
+								{filter.label}
+							</button>
+						);
+					})}
+					<button
+						type='button'
+						onClick={() => setShowCreateGroupModal(true)}
+						className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
+					>
+						<HiOutlineUserGroup className='h-3.5 w-3.5 sm:h-4 sm:w-4' />
+						<span>New group</span>
+					</button>
 				</div>
 			</div>
 
-			<StoriesBar
-				storyGroups={storyGroups}
-				ownStoryGroup={ownStoryGroup}
-				loading={loadingStories}
-				authUser={authUser}
-				onAddStory={() => setShowStoryComposer(true)}
-				onOpenStory={handleOpenStoryViewer}
-			/>
-
-			<div className='mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0'>
-				{FILTERS.map((filter) => {
-					const isActive = activeFilter === filter.id;
-
-					return (
-						<button
-							key={filter.id}
-							type='button'
-							onClick={() => setActiveFilter(filter.id)}
-							className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold transition sm:px-4 sm:py-2 sm:text-xs ${
-								isActive
-									? "bg-sky-500 text-white shadow-[0_12px_24px_rgba(14,165,233,0.24)]"
-									: "border border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/20 hover:bg-white/[0.06]"
-							}`}
-						>
-							{filter.label}
-						</button>
-					);
-				})}
-				<button
-					type='button'
-					onClick={() => setShowCreateGroupModal(true)}
-					className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
-				>
-					<HiOutlineUserGroup className='h-3.5 w-3.5 sm:h-4 sm:w-4' />
-					<span>New group</span>
-				</button>
-			</div>
-
-			<div className='mb-2.5 mt-4 flex items-center justify-between gap-3'>
+			<div className='sidebar-mobile-heading mb-2.5 mt-4 flex items-center justify-between gap-3'>
 				<p className='text-xs font-semibold uppercase tracking-[0.28em] text-slate-500'>
 					{activeFilter === "calls" ? "Calls" : "Recent chats"}
 				</p>
@@ -311,7 +313,7 @@ const Sidebar = () => {
 				/>
 			)}
 
-			<div className='sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pt-2'>
+			<div className='sidebar-mobile-bottom sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pt-2'>
 				<div className='flex items-center gap-2.5'>
 					<div className='min-w-0 flex-1'>
 						<SearchInput

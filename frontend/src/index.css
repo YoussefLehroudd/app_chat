@@ -44,6 +44,14 @@ body {
 	color: var(--auth-text);
 }
 
+html[data-mobile-keyboard="closed"] {
+	--mobile-keyboard-open: 0;
+}
+
+html[data-mobile-keyboard="open"] {
+	--mobile-keyboard-open: 1;
+}
+
 /* dark mode looking scrollbar */
 ::-webkit-scrollbar {
 	width: 8px;
@@ -353,6 +361,22 @@ body {
 		min-height: 5rem;
 		padding: 0.85rem 0.9rem;
 		border-radius: 18px;
+	}
+}
+
+@media (max-width: 767px) {
+	html[data-mobile-keyboard="open"] .sidebar-mobile-collapsible {
+		display: none;
+	}
+
+	html[data-mobile-keyboard="open"] .sidebar-mobile-heading {
+		margin-top: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	html[data-mobile-keyboard="open"] .sidebar-mobile-bottom {
+		margin-top: 0.45rem;
+		padding-top: 0.45rem;
 	}
 }
 
