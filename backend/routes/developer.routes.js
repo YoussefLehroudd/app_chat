@@ -1,6 +1,7 @@
 import express from "express";
 import protectRoute from "../middleware/protectRoute.js";
 import requireDeveloper from "../middleware/requireDeveloper.js";
+import { avatarUpload } from "../utils/cloudinary.js";
 import {
 	deleteDeveloperGroup,
 	deleteDeveloperGroupMessage,
@@ -9,6 +10,7 @@ import {
 	getDeveloperGroups,
 	getDeveloperOverview,
 	getDeveloperUsers,
+	updateDeveloperUserData,
 	updateDeveloperUserArchive,
 	updateDeveloperUserBan,
 	updateDeveloperUserPermissions,
@@ -43,6 +45,7 @@ router.patch("/groups/:id", updateDeveloperGroupSettings);
 router.post("/groups/:id/members", addDeveloperGroupMembers);
 router.patch("/groups/:id/members/:memberId/role", updateDeveloperGroupMemberRole);
 router.patch("/users/:id/role", updateDeveloperUserRole);
+router.patch("/users/:id/profile", avatarUpload.single("profilePic"), updateDeveloperUserData);
 router.patch("/users/:id/permissions", updateDeveloperUserPermissions);
 router.patch("/users/:id/verify", updateDeveloperUserVerification);
 router.patch("/users/:id/archive", updateDeveloperUserArchive);

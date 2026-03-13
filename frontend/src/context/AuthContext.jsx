@@ -19,6 +19,7 @@ const normalizeAuthUser = (user) => {
 		developerPermissions: {
 			fullAccess: Boolean(user.developerPermissions?.fullAccess),
 			manageUsers: Boolean(user.developerPermissions?.manageUsers),
+			editUserData: Boolean(user.developerPermissions?.editUserData),
 			manageGroups: Boolean(user.developerPermissions?.manageGroups),
 			manageReports: Boolean(user.developerPermissions?.manageReports),
 			deleteGroups: Boolean(user.developerPermissions?.deleteGroups),

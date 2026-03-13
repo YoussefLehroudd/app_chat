@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs";
 import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import { disconnectUserSockets, getUserSocketIds, io } from "../socket/socket.js";
 import { createAuditLog } from "../utils/auditLogs.js";
@@ -19,6 +20,8 @@ import { deleteMessageEverywhere } from "../utils/messageModeration.js";
 import { DEVELOPER_ROLE, USER_ROLE } from "../utils/roles.js";
 
 const VALID_ROLES = new Set([USER_ROLE, DEVELOPER_ROLE]);
+const VALID_GENDERS = new Set(["male", "female"]);
+const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
 const DEVELOPER_GROUP_MESSAGE_LIMIT = 80;
 const GROUP_ROLE_ORDER = {
 	[CONVERSATION_MEMBER_ROLES.OWNER]: 0,
@@ -160,6 +163,19 @@ const normalizeBanReason = (reason) => {
 
 	const trimmedReason = reason.trim();
 	return trimmedReason ? trimmedReason.slice(0, 250) : null;
+};
+
+const normalizeOptionalText = (value, maxLength = null) => {
+	if (typeof value !== "string") {
+		return null;
+	}
+
+	const trimmedValue = value.trim();
+	if (!trimmedValue) {
+		return "";
+	}
+
+	return maxLength ? trimmedValue.slice(0, maxLength) : trimmedValue;
 };
 
 const ensurePrimaryDeveloperProtection = (actor, targetUser) => {
@@ -599,6 +615,162 @@ export const updateDeveloperUserRole = async (req, res) => {
 			return res.status(error.statusCode).json({ error: error.message });
 		}
 		return handleDeveloperError(error, res, "updateDeveloperUserRole");
+	}
+};
+
+export const updateDeveloperUserData = async (req, res) => {
+	try {
+		ensureDeveloperPermission(
+			req.user,
+			"editUserData",
+			"You do not have permission to edit user profile data"
+		);
+
+		const { id } = req.params;
+		const existingUser = await prisma.user.findUnique({
+			where: { id },
+			select: {
+				...developerUserSelect,
+				password: true,
+			},
+		});
+
+		if (!existingUser) {
+			return res.status(404).json({ error: "User not found" });
+		}
+
+		ensurePrimaryDeveloperProtection(req.user, existingUser);
+
+		const nextFullName =
+			typeof req.body?.fullName === "string" ? req.body.fullName.trim().slice(0, 80) : existingUser.fullName;
+		if (!nextFullName) {
+			return res.status(400).json({ error: "Full name is required" });
+		}
+
+		const nextUsername =
+			typeof req.body?.username === "string" ? req.body.username.trim() : existingUser.username;
+		if (!nextUsername) {
+			return res.status(400).json({ error: "Username is required" });
+		}
+		if (!USERNAME_PATTERN.test(nextUsername)) {
+			return res.status(400).json({
+				error: "Username must be 3-20 characters and use only letters, numbers, or _",
+			});
+		}
+
+		if (nextUsername !== existingUser.username) {
+			const usernameOwner = await prisma.user.findUnique({
+				where: { username: nextUsername },
+				select: { id: true },
+			});
+
+			if (usernameOwner && usernameOwner.id !== existingUser.id) {
+				return res.status(400).json({ error: "Username already exists" });
+			}
+		}
+
+		const nextGender =
+			typeof req.body?.gender === "string" && VALID_GENDERS.has(req.body.gender)
+				? req.body.gender
+				: existingUser.gender;
+
+		const nextBioCandidate = normalizeOptionalText(req.body?.bio, 700);
+		const nextBio = nextBioCandidate === null ? existingUser.bio ?? "" : nextBioCandidate;
+
+		const nextProfilePic = req.file?.path || existingUser.profilePic || "";
+
+		const nextPassword =
+			typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+		const confirmPassword =
+			typeof req.body?.confirmPassword === "string" ? req.body.confirmPassword : "";
+		const wantsPasswordChange = Boolean(nextPassword || confirmPassword);
+
+		if (wantsPasswordChange) {
+			if (!nextPassword || !confirmPassword) {
+				return res.status(400).json({ error: "Please fill both new password fields" });
+			}
+			if (nextPassword !== confirmPassword) {
+				return res.status(400).json({ error: "Passwords don't match" });
+			}
+			if (nextPassword.length < 6) {
+				return res.status(400).json({ error: "Password must be at least 6 characters" });
+			}
+		}
+
+		const updateData = {};
+		const changedFields = [];
+
+		if (nextFullName !== existingUser.fullName) {
+			updateData.fullName = nextFullName;
+			changedFields.push("fullName");
+		}
+
+		if (nextUsername !== existingUser.username) {
+			updateData.username = nextUsername;
+			changedFields.push("username");
+		}
+
+		if (nextGender !== existingUser.gender) {
+			updateData.gender = nextGender;
+			changedFields.push("gender");
+		}
+
+		if (nextBio !== (existingUser.bio ?? "")) {
+			updateData.bio = nextBio;
+			changedFields.push("bio");
+		}
+
+		if (nextProfilePic !== (existingUser.profilePic || "")) {
+			updateData.profilePic = nextProfilePic;
+			changedFields.push("profilePic");
+		}
+
+		if (wantsPasswordChange) {
+			const salt = await bcrypt.genSalt(10);
+			updateData.password = await bcrypt.hash(nextPassword, salt);
+			changedFields.push("password");
+		}
+
+		if (changedFields.length === 0) {
+			return res.status(200).json({
+				message: "No user changes to save",
+				user: toUserDto(existingUser, { includeDeveloperPermissions: true }),
+			});
+		}
+
+		const updatedUser = await prisma.user.update({
+			where: { id },
+			data: updateData,
+		});
+
+		await logDeveloperAudit(req.user, {
+			action: "USER_DATA_UPDATED",
+			entityType: "USER",
+			entityId: id,
+			entityLabel: `${updatedUser.fullName} (@${updatedUser.username})`,
+			summary: `${req.user.fullName} edited user profile data`,
+			details: {
+				changedFields,
+				passwordChanged: changedFields.includes("password"),
+			},
+		});
+		emitSessionUserUpdated(updatedUser);
+		emitPublicUserUpdated(updatedUser);
+		emitDeveloperWorkspaceRefresh({
+			action: "USER_DATA_UPDATED",
+			entityType: "USER",
+			entityId: id,
+		});
+
+		return res.status(200).json({
+			message: "User information updated successfully",
+			user: toUserDto(updatedUser, { includeDeveloperPermissions: true }),
+		});
+	} catch (error) {
+		if (error.statusCode) {
+			return res.status(error.statusCode).json({ error: error.message });
+		}
+		return handleDeveloperError(error, res, "updateDeveloperUserData");
 	}
 };
 

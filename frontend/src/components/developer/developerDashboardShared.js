@@ -31,6 +31,7 @@ const developerSections = [
 const developerPermissionDefinitions = [
 	{ key: "fullAccess", label: "Full access", description: "All moderation actions except permission grants." },
 	{ key: "manageUsers", label: "Manage users", description: "Roles, bans, archive, and verification." },
+	{ key: "editUserData", label: "Edit user data", description: "Profile, username, avatar, bio, and password changes." },
 	{ key: "manageGroups", label: "Manage groups", description: "Edit settings, members, and roles." },
 	{ key: "manageReports", label: "Manage reports", description: "Create and update moderation reports." },
 	{ key: "deleteGroups", label: "Delete groups", description: "Permanent group deletion." },

@@ -1,6 +1,7 @@
 const DEVELOPER_PERMISSION_KEYS = [
 	"fullAccess",
 	"manageUsers",
+	"editUserData",
 	"manageGroups",
 	"manageReports",
 	"deleteGroups",
@@ -11,6 +12,7 @@ const DEVELOPER_PERMISSION_KEYS = [
 const DEFAULT_DEVELOPER_PERMISSIONS = {
 	fullAccess: false,
 	manageUsers: false,
+	editUserData: false,
 	manageGroups: false,
 	manageReports: false,
 	deleteGroups: false,

@@ -3,7 +3,10 @@ import { Link, NavLink, Navigate, useLocation } from "react-router-dom";
 import toast from "react-hot-toast";
 import {
 	IoArrowBack,
+	IoCameraOutline,
 	IoCodeSlashOutline,
+	IoKeyOutline,
+	IoPersonOutline,
 	IoRefreshOutline,
 	IoSparklesOutline,
 } from "react-icons/io5";
@@ -21,6 +24,8 @@ import {
 } from "../../components/developer/developerDashboardShared";
 import { useAuthContext } from "../../context/AuthContext";
 import { useSocketContext } from "../../context/SocketContext";
+import getConversationFallbackAvatar from "../../utils/conversationAvatar";
+import { getAvatarUrl } from "../../utils/avatar";
 
 const getDeveloperSection = (pathname) => {
 	if (pathname.startsWith("/developer/users")) return "users";
@@ -30,6 +35,17 @@ const getDeveloperSection = (pathname) => {
 	if (pathname.startsWith("/developer/analytics")) return "analytics";
 	return null;
 };
+
+const createEditUserDraft = (user) => ({
+	fullName: user?.fullName || "",
+	username: user?.username || "",
+	gender: user?.gender || "male",
+	bio: user?.bio || "",
+	newPassword: "",
+	confirmPassword: "",
+	profilePicFile: null,
+	profilePicPreviewUrl: "",
+});
 
 const DeveloperDashboard = () => {
 	const { authUser } = useAuthContext();
@@ -162,6 +178,18 @@ const DeveloperDashboard = () => {
 	}, [actionKey, confirmState, modalState, selectedGroupId]);
 
 	useEffect(() => {
+		const previewUrl =
+			modalState?.type === "edit-user" ? modalState?.draft?.profilePicPreviewUrl || "" : "";
+		if (!previewUrl || !previewUrl.startsWith("blob:")) {
+			return undefined;
+		}
+
+		return () => {
+			URL.revokeObjectURL(previewUrl);
+		};
+	}, [modalState]);
+
+	useEffect(() => {
 		if (!selectedGroupId) return;
 		if (groups.some((group) => group._id === selectedGroupId)) return;
 		setSelectedGroupId("");
@@ -215,6 +243,7 @@ const DeveloperDashboard = () => {
 		[groups]
 	);
 	const canManageUsers = hasDeveloperPermission(authUser, "manageUsers");
+	const canEditUserData = hasDeveloperPermission(authUser, "editUserData");
 	const canManageGroups = hasDeveloperPermission(authUser, "manageGroups");
 	const canManageReports = hasDeveloperPermission(authUser, "manageReports");
 	const canDeleteGroups = hasDeveloperPermission(authUser, "deleteGroups");
@@ -665,6 +694,15 @@ const DeveloperDashboard = () => {
 		});
 	};
 
+	const openEditUserModal = (user) => {
+		if (!user || actionKey) return;
+		setModalState({
+			type: "edit-user",
+			user,
+			draft: createEditUserDraft(user),
+		});
+	};
+
 	const openDeveloperPermissionsModal = (user) => {
 		if (!user || actionKey) return;
 		setModalState({
@@ -673,6 +711,7 @@ const DeveloperDashboard = () => {
 			permissions: {
 				fullAccess: Boolean(user.developerPermissions?.fullAccess),
 				manageUsers: Boolean(user.developerPermissions?.manageUsers),
+				editUserData: Boolean(user.developerPermissions?.editUserData),
 				manageGroups: Boolean(user.developerPermissions?.manageGroups),
 				manageReports: Boolean(user.developerPermissions?.manageReports),
 				deleteGroups: Boolean(user.developerPermissions?.deleteGroups),
@@ -710,6 +749,37 @@ const DeveloperDashboard = () => {
 				  }
 				: currentModal
 		);
+	};
+
+	const updateEditUserDraft = (field, value) => {
+		setModalState((currentModal) =>
+			currentModal?.type === "edit-user"
+				? {
+						...currentModal,
+						draft: {
+							...currentModal.draft,
+							[field]: value,
+						},
+				  }
+				: currentModal
+		);
+	};
+
+	const updateEditUserProfilePic = (file) => {
+		setModalState((currentModal) => {
+			if (currentModal?.type !== "edit-user") {
+				return currentModal;
+			}
+
+			return {
+				...currentModal,
+				draft: {
+					...currentModal.draft,
+					profilePicFile: file || null,
+					profilePicPreviewUrl: file ? URL.createObjectURL(file) : "",
+				},
+			};
+		});
 	};
 
 	const handleModalConfirm = async () => {
@@ -754,6 +824,45 @@ const DeveloperDashboard = () => {
 			}
 		}
 
+		if (modalState.type === "edit-user") {
+			setActionKey(`edit-user-${modalState.user._id}`);
+
+			try {
+				const formData = new FormData();
+				formData.append("fullName", modalState.draft.fullName || "");
+				formData.append("username", modalState.draft.username || "");
+				formData.append("gender", modalState.draft.gender || "male");
+				formData.append("bio", modalState.draft.bio || "");
+
+				if (modalState.draft.newPassword || modalState.draft.confirmPassword) {
+					formData.append("newPassword", modalState.draft.newPassword || "");
+					formData.append("confirmPassword", modalState.draft.confirmPassword || "");
+				}
+
+				if (modalState.draft.profilePicFile) {
+					formData.append("profilePic", modalState.draft.profilePicFile);
+				}
+
+				const data = await fetchDeveloperJson(`/api/developer/users/${modalState.user._id}/profile`, {
+					method: "PATCH",
+					body: formData,
+				});
+
+				setUsers((currentUsers) =>
+					currentUsers.map((currentUser) =>
+						currentUser._id === modalState.user._id ? { ...currentUser, ...data.user } : currentUser
+					)
+				);
+				await loadDashboard({ silent: true });
+				toast.success(data.message);
+				succeeded = true;
+			} catch (error) {
+				toast.error(error.message);
+			} finally {
+				setActionKey("");
+			}
+		}
+
 		if (succeeded) {
 			setModalState(null);
 		}
@@ -764,11 +873,21 @@ const DeveloperDashboard = () => {
 			? `archive-user-${modalState.user._id}`
 			: modalState?.type === "ban-user"
 				? `ban-${modalState.user._id}`
+				: modalState?.type === "edit-user"
+					? `edit-user-${modalState.user._id}`
 				: modalState?.type === "developer-permissions"
 					? `developer-permissions-${modalState.user._id}`
 				: "";
 	const isModalBusy = Boolean(modalActionKey && actionKey === modalActionKey);
 	const isDeveloperPermissionsModal = modalState?.type === "developer-permissions";
+	const isEditUserModal = modalState?.type === "edit-user";
+	const isWideModal = isDeveloperPermissionsModal || isEditUserModal;
+	const editUserAvatar =
+		modalState?.type === "edit-user"
+			? modalState.draft?.profilePicPreviewUrl ||
+				getAvatarUrl(modalState.user?.profilePic, 144) ||
+				getConversationFallbackAvatar(modalState.user)
+			: "";
 	const confirmActionKey =
 		confirmState?.type === "delete-group"
 			? `delete-group-${confirmState.group._id}`
@@ -1051,8 +1170,10 @@ const DeveloperDashboard = () => {
 										handleVerificationToggle={handleVerificationToggle}
 										openBanModal={openBanModal}
 										openArchiveModal={openArchiveModal}
+										openEditUserModal={openEditUserModal}
 										openDeveloperPermissionsModal={openDeveloperPermissionsModal}
 										canManageUsers={canManageUsers}
+										canEditUserData={canEditUserData}
 										canManageDeveloperPermissions={canManageDeveloperPermissions}
 									/>
 								) : null}
@@ -1197,14 +1318,18 @@ const DeveloperDashboard = () => {
 			{modalState ? (
 				<div
 					className={`fixed inset-0 z-30 flex justify-center bg-slate-950/72 px-4 backdrop-blur-md ${
-						isDeveloperPermissionsModal
+						isWideModal
 							? "items-center overflow-y-auto py-4 lg:overflow-y-hidden lg:px-6"
 							: "items-start overflow-y-auto py-4 lg:items-center lg:py-6"
 					}`}
 				>
 					<div
 						className={`w-full rounded-[30px] border border-white/12 bg-[linear-gradient(180deg,rgba(7,13,26,0.98),rgba(10,18,34,0.94))] shadow-[0_28px_90px_rgba(2,6,23,0.6)] ${
-							isDeveloperPermissionsModal ? "max-w-6xl p-4 sm:p-5 lg:p-5" : "max-w-xl p-6 sm:p-7"
+							isDeveloperPermissionsModal
+								? "custom-scrollbar max-h-[calc(100dvh-1.5rem)] max-w-6xl overflow-y-auto p-4 sm:p-5 lg:max-h-[calc(100dvh-2rem)] lg:p-5"
+								: isEditUserModal
+									? "custom-scrollbar max-h-[calc(100dvh-1.5rem)] max-w-4xl overflow-y-auto p-4 sm:p-5 lg:max-h-[calc(100dvh-2rem)] lg:p-6"
+									: "max-w-xl p-6 sm:p-7"
 						}`}
 					>
 						<p className='text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500'>
@@ -1216,6 +1341,8 @@ const DeveloperDashboard = () => {
 									? modalState.shouldBan
 										? "Ban account"
 										: "Restore account"
+									: modalState.type === "edit-user"
+										? "Edit user data"
 									: modalState.type === "developer-permissions"
 										? "Developer permissions"
 									: ""}
@@ -1230,12 +1357,14 @@ const DeveloperDashboard = () => {
 									? modalState.shouldBan
 										? `Ban ${modalState.user.fullName}?`
 										: `Remove ban from ${modalState.user.fullName}?`
+									: modalState.type === "edit-user"
+										? `Edit ${modalState.user.fullName}`
 									: modalState.type === "developer-permissions"
 										? `Permissions for ${modalState.user.fullName}`
 									: ""}
 						</h3>
 
-						<p className={`mt-2 text-sm text-slate-400 ${isDeveloperPermissionsModal ? "leading-6" : "leading-7"}`}>
+						<p className={`mt-2 text-sm text-slate-400 ${isWideModal ? "leading-6" : "leading-7"}`}>
 							{modalState.type === "archive-user"
 								? modalState.shouldArchive
 									? `This moves @${modalState.user.username} to archive. Conversations, messages, and profile data stay saved and can be restored later.`
@@ -1246,6 +1375,8 @@ const DeveloperDashboard = () => {
 									? modalState.shouldBan
 										? `This blocks @${modalState.user.username} from logging in and disconnects any active session.`
 										: `This restores access for @${modalState.user.username}.`
+									: modalState.type === "edit-user"
+										? `Update @${modalState.user.username} profile details, username, avatar, bio, or password from one place. Role, badge, ban, and archive controls stay available on the user card.`
 									: modalState.type === "developer-permissions"
 										? `Primary developer can grant full access or specific moderation actions to @${modalState.user.username}.`
 									: ""}
@@ -1262,6 +1393,143 @@ const DeveloperDashboard = () => {
 									className='custom-scrollbar min-h-[132px] w-full rounded-[22px] border border-white/10 bg-slate-950/45 px-4 py-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 focus:bg-slate-950/60'
 								/>
 								<p className='mt-2 text-xs text-slate-500'>Saved for developer moderation only.</p>
+							</div>
+						) : null}
+
+						{modalState.type === "edit-user" ? (
+							<div className='mt-5 grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]'>
+								<div className='rounded-[24px] border border-sky-300/14 bg-[linear-gradient(145deg,rgba(14,165,233,0.1),rgba(15,23,42,0.55))] p-4'>
+									<div className='mx-auto h-24 w-24 overflow-hidden rounded-full ring-2 ring-sky-300/20'>
+										<img src={editUserAvatar} alt={modalState.user.fullName} className='h-full w-full object-cover' />
+									</div>
+									<div className='mt-4 text-center'>
+										<p className='text-sm font-semibold text-white'>{modalState.user.fullName}</p>
+										<p className='mt-1 text-xs text-slate-400'>@{modalState.user.username}</p>
+									</div>
+									<div className='mt-4 flex flex-wrap items-center justify-center gap-2'>
+										<span className='rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300'>
+											{modalState.user.role}
+										</span>
+										{modalState.user.isVerified ? (
+											<span className='rounded-full border border-sky-300/20 bg-sky-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-100'>
+												Verified
+											</span>
+										) : null}
+										{modalState.user.isArchived ? (
+											<span className='rounded-full border border-amber-300/20 bg-amber-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100'>
+												Archived
+											</span>
+										) : null}
+										{modalState.user.isBanned ? (
+											<span className='rounded-full border border-rose-300/20 bg-rose-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-100'>
+												Banned
+											</span>
+										) : null}
+									</div>
+									<label className='mt-5 flex cursor-pointer items-center justify-center gap-2 rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/16'>
+										<IoCameraOutline className='h-4 w-4' />
+										<span>{modalState.draft.profilePicFile ? "Change avatar" : "Upload avatar"}</span>
+										<input
+											type='file'
+											accept='image/*'
+											className='hidden'
+											onChange={(event) => updateEditUserProfilePic(event.target.files?.[0] || null)}
+										/>
+									</label>
+									<p className='mt-3 text-center text-xs leading-5 text-slate-400'>
+										{modalState.draft.profilePicFile
+											? modalState.draft.profilePicFile.name
+											: "Leave empty to keep the current profile photo."}
+									</p>
+								</div>
+
+								<div className='grid gap-4 md:grid-cols-2'>
+									<label className='block'>
+										<span className='mb-2 flex items-center gap-2 text-sm font-medium text-slate-200'>
+											<IoPersonOutline className='h-4 w-4 text-sky-200/80' />
+											Full name
+										</span>
+										<input
+											type='text'
+											value={modalState.draft.fullName}
+											onChange={(event) => updateEditUserDraft("fullName", event.target.value)}
+											maxLength={80}
+											className='h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/45 px-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 focus:bg-slate-950/60'
+										/>
+									</label>
+
+									<label className='block'>
+										<span className='mb-2 block text-sm font-medium text-slate-200'>Username / login</span>
+										<input
+											type='text'
+											value={modalState.draft.username}
+											onChange={(event) => updateEditUserDraft("username", event.target.value)}
+											maxLength={20}
+											className='h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/45 px-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 focus:bg-slate-950/60'
+										/>
+									</label>
+
+									<label className='block'>
+										<span className='mb-2 block text-sm font-medium text-slate-200'>Gender</span>
+										<select
+											value={modalState.draft.gender}
+											onChange={(event) => updateEditUserDraft("gender", event.target.value)}
+											className='h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/45 px-4 text-sm text-slate-100 outline-none transition focus:border-sky-400/40 focus:bg-slate-950/60'
+										>
+											<option value='male'>Male</option>
+											<option value='female'>Female</option>
+										</select>
+									</label>
+
+									<div className='rounded-[18px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300'>
+										<p className='font-semibold text-white'>Moderation state</p>
+										<p className='mt-1 text-xs leading-5 text-slate-400'>
+											Role, badge, ban, and archive stay available from the action buttons on the user card.
+										</p>
+									</div>
+
+									<label className='block md:col-span-2'>
+										<span className='mb-2 block text-sm font-medium text-slate-200'>Bio</span>
+										<textarea
+											rows='5'
+											value={modalState.draft.bio}
+											onChange={(event) => updateEditUserDraft("bio", event.target.value)}
+											maxLength={700}
+											className='custom-scrollbar min-h-[140px] w-full rounded-[22px] border border-white/10 bg-slate-950/45 px-4 py-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 focus:bg-slate-950/60'
+										/>
+										<p className='mt-2 text-right text-xs text-slate-500'>{modalState.draft.bio.length}/700</p>
+									</label>
+
+									<div className='rounded-[22px] border border-sky-300/12 bg-[linear-gradient(145deg,rgba(14,165,233,0.08),rgba(15,23,42,0.54))] p-4 md:col-span-2'>
+										<div className='flex items-center gap-2'>
+											<IoKeyOutline className='h-4.5 w-4.5 text-sky-200/85' />
+											<p className='text-sm font-semibold text-white'>Reset password</p>
+										</div>
+										<div className='mt-3 grid gap-3 md:grid-cols-2'>
+											<label className='block'>
+												<span className='mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400'>New password</span>
+												<input
+													type='password'
+													value={modalState.draft.newPassword}
+													onChange={(event) => updateEditUserDraft("newPassword", event.target.value)}
+													className='h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/50 px-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 focus:bg-slate-950/65'
+												/>
+											</label>
+											<label className='block'>
+												<span className='mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400'>Confirm password</span>
+												<input
+													type='password'
+													value={modalState.draft.confirmPassword}
+													onChange={(event) => updateEditUserDraft("confirmPassword", event.target.value)}
+													className='h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/50 px-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-400/40 focus:bg-slate-950/65'
+												/>
+											</label>
+										</div>
+										<p className='mt-3 text-xs leading-5 text-slate-400'>
+											Leave both password fields empty if you do not want to change the password.
+										</p>
+									</div>
+								</div>
 							</div>
 						) : null}
 
@@ -1374,7 +1642,7 @@ const DeveloperDashboard = () => {
 							</div>
 						) : null}
 
-						<div className={`flex flex-col-reverse gap-3 sm:flex-row sm:justify-end ${isDeveloperPermissionsModal ? "mt-4" : "mt-5"}`}>
+						<div className={`flex flex-col-reverse gap-3 sm:flex-row sm:justify-end ${isWideModal ? "mt-4" : "mt-5"}`}>
 							<button
 								type='button'
 								onClick={closeModal}
@@ -1391,6 +1659,8 @@ const DeveloperDashboard = () => {
 									(modalState.type === "archive-user" && !modalState.shouldArchive) ||
 									(modalState.type === "ban-user" && !modalState.shouldBan)
 										? "bg-gradient-to-r from-emerald-500 to-teal-500 shadow-[0_16px_34px_rgba(16,185,129,0.28)] hover:from-emerald-400 hover:to-teal-400"
+										: modalState.type === "edit-user" || modalState.type === "developer-permissions"
+											? "bg-gradient-to-r from-sky-500 to-cyan-500 shadow-[0_16px_34px_rgba(14,165,233,0.28)] hover:from-sky-400 hover:to-cyan-400"
 										: "bg-gradient-to-r from-rose-500 to-orange-500 shadow-[0_16px_34px_rgba(244,63,94,0.28)] hover:from-rose-400 hover:to-orange-400"
 								}`}
 							>
@@ -1404,6 +1674,8 @@ const DeveloperDashboard = () => {
 											? modalState.shouldBan
 												? "Ban user"
 												: "Remove ban"
+											: modalState.type === "edit-user"
+												? "Save user changes"
 											: modalState.type === "developer-permissions"
 												? "Save permissions"
 											: ""}
