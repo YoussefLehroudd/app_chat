@@ -16,6 +16,9 @@ cloudinary.config({
 	api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+export const MAX_STORY_UPLOAD_BYTES = 100 * 1024 * 1024;
+export const MAX_STORY_VIDEO_DURATION_SECONDS = 30;
+
 const storage = new CloudinaryStorage({
 	cloudinary,
 	params: {
@@ -67,6 +70,67 @@ const messageStorage = new CloudinaryStorage({
 	params: async (req, file) => resolveMessageUploadParams(file),
 });
 
+const parseStoryClipSeconds = (value, fallback = 0) => {
+	const parsedValue = Number(value);
+	if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+		return fallback;
+	}
+
+	return Math.round(parsedValue * 1000) / 1000;
+};
+
+const resolveStoryUploadParams = async (req, file) => {
+	const mimeType = file?.mimetype || "";
+
+	if (mimeType.startsWith("image/")) {
+		return {
+			folder: "chat_stories/images",
+			resource_type: "image",
+			transformation: [
+				{
+					quality: "auto:good",
+					width: 1440,
+					height: 2560,
+					crop: "limit",
+				},
+			],
+		};
+	}
+
+	const clipStartSeconds = parseStoryClipSeconds(req.body?.clipStartSeconds, 0);
+	const requestedClipDurationSeconds = parseStoryClipSeconds(
+		req.body?.clipDurationSeconds,
+		MAX_STORY_VIDEO_DURATION_SECONDS
+	);
+	const clipDurationSeconds = Math.min(
+		Math.max(requestedClipDurationSeconds, 1),
+		MAX_STORY_VIDEO_DURATION_SECONDS
+	);
+
+	return {
+		folder: "chat_stories/videos",
+		resource_type: "video",
+		format: "mp4",
+		transformation: [
+			{
+				start_offset: clipStartSeconds,
+				duration: clipDurationSeconds,
+			},
+			{
+				quality: "auto:good",
+				width: 1080,
+				height: 1920,
+				crop: "limit",
+			},
+		],
+	};
+};
+
+const storyStorage = new CloudinaryStorage({
+	cloudinary,
+	params: async (req, file) => resolveStoryUploadParams(req, file),
+});
+
 const imageFileFilter = (req, file, cb) => {
 	if (!file.mimetype.startsWith("image/")) {
 		return cb(new Error("Only image files are allowed"), false);
@@ -93,8 +157,8 @@ export const avatarUpload = multer({
 	limits: { fileSize: 5 * 1024 * 1024 },
 });
 export const storyUpload = multer({
-	storage: messageStorage,
+	storage: storyStorage,
 	fileFilter: storyFileFilter,
-	limits: { fileSize: 25 * 1024 * 1024 },
+	limits: { fileSize: MAX_STORY_UPLOAD_BYTES },
 });
 export { cloudinary };

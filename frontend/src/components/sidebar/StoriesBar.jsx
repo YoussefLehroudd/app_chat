@@ -5,13 +5,31 @@ import { getAvatarUrl } from "../../utils/avatar";
 
 const getUserId = (user) => user?._id || user?.id || null;
 
-const pickStoryToOpen = (group) => {
+const pickStoryToOpen = (group, { preferPending = false, preferLatest = false } = {}) => {
 	if (!Array.isArray(group?.stories) || group.stories.length === 0) return null;
+	if (preferPending) {
+		const pendingStory = [...group.stories].reverse().find((story) => story?.isPendingUpload);
+		if (pendingStory?._id) return pendingStory._id;
+	}
+
+	if (preferLatest) {
+		return group.stories[group.stories.length - 1]?._id || null;
+	}
+
 	const firstUnseenStory = group.stories.find((story) => !story?.isSeen && !story?.isOwn);
 	return firstUnseenStory?._id || group.stories[0]?._id || null;
 };
 
-const StoryCircle = ({ label, imageSrc, hasUnseen = false, isOwn = false, onClick, onAddStory }) => (
+const StoryCircle = ({
+	label,
+	imageSrc,
+	hasUnseen = false,
+	isOwn = false,
+	isPendingUpload = false,
+	onClick,
+	onAddStory,
+	canAddStory = true,
+}) => (
 	<div className='flex w-[66px] shrink-0 flex-col items-center gap-1.5 text-center'>
 		<button
 			type='button'
@@ -26,7 +44,12 @@ const StoryCircle = ({ label, imageSrc, hasUnseen = false, isOwn = false, onClic
 			<span className='absolute inset-[2px] overflow-hidden rounded-full border border-slate-900/65 bg-slate-900'>
 				<img src={imageSrc} alt={label} loading='lazy' decoding='async' className='h-full w-full object-cover' />
 			</span>
-			{isOwn ? (
+			{isPendingUpload ? (
+				<span className='absolute right-0.5 top-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-950 bg-cyan-500 text-white shadow-[0_8px_18px_rgba(14,165,233,0.28)]'>
+					<span className='h-2 w-2 animate-pulse rounded-full bg-white'></span>
+				</span>
+			) : null}
+			{isOwn && canAddStory ? (
 				<span
 					className='absolute -bottom-0.5 -right-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-950 bg-sky-500 text-white shadow-[0_10px_22px_rgba(14,165,233,0.35)]'
 					onClick={(event) => {
@@ -42,17 +65,25 @@ const StoryCircle = ({ label, imageSrc, hasUnseen = false, isOwn = false, onClic
 	</div>
 );
 
-const StoriesBar = ({ storyGroups, ownStoryGroup, loading, authUser, onAddStory, onOpenStory }) => {
+const StoriesBar = ({ storyGroups, ownStoryGroup, loading, authUser, onAddStory, onOpenStory, isCreatingStory = false }) => {
 	const ownUser = ownStoryGroup?.user || authUser;
 	const ownAvatar = getAvatarUrl(ownUser?.profilePic, 96) || getConversationFallbackAvatar(ownUser || {});
 	const ownHasStories = Array.isArray(ownStoryGroup?.stories) && ownStoryGroup.stories.length > 0;
+	const ownHasPendingStory = Array.isArray(ownStoryGroup?.stories) && ownStoryGroup.stories.some((story) => story?.isPendingUpload);
+	const canAddOwnStory = !isCreatingStory && !ownHasPendingStory;
 	const otherGroups = (Array.isArray(storyGroups) ? storyGroups : []).filter(
 		(group) => getUserId(group?.user) !== getUserId(ownUser)
 	);
 
 	const openOwnStory = () => {
 		if (ownHasStories) {
-			onOpenStory?.(ownStoryGroup, pickStoryToOpen(ownStoryGroup));
+			onOpenStory?.(
+				ownStoryGroup,
+				pickStoryToOpen(ownStoryGroup, {
+					preferPending: true,
+					preferLatest: true,
+				})
+			);
 			return;
 		}
 
@@ -66,9 +97,10 @@ const StoriesBar = ({ storyGroups, ownStoryGroup, loading, authUser, onAddStory,
 				<button
 					type='button'
 					className='text-[11px] font-semibold text-cyan-200/85 transition hover:text-cyan-100'
+					disabled={isCreatingStory}
 					onClick={onAddStory}
 				>
-					Add story
+					{ownHasPendingStory ? "Posting..." : "Add story"}
 				</button>
 			</div>
 
@@ -78,6 +110,8 @@ const StoriesBar = ({ storyGroups, ownStoryGroup, loading, authUser, onAddStory,
 					imageSrc={ownAvatar}
 					hasUnseen={false}
 					isOwn
+					isPendingUpload={ownHasPendingStory}
+					canAddStory={canAddOwnStory}
 					onAddStory={onAddStory}
 					onClick={openOwnStory}
 				/>

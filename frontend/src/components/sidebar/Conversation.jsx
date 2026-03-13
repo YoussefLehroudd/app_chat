@@ -96,7 +96,7 @@ const Conversation = ({ conversation }) => {
 							}`}
 							loading='lazy'
 							decoding='async'
-							fetchPriority='low'
+							fetchpriority='low'
 							onLoad={() => setAvatarLoaded(true)}
 							onError={() => {
 								setAvatarSrc(fallbackAvatar);

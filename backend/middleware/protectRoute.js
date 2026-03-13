@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseAvailable, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import { toUserDto } from "../utils/formatters.js";
 
 const protectRoute = async (req, res, next) => {
@@ -14,6 +14,10 @@ const protectRoute = async (req, res, next) => {
 
 		if (!decoded) {
 			return res.status(401).json({ error: "Unauthorized - Invalid Token" });
+		}
+
+		if (!isDatabaseAvailable()) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
 
 		const user = await prisma.user.findUnique({
@@ -42,10 +46,10 @@ const protectRoute = async (req, res, next) => {
 
 		next();
 	} catch (error) {
-		console.log("Error in protectRoute middleware: ", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
+		console.log("Error in protectRoute middleware: ", error.message);
 		res.status(500).json({ error: "Internal server error" });
 	}
 };

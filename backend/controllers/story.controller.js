@@ -12,8 +12,10 @@ const STORY_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_STORY_TEXT_LENGTH = 700;
 const MAX_STORY_COMMENT_LENGTH = 700;
 const STORY_INTERACTION_GRACE_MS = 2 * 60 * 1000;
+const STORY_UPLOAD_RESULT_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_STORY_REACTION = "❤️";
 const ALLOWED_STORY_REACTIONS = new Set(["❤️", "😍", "🔥", "😂", "😮", "😢", "👏", "👍", "💯", "🥳"]);
+const storyUploadResultCache = new Map();
 
 const activeUserWhere = {
 	isArchived: false,
@@ -58,6 +60,22 @@ const storyMessageInclude = {
 const normalizeStoryText = (value) => (typeof value === "string" ? value.trim() : "");
 const normalizeReactionValue = (value) => (typeof value === "string" ? value.trim() : "");
 const normalizeCommentValue = (value) => (typeof value === "string" ? value.trim() : "");
+const normalizeStoryUploadId = (value) => (typeof value === "string" ? value.trim() : "");
+
+const cleanupStoryUploadResultCache = () => {
+	const now = Date.now();
+
+	for (const [cacheKey, entry] of storyUploadResultCache.entries()) {
+		if (!entry?.createdAt || now - entry.createdAt > STORY_UPLOAD_RESULT_TTL_MS) {
+			storyUploadResultCache.delete(cacheKey);
+		}
+	}
+};
+
+const getStoryUploadCacheKey = (userId, uploadId) => {
+	if (!userId || !uploadId) return "";
+	return `${userId}:${uploadId}`;
+};
 
 const resolveStoryMedia = (file) => {
 	if (!file) {
@@ -321,9 +339,37 @@ export const getStoriesFeed = async (req, res) => {
 	}
 };
 
+export const returnCachedStoryUploadIfAvailable = (req, res, next) => {
+	cleanupStoryUploadResultCache();
+
+	const userId = req.user?._id;
+	const uploadId = normalizeStoryUploadId(req.get("x-story-upload-id") || req.body?.clientUploadId);
+	const cacheKey = getStoryUploadCacheKey(userId, uploadId);
+	if (!cacheKey) {
+		next();
+		return;
+	}
+
+	const cachedEntry = storyUploadResultCache.get(cacheKey);
+	if (!cachedEntry?.payload) {
+		next();
+		return;
+	}
+
+	return res.status(201).json(cachedEntry.payload);
+};
+
 export const createStory = async (req, res) => {
 	try {
 		const userId = req.user._id;
+		const uploadId = normalizeStoryUploadId(req.get("x-story-upload-id") || req.body?.clientUploadId);
+		const uploadCacheKey = getStoryUploadCacheKey(userId, uploadId);
+		cleanupStoryUploadResultCache();
+
+		if (uploadCacheKey && storyUploadResultCache.has(uploadCacheKey)) {
+			return res.status(201).json(storyUploadResultCache.get(uploadCacheKey).payload);
+		}
+
 		const normalizedText = normalizeStoryText(req.body?.text);
 		const resolvedMedia = resolveStoryMedia(req.file);
 
@@ -372,6 +418,12 @@ export const createStory = async (req, res) => {
 		});
 
 		const storyDto = toStoryDto(createdStory, userId);
+		if (uploadCacheKey) {
+			storyUploadResultCache.set(uploadCacheKey, {
+				payload: storyDto,
+				createdAt: Date.now(),
+			});
+		}
 		const contactIds = await getAcceptedDirectContactIds(userId);
 		const audienceIds = [...new Set([userId, ...contactIds])];
 		emitToUsers(audienceIds, "story:created", { story: storyDto });

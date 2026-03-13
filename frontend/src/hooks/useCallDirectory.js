@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import toast from "react-hot-toast";
 import { useSocketContext } from "../context/SocketContext";
+import { showRequestErrorToast } from "../utils/requestFeedback";
 
 const CALLS_REFRESH_EVENT = "chat:calls-refresh";
 
@@ -26,7 +26,7 @@ const useCallDirectory = () => {
 				}
 			} catch (error) {
 				if (!isCancelled) {
-					toast.error(error.message);
+					showRequestErrorToast(error.message);
 				}
 			} finally {
 				if (!isCancelled) {

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import toast from "react-hot-toast";
 import { preloadAvatar } from "../utils/avatar";
 import { useAuthContext } from "../context/AuthContext";
 import { useSocketContext } from "../context/SocketContext";
 import useConversation from "../zustand/useConversation";
+import { getRetryDelayMs, showRequestErrorToast } from "../utils/requestFeedback";
 
 const STORAGE_KEY_PREFIX = "chat-conversations";
 const LEGACY_STORAGE_KEY = "chat-conversations";
@@ -156,6 +156,7 @@ const useGetConversations = () => {
 	const lastFetchedAtRef = useRef(0);
 	const abortControllerRef = useRef(null);
 	const isMountedRef = useRef(false);
+	const lastErrorMessageRef = useRef("");
 
 	useEffect(() => {
 		selectedConversationRef.current = selectedConversation;
@@ -222,6 +223,7 @@ const useGetConversations = () => {
 					Array.isArray(conversationsData) ? conversationsData : []
 				);
 				lastFetchedAtRef.current = Date.now();
+				lastErrorMessageRef.current = "";
 				cacheConversations(storageUserId, nextConversations);
 				preloadAvatars(nextConversations);
 				setConversations(nextConversations);
@@ -248,7 +250,8 @@ const useGetConversations = () => {
 
 				if (isMountedRef.current && requestId === requestSequenceRef.current) {
 					setHasFetchError(true);
-					toast.error(error.message);
+					lastErrorMessageRef.current = error.message;
+					showRequestErrorToast(error.message);
 				}
 			} finally {
 				if (requestId === requestSequenceRef.current) {
@@ -323,7 +326,7 @@ const useGetConversations = () => {
 
 		const retryTimeout = setTimeout(() => {
 			void getConversations({ force: true });
-		}, 2200);
+		}, getRetryDelayMs(lastErrorMessageRef.current));
 
 		return () => clearTimeout(retryTimeout);
 	}, [getConversations, hasFetchError, loading, storageUserId]);

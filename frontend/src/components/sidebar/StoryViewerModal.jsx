@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HiOutlineEye, HiOutlineTrash, HiOutlineXMark } from "react-icons/hi2";
-import { IoPause, IoPlay, IoSend } from "react-icons/io5";
+import { IoPause, IoPlay, IoSend, IoVolumeHigh, IoVolumeMute } from "react-icons/io5";
 import useModalBodyScrollLock from "../../hooks/useModalBodyScrollLock";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
@@ -12,6 +12,15 @@ const FALLBACK_VIDEO_DURATION_MS = 9000;
 const NAVIGATION_LOCK_MS = 220;
 
 const getUserId = (user) => user?._id || user?.id || null;
+const isSameStory = (story, storyId) => Boolean(storyId) && (story?._id === storyId || story?.clientPendingId === storyId);
+const getStoryClipStartSeconds = (story) => {
+	const parsedValue = Number(story?.clipStartSeconds);
+	return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+};
+const getStoryClipDurationMs = (story) => {
+	const parsedValue = Number(story?.clipDurationSeconds);
+	return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue * 1000 : 0;
+};
 
 const formatStoryAge = (createdAt) => {
 	if (!createdAt) return "now";
@@ -43,7 +52,7 @@ const formatSeenAt = (seenAt) => {
 const pickDefaultStoryIndex = (group, targetStoryId) => {
 	if (!Array.isArray(group?.stories) || group.stories.length === 0) return 0;
 	if (targetStoryId) {
-		const targetIndex = group.stories.findIndex((story) => story?._id === targetStoryId);
+		const targetIndex = group.stories.findIndex((story) => isSameStory(story, targetStoryId));
 		if (targetIndex >= 0) return targetIndex;
 	}
 
@@ -87,6 +96,7 @@ const StoryViewerModal = ({
 	const [viewers, setViewers] = useState([]);
 	const [loadingViewers, setLoadingViewers] = useState(false);
 	const [manualPaused, setManualPaused] = useState(false);
+	const [isVideoMuted, setIsVideoMuted] = useState(false);
 	const [replyText, setReplyText] = useState("");
 	const [sendingReply, setSendingReply] = useState(false);
 	const [sendingReactionEmoji, setSendingReactionEmoji] = useState("");
@@ -116,6 +126,7 @@ const StoryViewerModal = ({
 			storyElapsedBeforePauseRef.current = 0;
 			storyRunStartedAtRef.current = 0;
 			setManualPaused(false);
+			setIsVideoMuted(false);
 			setViewersOpen(false);
 			setViewers([]);
 			setReplyText("");
@@ -172,21 +183,35 @@ const StoryViewerModal = ({
 
 	const activeGroup = activeGroupIndex >= 0 ? orderedGroups[activeGroupIndex] : null;
 	const activeStories = activeGroup?.stories || [];
-	const storyIndexById = activeStories.findIndex((story) => story?._id === activeStoryId);
+	const storyIndexById = activeStories.findIndex((story) => isSameStory(story, activeStoryId));
 	const activeStoryIndex = storyIndexById >= 0 ? storyIndexById : 0;
 	const activeStory = activeStories[activeStoryIndex] || null;
 	const activeAuthor = activeGroup?.user || null;
 	const activeAuthorId = getUserId(activeAuthor);
 	const isOwnStory = Boolean(activeStory?.isOwn || (activeAuthorId && activeAuthorId === authUserId));
+	const isPendingStory = Boolean(activeStory?.isPendingUpload);
+	const activeClipStartSeconds = getStoryClipStartSeconds(activeStory);
+	const activeClipDurationMs = getStoryClipDurationMs(activeStory);
 	const isVideoStory = activeStory?.mediaType === "VIDEO" && Boolean(activeStory?.mediaUrl) && !mediaLoadError;
 	const storyDurationMs = useMemo(() => {
 		if (isVideoStory) {
+			if (activeClipDurationMs > 0) {
+				return activeClipDurationMs;
+			}
 			return Math.max(videoDurationMs || 0, FALLBACK_VIDEO_DURATION_MS);
 		}
 
 		return activeStory?.mediaType === "TEXT" ? TEXT_STORY_DURATION_MS : IMAGE_STORY_DURATION_MS;
-	}, [activeStory?.mediaType, isVideoStory, videoDurationMs]);
-	const isPlaybackPaused = manualPaused || viewersOpen || sendingReply || Boolean(sendingReactionEmoji);
+	}, [activeClipDurationMs, activeStory?.mediaType, isVideoStory, videoDurationMs]);
+	const isPlaybackPaused = manualPaused || viewersOpen || sendingReply || Boolean(sendingReactionEmoji) || isPendingStory;
+
+	useEffect(() => {
+		if (!open || !activeStory?._id || !activeStoryId) return;
+		if (activeStory._id === activeStoryId) return;
+		if (activeStory?.clientPendingId !== activeStoryId) return;
+
+		setActiveStoryId(activeStory._id);
+	}, [activeStory?._id, activeStory?.clientPendingId, activeStoryId, open]);
 
 	useEffect(() => {
 		if (!open || !initializedForOpenRef.current || orderedGroups.length === 0) return;
@@ -198,7 +223,7 @@ const StoryViewerModal = ({
 		if (nextStories.length === 0) return;
 
 		const nextStoryIndex = (() => {
-			const currentIndex = nextStories.findIndex((story) => story?._id === activeStoryId);
+			const currentIndex = nextStories.findIndex((story) => isSameStory(story, activeStoryId));
 			return currentIndex >= 0 ? currentIndex : pickDefaultStoryIndex(nextGroup, null);
 		})();
 
@@ -320,13 +345,18 @@ const StoryViewerModal = ({
 			return;
 		}
 
+		if (isOwnStory) {
+			onClose?.();
+			return;
+		}
+
 		if (activeGroupIndex < orderedGroups.length - 1) {
 			setActiveByPosition(activeGroupIndex + 1, 0);
 			return;
 		}
 
 		onClose?.();
-	}, [acquireNavigationLock, activeGroup, activeGroupIndex, activeStories.length, activeStoryIndex, onClose, orderedGroups.length, setActiveByPosition, viewersOpen]);
+	}, [acquireNavigationLock, activeGroup, activeGroupIndex, activeStories.length, activeStoryIndex, isOwnStory, onClose, orderedGroups.length, setActiveByPosition, viewersOpen]);
 
 	const goPreviousStory = useCallback((options = {}) => {
 		if (viewersOpen) return;
@@ -353,12 +383,12 @@ const StoryViewerModal = ({
 	}, [acquireNavigationLock, activeGroup, activeGroupIndex, activeStoryIndex, onClose, orderedGroups, setActiveByPosition, viewersOpen]);
 
 	useEffect(() => {
-		if (!open || !activeStory?._id || isOwnStory) return;
+		if (!open || !activeStory?._id || isOwnStory || isPendingStory) return;
 		if (hasMarkedSeenRef.current.has(activeStory._id)) return;
 
 		hasMarkedSeenRef.current.add(activeStory._id);
 		void onSeen?.(activeStory._id);
-	}, [activeStory?._id, isOwnStory, onSeen, open]);
+	}, [activeStory?._id, isOwnStory, isPendingStory, onSeen, open]);
 
 	useEffect(() => {
 		clearAutoNextTimeout();
@@ -401,6 +431,10 @@ const StoryViewerModal = ({
 		const activeVideo = videoRef.current;
 		if (!activeVideo) return;
 
+		if (activeClipStartSeconds > 0 && activeVideo.currentTime < activeClipStartSeconds) {
+			activeVideo.currentTime = activeClipStartSeconds;
+		}
+
 		if (isPlaybackPaused) {
 			activeVideo.pause();
 			return;
@@ -410,31 +444,77 @@ const StoryViewerModal = ({
 		if (playbackPromise && typeof playbackPromise.catch === "function") {
 			playbackPromise.catch(() => {});
 		}
-	}, [isPlaybackPaused, isVideoStory, activeStory?._id]);
+	}, [activeClipStartSeconds, isPlaybackPaused, isVideoStory, activeStory?._id]);
+
+	useEffect(() => {
+		if (!isVideoStory) return;
+
+		const activeVideo = videoRef.current;
+		if (!activeVideo) return;
+
+		activeVideo.muted = isVideoMuted;
+	}, [isVideoMuted, isVideoStory, activeStory?._id]);
 
 	useEffect(() => {
 		if (activeStory?.mediaType !== "VIDEO") return;
 
 		const activeVideo = videoRef.current;
 		if (!activeVideo) return;
+		const clipEndSeconds =
+			activeClipDurationMs > 0 ? activeClipStartSeconds + activeClipDurationMs / 1000 : null;
 
 		const onLoadedMetadata = () => {
+			if (activeClipDurationMs > 0) {
+				setVideoDurationMs(activeClipDurationMs);
+			} else if (Number.isFinite(activeVideo.duration) && activeVideo.duration > 0) {
+				setVideoDurationMs(activeVideo.duration * 1000);
+			}
+
+			if (activeClipStartSeconds > 0) {
+				activeVideo.currentTime = Math.min(activeClipStartSeconds, activeVideo.duration || activeClipStartSeconds);
+			}
+		};
+
+		const onDurationChange = () => {
+			if (activeClipDurationMs > 0) {
+				setVideoDurationMs(activeClipDurationMs);
+				return;
+			}
+
 			if (!Number.isFinite(activeVideo.duration) || activeVideo.duration <= 0) return;
 			setVideoDurationMs(activeVideo.duration * 1000);
 		};
 
-		const onDurationChange = () => {
-			if (!Number.isFinite(activeVideo.duration) || activeVideo.duration <= 0) return;
-			setVideoDurationMs(activeVideo.duration * 1000);
+		const onTimeUpdate = () => {
+			if (clipEndSeconds == null) return;
+			if (activeVideo.currentTime >= clipEndSeconds - 0.05) {
+				activeVideo.pause();
+				goNextStory({ bypassLock: true });
+			}
+		};
+
+		const onPlay = () => {
+			if (clipEndSeconds == null) return;
+			if (activeVideo.currentTime < activeClipStartSeconds || activeVideo.currentTime >= clipEndSeconds) {
+				activeVideo.currentTime = activeClipStartSeconds;
+			}
 		};
 
 		activeVideo.addEventListener("loadedmetadata", onLoadedMetadata);
 		activeVideo.addEventListener("durationchange", onDurationChange);
+		activeVideo.addEventListener("timeupdate", onTimeUpdate);
+		activeVideo.addEventListener("play", onPlay);
+
+		if (activeVideo.readyState >= 1) {
+			onLoadedMetadata();
+		}
 		return () => {
 			activeVideo.removeEventListener("loadedmetadata", onLoadedMetadata);
 			activeVideo.removeEventListener("durationchange", onDurationChange);
+			activeVideo.removeEventListener("timeupdate", onTimeUpdate);
+			activeVideo.removeEventListener("play", onPlay);
 		};
-	}, [activeStory?.mediaType, activeStory?._id]);
+	}, [activeClipDurationMs, activeClipStartSeconds, activeStory?.mediaType, activeStory?._id, goNextStory]);
 
 	if (!open || !activeStory || orderedGroups.length === 0) return null;
 
@@ -484,7 +564,7 @@ const StoryViewerModal = ({
 						</div>
 						<div className='min-w-0'>
 							<p className='truncate text-sm font-semibold text-white'>{activeAuthor?.fullName || "Unknown user"}</p>
-							<p className='text-xs text-slate-300'>{formatStoryAge(activeStory.createdAt)}</p>
+							<p className='text-xs text-slate-300'>{isPendingStory ? "Posting..." : formatStoryAge(activeStory.createdAt)}</p>
 						</div>
 					</div>
 
@@ -498,7 +578,32 @@ const StoryViewerModal = ({
 						>
 							{manualPaused ? <IoPlay className='h-4.5 w-4.5' /> : <IoPause className='h-4.5 w-4.5' />}
 						</button>
-						{isOwnStory ? (
+						{isVideoStory ? (
+							<button
+								type='button'
+								onClick={() => {
+									setIsVideoMuted((currentValue) => {
+										const nextValue = !currentValue;
+										if (videoRef.current) {
+											videoRef.current.muted = nextValue;
+											if (!nextValue && !isPlaybackPaused) {
+												const playbackPromise = videoRef.current.play();
+												if (playbackPromise && typeof playbackPromise.catch === "function") {
+													playbackPromise.catch(() => {});
+												}
+											}
+										}
+										return nextValue;
+									});
+								}}
+								title={isVideoMuted ? "Unmute video" : "Mute video"}
+								aria-label={isVideoMuted ? "Unmute video" : "Mute video"}
+								className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
+							>
+								{isVideoMuted ? <IoVolumeMute className='h-4.5 w-4.5' /> : <IoVolumeHigh className='h-4.5 w-4.5' />}
+							</button>
+						) : null}
+						{isOwnStory && !isPendingStory ? (
 							<button
 								type='button'
 								onClick={openViewersModal}
@@ -551,7 +656,7 @@ const StoryViewerModal = ({
 							src={activeStory.mediaUrl}
 							className='h-full w-full object-contain'
 							autoPlay
-							muted
+							muted={isVideoMuted}
 							playsInline
 							onEnded={() => goNextStory({ bypassLock: true })}
 							onError={() => setMediaLoadError(true)}
@@ -572,15 +677,26 @@ const StoryViewerModal = ({
 							<p className='text-center text-sm font-medium leading-6 text-slate-100 sm:text-base'>{activeStory.text}</p>
 						</div>
 					) : null}
+
+					{isPendingStory ? (
+						<div className='absolute inset-0 z-40 flex items-center justify-center bg-slate-950/55 px-6 text-center'>
+							<div className='rounded-[24px] border border-cyan-300/20 bg-slate-950/70 px-5 py-4 shadow-[0_18px_44px_rgba(2,6,23,0.4)]'>
+								<div className='mx-auto h-10 w-10 animate-spin rounded-full border-2 border-cyan-200/20 border-t-cyan-300'></div>
+								<p className='mt-3 text-sm font-semibold text-cyan-100'>Posting story...</p>
+								<p className='mt-1 text-xs text-slate-300'>Your story will appear here as soon as the upload finishes.</p>
+								<p className='mt-2 text-[11px] text-amber-200/90'>Do not refresh or close the page while the upload is still running.</p>
+							</div>
+						</div>
+					) : null}
 				</div>
 
 					<div className='mt-2.5 shrink-0 flex items-center justify-between sm:mt-3'>
 						{isOwnStory ? (
 							<p className='shrink-0 whitespace-nowrap text-xs text-slate-400'>
-								Story {activeStoryIndex + 1} of {activeStories.length}
+								{isPendingStory ? "Upload in progress" : `Story ${activeStoryIndex + 1} of ${activeStories.length}`}
 							</p>
 						) : null}
-						{isOwnStory ? (
+						{isOwnStory && !isPendingStory ? (
 							<button
 								type='button'
 								onClick={async () => {
@@ -599,6 +715,10 @@ const StoryViewerModal = ({
 								<HiOutlineTrash className='h-4 w-4' />
 								Delete
 							</button>
+						) : isOwnStory ? (
+							<div className='rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100'>
+								Pending...
+							</div>
 						) : (
 							<div className='w-full'>
 							<div className='mb-2 flex items-center justify-between gap-2'>

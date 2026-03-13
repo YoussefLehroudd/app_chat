@@ -1,7 +1,10 @@
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import { Pool, neonConfig } from "@neondatabase/serverless";
+import { PrismaNeon } from "@prisma/adapter-neon";
 import { PrismaClient } from "@prisma/client";
+import ws from "ws";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,30 +13,38 @@ dotenv.config({ path: path.join(__dirname, "..", "..", ".env") });
 
 const DEFAULT_CONNECT_TIMEOUT_SECONDS = "15";
 const DEFAULT_POOL_TIMEOUT_SECONDS = "15";
-const RETRYABLE_PRISMA_CODES = new Set(["P1001", "P1002", "P1017"]);
+const QUERY_RECONNECT_WARNING_COOLDOWN_MS = 10000;
+const RETRYABLE_PRISMA_CODES = new Set(["P1001", "P1002", "P1017", "P2024"]);
 const DATABASE_UNAVAILABLE_MESSAGE = "Database temporarily unavailable. Please retry in a moment.";
+let databaseAvailable = false;
+let lastQueryReconnectWarningAt = 0;
+
+const isNeonDatabaseUrl = (databaseUrl) => {
+	if (!databaseUrl) return false;
+
+	try {
+		return new URL(databaseUrl).hostname.endsWith(".aws.neon.tech");
+	} catch {
+		return false;
+	}
+};
 
 const resolveDatabaseUrl = (databaseUrl) => {
 	if (!databaseUrl) return databaseUrl;
 
 	try {
 		const url = new URL(databaseUrl);
-		const isNeonHost = url.hostname.endsWith(".aws.neon.tech");
+		const isNeonHost = isNeonDatabaseUrl(databaseUrl);
 
-		if (isNeonHost && !url.hostname.includes("-pooler.")) {
-			const firstDotIndex = url.hostname.indexOf(".");
-			if (firstDotIndex !== -1) {
-				url.hostname = `${url.hostname.slice(0, firstDotIndex)}-pooler${url.hostname.slice(firstDotIndex)}`;
-			}
+		if (isNeonHost && !url.searchParams.has("sslmode")) {
+			url.searchParams.set("sslmode", "require");
 		}
 
 		if (isNeonHost) {
-			if (!url.searchParams.has("connect_timeout")) {
-				url.searchParams.set("connect_timeout", DEFAULT_CONNECT_TIMEOUT_SECONDS);
-			}
-			if (!url.searchParams.has("pool_timeout")) {
-				url.searchParams.set("pool_timeout", DEFAULT_POOL_TIMEOUT_SECONDS);
-			}
+			url.searchParams.delete("connect_timeout");
+			url.searchParams.delete("pool_timeout");
+			url.searchParams.delete("connection_limit");
+			url.searchParams.delete("pgbouncer");
 		}
 
 		return url.toString();
@@ -43,16 +54,36 @@ const resolveDatabaseUrl = (databaseUrl) => {
 };
 
 const runtimeDatabaseUrl = resolveDatabaseUrl(process.env.DATABASE_URL);
+const useNeonServerlessAdapter = isNeonDatabaseUrl(runtimeDatabaseUrl);
+
+if (useNeonServerlessAdapter) {
+	neonConfig.webSocketConstructor = ws;
+}
+
+const neonPool =
+	useNeonServerlessAdapter && runtimeDatabaseUrl
+		? new Pool({
+				connectionString: runtimeDatabaseUrl,
+				max: 5,
+				connectionTimeoutMillis: Number(DEFAULT_CONNECT_TIMEOUT_SECONDS) * 1000,
+				idleTimeoutMillis: Number(DEFAULT_POOL_TIMEOUT_SECONDS) * 1000,
+		  })
+		: null;
+
 const prisma = new PrismaClient(
-	runtimeDatabaseUrl
+	useNeonServerlessAdapter && neonPool
 		? {
-				datasources: {
-					db: {
-						url: runtimeDatabaseUrl,
-					},
-				},
+				adapter: new PrismaNeon(neonPool),
 		  }
-		: undefined
+		: runtimeDatabaseUrl
+			? {
+					datasources: {
+						db: {
+							url: runtimeDatabaseUrl,
+						},
+					},
+			  }
+			: undefined
 );
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,9 +92,22 @@ const isPrismaConnectionError = (error) => {
 	const message = error?.message || "";
 	return (
 		RETRYABLE_PRISMA_CODES.has(error?.code) ||
+		message.includes("Timed out fetching a new connection from the connection pool") ||
 		message.includes("Can't reach database server") ||
 		message.includes("Server has closed the connection")
 	);
+};
+
+const isDatabaseAvailable = () => databaseAvailable;
+
+const logQueryReconnectWarning = (queryLabel) => {
+	const now = Date.now();
+	if (now - lastQueryReconnectWarningAt < QUERY_RECONNECT_WARNING_COOLDOWN_MS) {
+		return;
+	}
+
+	lastQueryReconnectWarningAt = now;
+	console.warn(`Prisma query failed for ${queryLabel || "unknown query"}. Retrying after reconnect.`);
 };
 
 let reconnectPromise = null;
@@ -71,6 +115,7 @@ let reconnectPromise = null;
 const reconnectToDatabase = async () => {
 	if (!reconnectPromise) {
 		reconnectPromise = (async () => {
+			databaseAvailable = false;
 			try {
 				await prisma.$disconnect();
 			} catch {
@@ -79,6 +124,7 @@ const reconnectToDatabase = async () => {
 
 			await wait(500);
 			await prisma.$connect();
+			databaseAvailable = true;
 		})().finally(() => {
 			reconnectPromise = null;
 		});
@@ -96,21 +142,27 @@ prisma.$use(async (params, next) => {
 		}
 
 		const queryLabel = [params.model, params.action].filter(Boolean).join(".");
-		console.warn(`Prisma query failed for ${queryLabel || "unknown query"}. Retrying after reconnect.`);
+		logQueryReconnectWarning(queryLabel);
 		await reconnectToDatabase();
 		return next(params);
 	}
 });
 
-const connectToDatabase = async () => {
+const connectToDatabase = async ({ logError = true } = {}) => {
 	try {
 		await prisma.$connect();
-		if (runtimeDatabaseUrl && runtimeDatabaseUrl !== process.env.DATABASE_URL) {
+		databaseAvailable = true;
+		if (useNeonServerlessAdapter) {
+			console.log("Using Neon serverless WebSocket adapter");
+		} else if (runtimeDatabaseUrl && runtimeDatabaseUrl !== process.env.DATABASE_URL) {
 			console.log("Using Neon pooled runtime connection with extended timeouts");
 		}
 		console.log("Connected to PostgreSQL");
 	} catch (error) {
-		console.error("Error connecting to PostgreSQL", error.message);
+		databaseAvailable = false;
+		if (logError) {
+			console.error("Error connecting to PostgreSQL", error.message);
+		}
 		throw error;
 	}
 };
@@ -120,5 +172,6 @@ export {
 	connectToDatabase,
 	reconnectToDatabase,
 	isPrismaConnectionError,
+	isDatabaseAvailable,
 	DATABASE_UNAVAILABLE_MESSAGE,
 };

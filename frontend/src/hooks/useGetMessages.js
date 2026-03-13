@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import useConversation from "../zustand/useConversation";
-import toast from "react-hot-toast";
+import { showRequestErrorToast } from "../utils/requestFeedback";
 
 const MESSAGE_CACHE_PREFIX = "chat:messages:v1:";
 const MESSAGE_CACHE_TTL_MS = 15000;
@@ -246,7 +246,7 @@ const useGetMessages = () => {
 				);
 			} catch (error) {
 				if (error.name !== "AbortError" && !isCancelled && requestId === requestSequenceRef.current) {
-					toast.error(error.message);
+					showRequestErrorToast(error.message);
 				}
 			} finally {
 				if (
@@ -325,7 +325,7 @@ const useGetMessages = () => {
 
 			return { loaded: normalizedPayload.messages.length > 0 };
 		} catch (error) {
-			toast.error(error.message);
+			showRequestErrorToast(error.message);
 			return { loaded: false };
 		} finally {
 			loadingOlderRef.current = false;

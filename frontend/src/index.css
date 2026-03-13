@@ -234,12 +234,19 @@ html[data-mobile-keyboard="open"] {
 	overflow-y: hidden;
 	scrollbar-width: none;
 	-ms-overflow-style: none;
+	cursor: grab;
+	user-select: none;
 }
 
 .sidebar-filter-row::-webkit-scrollbar {
 	width: 0;
 	height: 0;
 	display: none;
+}
+
+.sidebar-filter-row--dragging,
+.sidebar-filter-row--dragging * {
+	cursor: grabbing !important;
 }
 
 body.app-auth-route .auth-shell {

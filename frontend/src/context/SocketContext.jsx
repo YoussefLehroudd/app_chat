@@ -3,6 +3,7 @@ import { useAuthContext } from "./AuthContext";
 import io from "socket.io-client";
 import toast from "react-hot-toast";
 import useConversation from "../zustand/useConversation";
+import { showRequestErrorToast } from "../utils/requestFeedback";
 
 const SocketContext = createContext();
 const CONVERSATIONS_REFRESH_EVENT = "chat:conversations-refresh";
@@ -26,6 +27,8 @@ export const SocketContextProvider = ({ children }) => {
 				query: {
 					userId: authUserId,
 				},
+				reconnectionDelay: 10000,
+				reconnectionDelayMax: 10000,
 			});
 
 			setSocket(socket);
@@ -89,6 +92,10 @@ export const SocketContextProvider = ({ children }) => {
 				setAuthUser(null);
 			});
 
+			socket.on("serviceUnavailable", ({ error } = {}) => {
+				showRequestErrorToast(error);
+			});
+
 			return () => {
 				setIsSocketConnected(false);
 				socket.off("getOnlineUsers");
@@ -98,6 +105,7 @@ export const SocketContextProvider = ({ children }) => {
 				socket.off("publicUserUpdated");
 				socket.off("conversationsRefreshRequired");
 				socket.off("accountRemoved");
+				socket.off("serviceUnavailable");
 				socket.off("connect");
 				socket.off("disconnect");
 				socket.close();

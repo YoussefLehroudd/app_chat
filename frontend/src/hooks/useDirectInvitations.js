@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { useAuthContext } from "../context/AuthContext";
 import { useSocketContext } from "../context/SocketContext";
+import { showRequestErrorToast } from "../utils/requestFeedback";
 
 const getUserId = (user) => user?._id || user?.id || null;
 
@@ -55,7 +56,7 @@ const useDirectInvitations = () => {
 				return normalizedInvitations;
 			} catch (error) {
 				if (!silent && isMountedRef.current && requestId === requestSequenceRef.current) {
-					toast.error(error.message);
+					showRequestErrorToast(error.message);
 				}
 				return [];
 			} finally {
@@ -124,7 +125,7 @@ const useDirectInvitations = () => {
 				window.dispatchEvent(new Event("chat:conversations-refresh"));
 				return data;
 			} catch (error) {
-				toast.error(error.message);
+				showRequestErrorToast(error.message);
 				return null;
 			} finally {
 				setSendingByUserId((currentState) => {
@@ -169,7 +170,7 @@ const useDirectInvitations = () => {
 				window.dispatchEvent(new Event("chat:conversations-refresh"));
 				return data;
 			} catch (error) {
-				toast.error(error.message);
+				showRequestErrorToast(error.message);
 				return null;
 			} finally {
 				setRespondingByInvitationId((currentState) => {

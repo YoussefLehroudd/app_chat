@@ -23,6 +23,11 @@ import { connectToDatabase } from "./db/prisma.js";
 import { app, server } from "./socket/socket.js";
 // PORT should be assigned after calling dotenv.config() because we need to access the env variables. Didn't realize while recording the video. Sorry for the confusion.
 const PORT = process.env.PORT || 5000;
+const DATABASE_INITIAL_RETRY_DELAY_MS = 5000;
+const DATABASE_MAX_RETRY_DELAY_MS = 30000;
+
+let databaseRetryTimeout = null;
+let databaseReconnectDelayMs = DATABASE_INITIAL_RETRY_DELAY_MS;
 
 app.use(express.json()); // to parse the incoming requests with JSON payloads (from req.body)
 app.use(cookieParser());
@@ -41,16 +46,49 @@ app.get("*", (req, res) => {
 	res.sendFile(path.join(__dirname, "..", "frontend", "dist", "index.html"));
 });
 
-const startServer = async () => {
+const scheduleDatabaseReconnect = () => {
+	if (databaseRetryTimeout) return;
+
+	const retryDelayMs = databaseReconnectDelayMs;
+	databaseRetryTimeout = setTimeout(async () => {
+		databaseRetryTimeout = null;
+		try {
+			await connectToDatabase({ logError: false });
+			databaseReconnectDelayMs = DATABASE_INITIAL_RETRY_DELAY_MS;
+			console.log("Database connection restored");
+		} catch (error) {
+			console.error(`Database reconnect failed. Retrying in ${retryDelayMs / 1000}s.`, error.message);
+			databaseReconnectDelayMs = Math.min(retryDelayMs * 2, DATABASE_MAX_RETRY_DELAY_MS);
+			scheduleDatabaseReconnect();
+		}
+	}, retryDelayMs);
+};
+
+const startServer = () => {
 	try {
-		await connectToDatabase();
 		server.listen(PORT, () => {
 			console.log(`Server Running on port ${PORT}`);
 		});
 	} catch (error) {
-		console.error("Failed to connect to database", error.message);
-		process.exit(1); // Exit process with failure
+		console.error("Failed to start HTTP server", error.message);
+		process.exit(1);
 	}
 };
 
+server.on("error", (error) => {
+	console.error("HTTP server error", error.message);
+});
+
 startServer();
+
+connectToDatabase({ logError: false })
+	.then(() => {
+		databaseReconnectDelayMs = DATABASE_INITIAL_RETRY_DELAY_MS;
+	})
+	.catch((error) => {
+		console.error(
+			`Initial database connection failed. Server will keep running and retry from ${DATABASE_INITIAL_RETRY_DELAY_MS / 1000}s with backoff.`,
+			error.message
+		);
+		scheduleDatabaseReconnect();
+	});

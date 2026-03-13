@@ -1,7 +1,7 @@
 import { Server } from "socket.io";
 import http from "http";
 import express from "express";
-import { isPrismaConnectionError, prisma } from "../db/prisma.js";
+import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseAvailable, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import {
 	endCallSessionRecord,
 	formatCallSessionForUser,
@@ -244,6 +244,12 @@ io.on("connection", async (socket) => {
 	const userId = typeof socket.handshake.query.userId === "string" ? socket.handshake.query.userId : null;
 
 	if (userId && userId !== "undefined") {
+		if (!isDatabaseAvailable()) {
+			socket.emit("serviceUnavailable", { error: DATABASE_UNAVAILABLE_MESSAGE });
+			socket.disconnect(true);
+			return;
+		}
+
 		try {
 			const user = await prisma.user.findUnique({
 				where: { id: userId },
@@ -272,7 +278,10 @@ io.on("connection", async (socket) => {
 			userSocketMap.set(userId, existing);
 		} catch (error) {
 			if (isPrismaConnectionError(error)) {
-				console.warn("Socket user verification skipped because the database is temporarily unavailable.");
+				console.warn("Socket user verification failed because the database is temporarily unavailable.");
+				socket.emit("serviceUnavailable", { error: DATABASE_UNAVAILABLE_MESSAGE });
+				socket.disconnect(true);
+				return;
 			} else {
 				console.error("Error verifying socket user:", error.message);
 				socket.disconnect(true);

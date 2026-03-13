@@ -486,7 +486,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 									}`}
 									loading='lazy'
 									decoding='async'
-									fetchPriority='low'
+									fetchpriority='low'
 									onLoad={() => setAvatarLoaded(true)}
 									onError={() => {
 										setAvatarSrc(fallbackAvatar);

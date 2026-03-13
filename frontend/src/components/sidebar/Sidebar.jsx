@@ -18,6 +18,7 @@ import useCallDirectory from "../../hooks/useCallDirectory";
 import useGetConversations from "../../hooks/useGetConversations";
 import useDirectInvitations from "../../hooks/useDirectInvitations";
 import useStories from "../../hooks/useStories";
+import useHorizontalDragScroll from "../../hooks/useHorizontalDragScroll";
 import { useSocketContext } from "../../context/SocketContext";
 import { useAuthContext } from "../../context/AuthContext";
 import useConversation from "../../zustand/useConversation";
@@ -73,6 +74,8 @@ const Sidebar = () => {
 	const { setSelectedConversation, setShowSidebar } = useConversation();
 	const isDeveloper = authUser?.role === "DEVELOPER";
 	const resolvedStoryGroups = Array.isArray(storyViewerGroupsOverride) ? storyViewerGroupsOverride : storyGroups;
+	const { containerRef: filterRowRef, isDragging: isDraggingFilterRow, dragScrollProps: filterRowDragScrollProps } =
+		useHorizontalDragScroll();
 
 	const onlineCount = useMemo(
 		() => conversations.filter((conversation) => onlineUsers.includes(conversation._id)).length,
@@ -181,10 +184,30 @@ const Sidebar = () => {
 	}, [setShowSidebar]);
 
 	const handleOpenStoryComposer = useCallback(() => {
+		if (creatingStory) return;
+
+		const ownPendingStory = ownStoryGroup?.stories?.findLast?.((story) => story?.isPendingUpload)
+			|| [...(ownStoryGroup?.stories || [])].reverse().find((story) => story?.isPendingUpload);
+		if (ownPendingStory?._id) {
+			const authUserId = getUserId(authUser);
+			if (!authUserId) return;
+
+			startTransition(() => {
+				setStoryViewerGroupsOverride(null);
+				setStoryViewerTarget({
+					userId: authUserId,
+					storyId: ownPendingStory._id,
+				});
+				setShowSidebar(true);
+				setShowStoryViewer(true);
+			});
+			return;
+		}
+
 		startTransition(() => {
 			setShowStoryComposer(true);
 		});
-	}, []);
+	}, [authUser, creatingStory, ownStoryGroup, setShowSidebar]);
 
 	const handleOpenCreateGroupModal = useCallback(() => {
 		startTransition(() => {
@@ -198,9 +221,32 @@ const Sidebar = () => {
 		});
 	}, []);
 
+	const handleCreateStory = useCallback(
+		(storyInput) => {
+			const result = createStory(storyInput);
+			return result;
+		},
+		[createStory]
+	);
+
 	const handleClearSearch = useCallback(() => {
 		setSearchValue("");
 	}, []);
+
+	useEffect(() => {
+		if (!creatingStory) return undefined;
+
+		const handleBeforeUnload = (event) => {
+			event.preventDefault();
+			event.returnValue = "A story upload is still in progress.";
+			return event.returnValue;
+		};
+
+		window.addEventListener("beforeunload", handleBeforeUnload);
+		return () => {
+			window.removeEventListener("beforeunload", handleBeforeUnload);
+		};
+	}, [creatingStory]);
 
 	useEffect(() => {
 		const buildFallbackStoryGroup = (story, userId) => {
@@ -321,12 +367,19 @@ const Sidebar = () => {
 					storyGroups={storyGroups}
 					ownStoryGroup={ownStoryGroup}
 					loading={loadingStories}
+					isCreatingStory={creatingStory}
 					authUser={authUser}
 					onAddStory={handleOpenStoryComposer}
 					onOpenStory={handleOpenStoryViewer}
 				/>
 
-				<div className='sidebar-filter-row mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden pb-1 sm:gap-2'>
+				<div
+					ref={filterRowRef}
+					{...filterRowDragScrollProps}
+					className={`sidebar-filter-row mt-3 flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden pb-1 sm:gap-2 ${
+						isDraggingFilterRow ? "sidebar-filter-row--dragging" : ""
+					}`}
+				>
 					{FILTERS.map((filter) => {
 						const isActive = activeFilter === filter.id;
 
@@ -505,7 +558,7 @@ const Sidebar = () => {
 			<StoryComposerModal
 				open={showStoryComposer}
 				onClose={() => setShowStoryComposer(false)}
-				onSubmit={createStory}
+				onSubmit={handleCreateStory}
 				isSubmitting={creatingStory}
 			/>
 
