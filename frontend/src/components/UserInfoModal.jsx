@@ -14,6 +14,7 @@ import useModalBodyScrollLock from "../hooks/useModalBodyScrollLock";
 import useConversation from "../zustand/useConversation";
 import getConversationFallbackAvatar from "../utils/conversationAvatar";
 import { getAvatarUrl } from "../utils/avatar";
+import { matchesUserSearchQuery } from "../utils/search";
 import DeveloperBadge from "./common/DeveloperBadge";
 import VerifiedBadge from "./common/VerifiedBadge";
 
@@ -65,15 +66,10 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		if (!isGroupConversation) return [];
 
 		const existingMemberIds = new Set((user?.members || []).map((member) => member._id));
-		const normalizedSearch = memberSearchValue.trim().toLowerCase();
 
 		return selectableUsers.filter((member) => {
 			if (existingMemberIds.has(member._id)) return false;
-			if (!normalizedSearch) return true;
-
-			return [member.fullName, member.username, member.bio]
-				.filter(Boolean)
-				.some((value) => value.toLowerCase().includes(normalizedSearch));
+			return matchesUserSearchQuery(memberSearchValue, [member.fullName, member.username, member.bio]);
 		});
 	}, [isGroupConversation, memberSearchValue, selectableUsers, user?.members]);
 

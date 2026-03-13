@@ -21,6 +21,7 @@ import useStories from "../../hooks/useStories";
 import { useSocketContext } from "../../context/SocketContext";
 import { useAuthContext } from "../../context/AuthContext";
 import useConversation from "../../zustand/useConversation";
+import { matchesUserSearchQuery, normalizeUserSearchQuery } from "../../utils/search";
 
 const STORY_OPEN_REQUEST_EVENT = "chat:open-story-from-message";
 
@@ -92,32 +93,36 @@ const Sidebar = () => {
 	);
 
 	const filteredConversations = useMemo(() => {
-		const normalizedSearch = searchValue.trim().toLowerCase();
+		const normalizedSearch = normalizeUserSearchQuery(searchValue);
 
 		return conversations.filter((conversation) => {
 			const matchesFilter = activeFilter === "all" || (activeFilter === "online" && onlineUsers.includes(conversation._id));
 			if (!matchesFilter) return false;
 			if (!normalizedSearch) return true;
 
-			return [conversation.fullName, conversation.username, conversation.bio, conversation.lastMessage]
-				.filter(Boolean)
-				.some((value) => value.toLowerCase().includes(normalizedSearch));
+			return matchesUserSearchQuery(searchValue, [
+				conversation.fullName,
+				conversation.username,
+				conversation.bio,
+				conversation.lastMessage,
+			]);
 		});
 	}, [activeFilter, conversations, onlineUsers, searchValue]);
 
 	const filteredCalls = useMemo(() => {
-		const normalizedSearch = searchValue.trim().toLowerCase();
+		const normalizedSearch = normalizeUserSearchQuery(searchValue);
 		if (!normalizedSearch) return calls;
 
 		return calls.filter((call) =>
-			[
+			matchesUserSearchQuery(searchValue, [
 				call.title,
 				call.previewText,
 				call.initiator?.fullName,
-				...(Array.isArray(call.participants) ? call.participants.map((participant) => participant.user?.fullName) : []),
-			]
-				.filter(Boolean)
-				.some((value) => value.toLowerCase().includes(normalizedSearch))
+				call.initiator?.username,
+				...(Array.isArray(call.participants)
+					? call.participants.flatMap((participant) => [participant.user?.fullName, participant.user?.username])
+					: []),
+			])
 		);
 	}, [calls, searchValue]);
 

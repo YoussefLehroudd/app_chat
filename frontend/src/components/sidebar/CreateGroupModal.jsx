@@ -4,6 +4,7 @@ import { HiMagnifyingGlass, HiOutlineUserGroup, HiOutlineXMark } from "react-ico
 import useModalBodyScrollLock from "../../hooks/useModalBodyScrollLock";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
+import { matchesUserSearchQuery } from "../../utils/search";
 
 const CreateGroupModal = ({ open, onClose, onCreated }) => {
 	const [users, setUsers] = useState([]);
@@ -64,14 +65,7 @@ const CreateGroupModal = ({ open, onClose, onCreated }) => {
 	}, [open]);
 
 	const filteredUsers = useMemo(() => {
-		const normalizedSearch = searchValue.trim().toLowerCase();
-		if (!normalizedSearch) return users;
-
-		return users.filter((user) =>
-			[user.fullName, user.username, user.bio]
-				.filter(Boolean)
-				.some((value) => value.toLowerCase().includes(normalizedSearch))
-		);
+		return users.filter((user) => matchesUserSearchQuery(searchValue, [user.fullName, user.username, user.bio]));
 	}, [searchValue, users]);
 	const selectedMemberIdSet = useMemo(() => new Set(selectedMemberIds), [selectedMemberIds]);
 

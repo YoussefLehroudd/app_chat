@@ -3,8 +3,7 @@ import { HiMagnifyingGlass, HiOutlineUserPlus, HiOutlineXMark } from "react-icon
 import useModalBodyScrollLock from "../../hooks/useModalBodyScrollLock";
 import getConversationFallbackAvatar from "../../utils/conversationAvatar";
 import { getAvatarUrl } from "../../utils/avatar";
-
-const normalizeText = (value) => (typeof value === "string" ? value.trim().toLowerCase() : "");
+import { matchesUserSearchQuery } from "../../utils/search";
 
 const DirectInviteModal = ({
 	open,
@@ -71,14 +70,7 @@ const DirectInviteModal = ({
 	}, [open]);
 
 	const filteredUsers = useMemo(() => {
-		const normalizedSearch = normalizeText(searchValue);
-		if (!normalizedSearch) return users;
-
-		return users.filter((user) =>
-			[user?.fullName, user?.username, user?.bio]
-				.filter(Boolean)
-				.some((value) => normalizeText(value).includes(normalizedSearch))
-		);
+		return users.filter((user) => matchesUserSearchQuery(searchValue, [user?.fullName, user?.username, user?.bio]));
 	}, [searchValue, users]);
 
 	const getUserState = (userId) => {
