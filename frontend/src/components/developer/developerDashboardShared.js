@@ -1,13 +1,17 @@
 import {
 	IoArchiveOutline,
 	IoBarChartOutline,
+	IoCheckmarkDoneOutline,
 	IoChatbubbleEllipsesOutline,
 	IoDocumentTextOutline,
+	IoFlashOutline,
 	IoFlagOutline,
 	IoGlobeOutline,
 	IoLockClosedOutline,
+	IoMegaphoneOutline,
 	IoPeopleOutline,
 	IoShieldCheckmarkOutline,
+	IoTicketOutline,
 } from "react-icons/io5";
 import { getMessageSummaryText } from "../../utils/messageAttachments";
 
@@ -24,7 +28,12 @@ const developerSections = [
 	{ id: "analytics", label: "Analytics", icon: IoBarChartOutline, to: "/developer/analytics" },
 	{ id: "users", label: "Users", icon: IoPeopleOutline, to: "/developer/users" },
 	{ id: "groups", label: "Groups", icon: IoGlobeOutline, to: "/developer/groups" },
-	{ id: "reports", label: "Reports", icon: IoFlagOutline, to: "/developer/reports" },
+	{ id: "reports", label: "Moderation", icon: IoFlagOutline, to: "/developer/reports" },
+	{ id: "tickets", label: "Tickets", icon: IoTicketOutline, to: "/developer/tickets" },
+	{ id: "verification", label: "Verification", icon: IoCheckmarkDoneOutline, to: "/developer/verification" },
+	{ id: "security", label: "Security", icon: IoLockClosedOutline, to: "/developer/security" },
+	{ id: "broadcasts", label: "Broadcasts", icon: IoMegaphoneOutline, to: "/developer/broadcasts" },
+	{ id: "flags", label: "Feature flags", icon: IoFlashOutline, to: "/developer/flags" },
 	{ id: "audit", label: "Audit logs", icon: IoDocumentTextOutline, to: "/developer/audit" },
 ];
 

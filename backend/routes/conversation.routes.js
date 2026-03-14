@@ -19,6 +19,18 @@ import {
 	updateGroupMemberRole,
 	updateGroupConversation,
 } from "../controllers/conversation.controller.js";
+import {
+	createGroupAnnouncement,
+	createGroupEvent,
+	createGroupInviteLink,
+	createGroupPoll,
+	getGroupWorkspace,
+	joinGroupByInviteLink,
+	respondToGroupJoinRequest,
+	revokeGroupInviteLink,
+	updateGroupWorkspaceSettings,
+	voteGroupPoll,
+} from "../controllers/groupWorkspace.controller.js";
 
 const router = express.Router();
 
@@ -28,8 +40,18 @@ router.post("/direct-invitations", protectRoute, sendDirectInvitation);
 router.post("/direct-invitations/:id/respond", protectRoute, respondToDirectInvitation);
 router.patch("/:id/preferences", protectRoute, updateConversationPreferences);
 router.patch("/:id/disappearing", protectRoute, updateConversationDisappearingMessages);
+router.post("/groups/join-by-link", protectRoute, joinGroupByInviteLink);
 router.post("/groups", protectRoute, avatarUpload.single("profilePic"), createGroupConversation);
 router.patch("/groups/:id", protectRoute, avatarUpload.single("profilePic"), updateGroupConversation);
+router.get("/groups/:id/workspace", protectRoute, getGroupWorkspace);
+router.patch("/groups/:id/workspace/settings", protectRoute, updateGroupWorkspaceSettings);
+router.post("/groups/:id/announcements", protectRoute, createGroupAnnouncement);
+router.post("/groups/:id/events", protectRoute, createGroupEvent);
+router.post("/groups/:id/polls", protectRoute, createGroupPoll);
+router.post("/groups/:id/polls/:pollId/votes", protectRoute, voteGroupPoll);
+router.post("/groups/:id/invite-links", protectRoute, createGroupInviteLink);
+router.delete("/groups/:id/invite-links/:linkId", protectRoute, revokeGroupInviteLink);
+router.post("/groups/:id/join-requests/:requestId/respond", protectRoute, respondToGroupJoinRequest);
 router.post("/groups/:id/join", protectRoute, joinPublicGroupConversation);
 router.post("/groups/:id/members", protectRoute, addGroupMembers);
 router.post("/groups/:id/invitations", protectRoute, sendGroupInvitation);

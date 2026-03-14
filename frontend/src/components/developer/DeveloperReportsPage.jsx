@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import DeveloperSelect from "./DeveloperSelect";
 import { formatDeveloperDateTime } from "./developerDashboardShared";
 
 const reportStatusClasses = {
@@ -8,19 +9,29 @@ const reportStatusClasses = {
 	DISMISSED: "border-slate-200/15 bg-white/[0.05] text-slate-200",
 };
 
+const reportPriorityClasses = {
+	LOW: "border-white/10 bg-white/[0.05] text-slate-200",
+	MEDIUM: "border-sky-300/20 bg-sky-500/10 text-sky-100",
+	HIGH: "border-amber-300/20 bg-amber-400/10 text-amber-100",
+	CRITICAL: "border-rose-300/20 bg-rose-500/10 text-rose-100",
+};
+
 const statusOrder = ["OPEN", "IN_REVIEW", "RESOLVED", "DISMISSED"];
+const priorityOrder = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
 const targetTypeDescriptions = {
 	USER: "Account reports",
 	GROUP: "Group moderation cases",
 	MESSAGE: "Group message incidents",
 };
+const ruleScopeOptions = ["MESSAGE", "REPORT", "USERNAME", "PROFILE"];
 
 const normalizeDraftsFromReports = (reports) =>
 	reports.reduce((accumulator, report) => {
 		accumulator[report._id] = {
 			actionTaken: report.actionTaken || "",
 			resolutionNote: report.resolutionNote || "",
+			priority: report.priority || "MEDIUM",
 		};
 		return accumulator;
 	}, {});
@@ -33,17 +44,30 @@ const DeveloperReportsPage = ({
 	actionKey,
 	onCreateReport,
 	onUpdateReport,
+	moderationCenter,
+	onCreateRule,
+	onUpdateRule,
+	onDeleteRule,
 	openDeleteReportPopup,
 	canManageReports,
 	canDeleteReports,
 }) => {
 	const [searchValue, setSearchValue] = useState("");
 	const [statusFilter, setStatusFilter] = useState("ALL");
+	const [priorityFilter, setPriorityFilter] = useState("ALL");
 	const [createForm, setCreateForm] = useState({
 		targetType: "USER",
 		targetId: "",
+		priority: "MEDIUM",
 		reason: "",
 		details: "",
+	});
+	const [ruleForm, setRuleForm] = useState({
+		label: "",
+		pattern: "",
+		scope: "MESSAGE",
+		severity: "MEDIUM",
+		actionHint: "",
 	});
 	const [reportDrafts, setReportDrafts] = useState({});
 
@@ -55,6 +79,7 @@ const DeveloperReportsPage = ({
 					nextDrafts[report._id] = {
 						actionTaken: report.actionTaken || "",
 						resolutionNote: report.resolutionNote || "",
+						priority: report.priority || "MEDIUM",
 					};
 				}
 			});
@@ -110,6 +135,9 @@ const DeveloperReportsPage = ({
 			if (statusFilter !== "ALL" && report.status !== statusFilter) {
 				return false;
 			}
+			if (priorityFilter !== "ALL" && report.priority !== priorityFilter) {
+				return false;
+			}
 
 			if (!normalizedQuery) return true;
 
@@ -118,6 +146,7 @@ const DeveloperReportsPage = ({
 				report.details,
 				report.targetLabel,
 				report.targetType,
+				report.priority,
 				report.createdBy?.fullName,
 				report.reviewedBy?.fullName,
 				report.actionTaken,
@@ -126,7 +155,7 @@ const DeveloperReportsPage = ({
 				.filter(Boolean)
 				.some((value) => value.toLowerCase().includes(normalizedQuery));
 		});
-	}, [reports, searchValue, statusFilter]);
+	}, [priorityFilter, reports, searchValue, statusFilter]);
 
 	const createActionBusy = actionKey === "create-report";
 
@@ -190,6 +219,61 @@ const DeveloperReportsPage = ({
 						</button>
 					))}
 				</div>
+
+				<div className='mt-4 flex flex-wrap gap-2'>
+					{["ALL", ...priorityOrder].map((priority) => (
+						<button
+							key={priority}
+							type='button'
+							onClick={() => setPriorityFilter(priority)}
+							className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+								priorityFilter === priority
+									? "border-sky-300/28 bg-sky-500/12 text-white"
+									: "border-white/10 bg-white/[0.04] text-slate-300"
+							}`}
+						>
+							{priority === "ALL" ? "All priorities" : priority}
+						</button>
+					))}
+				</div>
+
+				{moderationCenter ? (
+					<div className='mt-5 grid gap-3 xl:grid-cols-3'>
+						<div className='rounded-[20px] border border-white/8 bg-white/[0.025] p-4'>
+							<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500'>Repeated targets</p>
+							<div className='mt-3 space-y-2'>
+								{(moderationCenter.abusePatterns?.repeatTargets || []).slice(0, 3).map((entry) => (
+									<div key={entry.targetKey} className='flex items-center justify-between gap-3 text-sm'>
+										<span className='truncate text-slate-300'>{entry.targetLabel}</span>
+										<span className='font-semibold text-white'>{entry.count}</span>
+									</div>
+								))}
+							</div>
+						</div>
+						<div className='rounded-[20px] border border-white/8 bg-white/[0.025] p-4'>
+							<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500'>Top reasons</p>
+							<div className='mt-3 space-y-2'>
+								{(moderationCenter.abusePatterns?.topReasons || []).slice(0, 3).map((entry) => (
+									<div key={entry.reason} className='flex items-center justify-between gap-3 text-sm'>
+										<span className='truncate text-slate-300'>{entry.reason}</span>
+										<span className='font-semibold text-white'>{entry.count}</span>
+									</div>
+								))}
+							</div>
+						</div>
+						<div className='rounded-[20px] border border-white/8 bg-white/[0.025] p-4'>
+							<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500'>Keyword hits</p>
+							<div className='mt-3 space-y-2'>
+								{(moderationCenter.abusePatterns?.keywordHits || []).slice(0, 3).map((entry) => (
+									<div key={entry.label} className='flex items-center justify-between gap-3 text-sm'>
+										<span className='truncate text-slate-300'>{entry.label}</span>
+										<span className='font-semibold text-white'>{entry.count}</span>
+									</div>
+								))}
+							</div>
+						</div>
+					</div>
+				) : null}
 			</div>
 
 			<div className='grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]'>
@@ -203,23 +287,26 @@ const DeveloperReportsPage = ({
 					<div className='mt-5 grid gap-4'>
 						<div>
 							<label className='text-xs font-medium uppercase tracking-[0.18em] text-slate-500'>Target type</label>
-							<select
+							<DeveloperSelect
 								value={createForm.targetType}
-								onChange={(event) =>
+								onChange={(nextValue) =>
 									setCreateForm({
-										targetType: event.target.value,
+										targetType: nextValue,
 										targetId: "",
+										priority: createForm.priority,
 										reason: createForm.reason,
 										details: createForm.details,
 									})
 								}
-								className='mt-2 h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/35 px-4 text-sm text-slate-100 outline-none'
+								options={[
+									{ value: "USER", label: "User", description: "Open a case on an account." },
+									{ value: "GROUP", label: "Group", description: "Review a group moderation issue." },
+									{ value: "MESSAGE", label: "Group message", description: "Investigate a specific message id." },
+								]}
+								className='mt-2'
+								ariaLabel='Report target type'
 								disabled={!canManageReports}
-							>
-								<option value='USER'>User</option>
-								<option value='GROUP'>Group</option>
-								<option value='MESSAGE'>Group message</option>
-							</select>
+							/>
 							<p className='mt-2 text-xs text-slate-500'>{targetTypeDescriptions[createForm.targetType]}</p>
 						</div>
 
@@ -237,20 +324,31 @@ const DeveloperReportsPage = ({
 									disabled={!canManageReports}
 								/>
 							) : (
-								<select
+								<DeveloperSelect
 									value={createForm.targetId}
-									onChange={(event) => setCreateForm((currentForm) => ({ ...currentForm, targetId: event.target.value }))}
-									className='mt-2 h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/35 px-4 text-sm text-slate-100 outline-none'
-									disabled={!canManageReports}
-								>
-									{reportTargetOptions.length === 0 ? <option value=''>No targets available</option> : null}
-									{reportTargetOptions.map((option) => (
-										<option key={option.value} value={option.value}>
-											{option.label}
-										</option>
-									))}
-								</select>
+									onChange={(nextValue) => setCreateForm((currentForm) => ({ ...currentForm, targetId: nextValue }))}
+									options={
+										reportTargetOptions.length === 0
+											? [{ value: "", label: "No targets available", description: "Nothing matches the selected target type.", disabled: true }]
+											: reportTargetOptions
+									}
+									className='mt-2'
+									ariaLabel='Report target'
+									disabled={!canManageReports || reportTargetOptions.length === 0}
+								/>
 							)}
+						</div>
+
+						<div>
+							<label className='text-xs font-medium uppercase tracking-[0.18em] text-slate-500'>Priority</label>
+							<DeveloperSelect
+								value={createForm.priority}
+								onChange={(nextValue) => setCreateForm((currentForm) => ({ ...currentForm, priority: nextValue }))}
+								options={priorityOrder}
+								className='mt-2'
+								ariaLabel='Report priority'
+								disabled={!canManageReports}
+							/>
 						</div>
 
 						<div>
@@ -286,6 +384,98 @@ const DeveloperReportsPage = ({
 						>
 							{createActionBusy ? "Creating..." : "Create report"}
 						</button>
+					</div>
+
+					<div className='mt-6 border-t border-white/10 pt-5'>
+						<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500'>Keyword rules</p>
+						<div className='mt-4 grid gap-3'>
+							<input
+								type='text'
+								value={ruleForm.label}
+								onChange={(event) => setRuleForm((current) => ({ ...current, label: event.target.value }))}
+								placeholder='Rule label'
+								className='h-11 rounded-[16px] border border-white/10 bg-slate-950/35 px-4 text-sm text-slate-100 outline-none placeholder:text-slate-500'
+								disabled={!canManageReports}
+							/>
+							<input
+								type='text'
+								value={ruleForm.pattern}
+								onChange={(event) => setRuleForm((current) => ({ ...current, pattern: event.target.value }))}
+								placeholder='Pattern or keyword'
+								className='h-11 rounded-[16px] border border-white/10 bg-slate-950/35 px-4 text-sm text-slate-100 outline-none placeholder:text-slate-500'
+								disabled={!canManageReports}
+							/>
+							<div className='grid gap-3 sm:grid-cols-2'>
+								<DeveloperSelect
+									value={ruleForm.scope}
+									onChange={(nextValue) => setRuleForm((current) => ({ ...current, scope: nextValue }))}
+									options={ruleScopeOptions}
+									size='sm'
+									ariaLabel='Rule scope'
+									disabled={!canManageReports}
+								/>
+								<DeveloperSelect
+									value={ruleForm.severity}
+									onChange={(nextValue) => setRuleForm((current) => ({ ...current, severity: nextValue }))}
+									options={priorityOrder}
+									size='sm'
+									ariaLabel='Rule severity'
+									disabled={!canManageReports}
+								/>
+							</div>
+							<button
+								type='button'
+								onClick={async () => {
+									const succeeded = await onCreateRule(ruleForm);
+									if (succeeded) {
+										setRuleForm({
+											label: "",
+											pattern: "",
+											scope: "MESSAGE",
+											severity: "MEDIUM",
+											actionHint: "",
+										});
+									}
+								}}
+								disabled={!canManageReports || actionKey === "create-rule"}
+								className='inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.05] px-4 py-2.5 text-sm font-semibold text-slate-100 disabled:opacity-60'
+							>
+								{actionKey === "create-rule" ? "Creating..." : "Add moderation rule"}
+							</button>
+
+							<div className='space-y-2'>
+								{(moderationCenter?.rules || []).slice(0, 6).map((rule) => (
+									<div key={rule._id} className='rounded-[16px] border border-white/8 bg-white/[0.025] px-3 py-2.5'>
+										<div className='flex flex-wrap items-center justify-between gap-2'>
+											<div>
+												<p className='text-sm font-semibold text-white'>{rule.label}</p>
+												<p className='mt-1 text-xs text-slate-500'>
+													{rule.scope} · {rule.severity}
+												</p>
+											</div>
+											<div className='flex gap-2'>
+												<button
+													type='button'
+													onClick={() => onUpdateRule(rule, { isActive: !rule.isActive })}
+													disabled={!canManageReports || actionKey === `update-rule-${rule._id}`}
+													className='rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-xs font-semibold text-slate-200 disabled:opacity-60'
+												>
+													{rule.isActive ? "Disable" : "Enable"}
+												</button>
+												<button
+													type='button'
+													onClick={() => onDeleteRule(rule)}
+													disabled={!canManageReports || actionKey === `delete-rule-${rule._id}`}
+													className='rounded-full border border-rose-400/20 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 disabled:opacity-60'
+												>
+													Delete
+												</button>
+											</div>
+										</div>
+									</div>
+								))}
+							</div>
+						</div>
 					</div>
 				</form>
 
@@ -337,6 +527,13 @@ const DeveloperReportsPage = ({
 												<span className='rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300'>
 													{report.targetType}
 												</span>
+												<span
+													className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+														reportPriorityClasses[report.priority] || "border-white/10 bg-white/[0.04] text-slate-300"
+													}`}
+												>
+													{report.priority}
+												</span>
 											</div>
 											<p className='mt-2 text-sm font-medium text-slate-200'>{report.reason}</p>
 											{report.details ? <p className='mt-2 text-sm leading-7 text-slate-400'>{report.details}</p> : null}
@@ -344,11 +541,59 @@ const DeveloperReportsPage = ({
 												<span>Created {formatDeveloperDateTime(report.createdAt)}</span>
 												{report.createdBy?.fullName ? <span>By {report.createdBy.fullName}</span> : null}
 												{report.reviewedBy?.fullName ? <span>Reviewed by {report.reviewedBy.fullName}</span> : null}
+												{report.assignedTo?.fullName ? <span>Assigned to {report.assignedTo.fullName}</span> : null}
 											</div>
 										</div>
 									</div>
 
+									{report.moderationInsights ? (
+										<div className='mt-4 grid gap-3 lg:grid-cols-[minmax(0,0.72fr)_minmax(0,0.28fr)]'>
+											<div className='rounded-[18px] border border-white/8 bg-slate-950/40 p-3'>
+												<p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500'>Signals</p>
+												<div className='mt-3 flex flex-wrap gap-2'>
+													<span className='rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300'>
+														Risk {report.moderationInsights.riskLevel}
+													</span>
+													<span className='rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300'>
+														Related {report.moderationInsights.relatedReportCount}
+													</span>
+												</div>
+												<div className='mt-3 flex flex-wrap gap-2'>
+													{(report.moderationInsights.matchedRules || []).map((rule) => (
+														<span
+															key={rule.id}
+															className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+																reportPriorityClasses[rule.severity] || "border-white/10 bg-white/[0.04] text-slate-300"
+															}`}
+														>
+															{rule.label}
+														</span>
+													))}
+												</div>
+											</div>
+											<div className='rounded-[18px] border border-white/8 bg-slate-950/40 p-3'>
+												<p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500'>Timeline</p>
+												<div className='mt-3 space-y-2'>
+													{(report.timeline || []).slice(-3).map((event) => (
+														<div key={event._id} className='text-xs text-slate-400'>
+															<p className='font-semibold text-slate-200'>{event.status}</p>
+															<p>{formatDeveloperDateTime(event.createdAt)}</p>
+														</div>
+													))}
+												</div>
+											</div>
+										</div>
+									) : null}
+
 									<div className='mt-4 grid gap-3'>
+										<DeveloperSelect
+											value={draft.priority}
+											onChange={(nextValue) => handleDraftChange(report._id, "priority", nextValue)}
+											options={priorityOrder}
+											size='sm'
+											ariaLabel='Draft report priority'
+											disabled={!canManageReports}
+										/>
 										<input
 											type='text'
 											value={draft.actionTaken}
@@ -376,6 +621,7 @@ const DeveloperReportsPage = ({
 												onClick={() =>
 													onUpdateReport(report, {
 														status,
+														priority: draft.priority,
 														actionTaken: draft.actionTaken,
 														resolutionNote: draft.resolutionNote,
 													})

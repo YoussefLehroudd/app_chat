@@ -18,6 +18,7 @@ import { toConversationMemberDto, toMessageDto, toUserDto } from "../utils/forma
 import { CONVERSATION_MEMBER_ROLES, CONVERSATION_TYPES } from "../utils/conversations.js";
 import { deleteMessageEverywhere } from "../utils/messageModeration.js";
 import { DEVELOPER_ROLE, USER_ROLE } from "../utils/roles.js";
+import { createSecurityEvent } from "../utils/securityEvents.js";
 import { buildUsernameInsensitiveLookup, normalizeUsername, USERNAME_PATTERN } from "../utils/usernames.js";
 
 const VALID_ROLES = new Set([USER_ROLE, DEVELOPER_ROLE]);
@@ -26,7 +27,8 @@ const DEVELOPER_GROUP_MESSAGE_LIMIT = 80;
 const GROUP_ROLE_ORDER = {
 	[CONVERSATION_MEMBER_ROLES.OWNER]: 0,
 	[CONVERSATION_MEMBER_ROLES.ADMIN]: 1,
-	[CONVERSATION_MEMBER_ROLES.MEMBER]: 2,
+	[CONVERSATION_MEMBER_ROLES.MODERATOR]: 2,
+	[CONVERSATION_MEMBER_ROLES.MEMBER]: 3,
 };
 const developerUserSelect = {
 	id: true,
@@ -917,6 +919,15 @@ export const updateDeveloperUserVerification = async (req, res) => {
 				? `${req.user.fullName} verified a user`
 				: `${req.user.fullName} removed a verification badge`,
 			details: null,
+		});
+		await createSecurityEvent({
+			userId: updatedUser.id,
+			eventType: isVerified ? "VERIFIED_BADGE_GRANTED" : "VERIFIED_BADGE_REVOKED",
+			riskLevel: "LOW",
+			summary: isVerified ? "Verified badge granted by developer" : "Verified badge removed by developer",
+			details: {
+				reviewedById: req.user._id,
+			},
 		});
 		emitSessionUserUpdated(updatedUser);
 		emitPublicUserUpdated(updatedUser);

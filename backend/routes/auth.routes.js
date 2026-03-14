@@ -6,6 +6,7 @@ import {
 	forgotPassword,
 	forgotUsername,
 	getCurrentUser,
+	getMyFeatureFlags,
 	getSessionUser,
 	login,
 	logout,
@@ -31,6 +32,7 @@ router.post("/verify-email", verifyEmail);
 router.post("/logout", logout);
 router.get("/session", getSessionUser);
 router.get("/me", protectRoute, getCurrentUser);
+router.get("/feature-flags", protectRoute, getMyFeatureFlags);
 router.post("/send-verification-email", protectRoute, sendEmailVerification);
 router.post("/2fa/setup", protectRoute, createTwoFactorSetupSession);
 router.post("/2fa/verify", protectRoute, verifyTwoFactorSetup);

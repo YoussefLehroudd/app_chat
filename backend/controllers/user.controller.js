@@ -6,6 +6,7 @@ import { CONVERSATION_TYPES, DIRECT_CONVERSATION_STATUSES } from "../utils/conve
 import { buildUsernameInsensitiveLookup, normalizeUsername, USERNAME_PATTERN } from "../utils/usernames.js";
 import { SESSION_COOKIE_NAME } from "../utils/authSecurity.js";
 import { getBlockStatus, upsertConversationPreference } from "../utils/chatRelationships.js";
+import { createRequestSecurityEvent } from "../utils/securityEvents.js";
 import {
 	listActiveUserSessions,
 	revokeOtherUserSessions,
@@ -340,6 +341,21 @@ export const revokeSessionByTokenId = async (req, res) => {
 
 		await revokeUserSession(sessionTokenId);
 
+		await createRequestSecurityEvent({
+			req,
+			userId: req.user._id,
+			eventType: "SESSION_REVOKED",
+			riskLevel: "LOW",
+			summary:
+				sessionTokenId === req.user.currentSessionId
+					? "Current session signed out"
+					: "A device session was revoked",
+			details: {
+				sessionTokenId,
+				isCurrent: sessionTokenId === req.user.currentSessionId,
+			},
+		});
+
 		if (sessionTokenId === req.user.currentSessionId) {
 			res.clearCookie(SESSION_COOKIE_NAME);
 		}
@@ -363,6 +379,16 @@ export const revokeSessionByTokenId = async (req, res) => {
 export const revokeOtherSessions = async (req, res) => {
 	try {
 		await revokeOtherUserSessions(req.user._id, req.user.currentSessionId || null);
+		await createRequestSecurityEvent({
+			req,
+			userId: req.user._id,
+			eventType: "SESSION_REVOKED",
+			riskLevel: "LOW",
+			summary: "Other device sessions were revoked",
+			details: {
+				exceptSessionTokenId: req.user.currentSessionId || null,
+			},
+		});
 		return res.status(200).json({ message: "Other sessions signed out" });
 	} catch (error) {
 		console.error("Error in revokeOtherSessions:", error.message);

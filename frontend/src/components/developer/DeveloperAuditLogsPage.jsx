@@ -11,6 +11,7 @@ const entityToneByType = {
 const DeveloperAuditLogsPage = ({ loading, auditLogs }) => {
 	const [searchValue, setSearchValue] = useState("");
 	const [entityFilter, setEntityFilter] = useState("ALL");
+	const [actionFilter, setActionFilter] = useState("ALL");
 
 	const entityCounts = useMemo(
 		() =>
@@ -29,6 +30,9 @@ const DeveloperAuditLogsPage = ({ loading, auditLogs }) => {
 			if (entityFilter !== "ALL" && log.entityType !== entityFilter) {
 				return false;
 			}
+			if (actionFilter !== "ALL" && log.action !== actionFilter) {
+				return false;
+			}
 
 			if (!normalizedQuery) return true;
 
@@ -36,9 +40,10 @@ const DeveloperAuditLogsPage = ({ loading, auditLogs }) => {
 				.filter(Boolean)
 				.some((value) => value.toLowerCase().includes(normalizedQuery));
 		});
-	}, [auditLogs, entityFilter, searchValue]);
+	}, [actionFilter, auditLogs, entityFilter, searchValue]);
 
 	const entityFilters = ["ALL", ...Object.keys(entityCounts).sort()];
+	const actionFilters = ["ALL", ...Array.from(new Set(auditLogs.map((log) => log.action))).sort()];
 
 	return (
 		<div className='w-full min-w-0 space-y-4'>
@@ -74,6 +79,23 @@ const DeveloperAuditLogsPage = ({ loading, auditLogs }) => {
 							}`}
 						>
 							{entityType === "ALL" ? "All" : `${entityType} (${entityCounts[entityType] || 0})`}
+						</button>
+					))}
+				</div>
+
+				<div className='mt-3 flex flex-wrap items-center gap-2'>
+					{actionFilters.map((action) => (
+						<button
+							key={action}
+							type='button'
+							onClick={() => setActionFilter(action)}
+							className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+								actionFilter === action
+									? "border-sky-300/28 bg-sky-500/12 text-white"
+									: "border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
+							}`}
+						>
+							{action === "ALL" ? "All actions" : action.replaceAll("_", " ")}
 						</button>
 					))}
 				</div>

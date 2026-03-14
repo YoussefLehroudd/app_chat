@@ -162,6 +162,7 @@ const DeveloperUsersPage = ({
 	openBanModal,
 	openArchiveModal,
 	openEditUserModal,
+	openUserInsightsModal,
 	openDeveloperPermissionsModal,
 	canManageUsers,
 	canEditUserData,
@@ -313,6 +314,13 @@ const DeveloperUsersPage = ({
 											)}
 										</div>
 									) : null}
+									<button
+										type='button'
+										onClick={() => openUserInsightsModal(user)}
+										className='inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/10 bg-white/[0.05] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.08]'
+									>
+										Insights
+									</button>
 									<button
 										type='button'
 										disabled={!canEditUserData || isProtectedPrimary || isBusy}

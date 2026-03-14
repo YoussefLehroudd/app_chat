@@ -31,7 +31,14 @@ enum DirectConversationStatus {
 enum ConversationMemberRole {
   OWNER
   ADMIN
+  MODERATOR
   MEMBER
+}
+
+enum GroupJoinRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
 }
 
 enum ReportStatus {
@@ -45,6 +52,82 @@ enum ReportTargetType {
   USER
   GROUP
   MESSAGE
+}
+
+enum ReportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_USER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum VerificationRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BroadcastStatus {
+  DRAFT
+  SENT
+  FAILED
+}
+
+enum BroadcastType {
+  IN_APP
+  EMAIL
+  BOTH
+}
+
+enum BroadcastAudienceType {
+  ALL_USERS
+  ACTIVE_USERS
+  VERIFIED_USERS
+  UNVERIFIED_USERS
+  DEVELOPERS
+}
+
+enum SecurityEventType {
+  FAILED_LOGIN
+  LOGIN_SUCCESS
+  ACCOUNT_LOCKED
+  SUSPICIOUS_IP
+  SESSION_REVOKED
+  PASSWORD_RESET
+  TWO_FACTOR_ENABLED
+  TWO_FACTOR_DISABLED
+  EMAIL_VERIFIED
+  VERIFIED_BADGE_GRANTED
+  VERIFIED_BADGE_REVOKED
+}
+
+enum SecurityRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ModerationRuleScope {
+  MESSAGE
+  USERNAME
+  PROFILE
+  REPORT
 }
 
 enum CallMediaType {
@@ -96,6 +179,8 @@ model User {
   twoFactorEnabled                Boolean   @default(false)
   twoFactorSecret                 String?
   twoFactorPendingSecret          String?
+  failedLoginAttempts             Int       @default(0)
+  lockedUntil                     DateTime?
   showOnlineStatus                Boolean   @default(true)
   showLastSeen                    Boolean   @default(true)
   showReadReceipts                Boolean   @default(true)
@@ -106,30 +191,50 @@ model User {
   createdAt                       DateTime  @default(now())
   updatedAt                       DateTime  @updatedAt
 
-  conversationsAsUserOne  Conversation[]           @relation("UserOne")
-  conversationsAsUserTwo  Conversation[]           @relation("UserTwo")
-  createdConversations    Conversation[]           @relation("GroupCreator")
-  conversationMemberships ConversationMember[]
-  sentMessages            Message[]                @relation("SentMessages")
-  receivedMessages        Message[]                @relation("ReceivedMessages")
-  createdReports          Report[]                 @relation("ReportsCreated")
-  reviewedReports         Report[]                 @relation("ReportsReviewed")
-  targetedReports         Report[]                 @relation("TargetUserReports")
-  auditLogs               AuditLog[]               @relation("UserAuditLogs")
-  createdCallSessions     CallSession[]            @relation("CreatedCallSessions")
-  endedCallSessions       CallSession[]            @relation("EndedCallSessions")
-  callParticipations      CallParticipant[]        @relation("CallParticipants")
-  callInvitationsSent     CallParticipant[]        @relation("CallInvitationsSent")
-  stories                 Story[]
-  seenStories             StoryView[]              @relation("StoryViews")
-  messageReactions        MessageReaction[]
-  pinnedMessagesCreated   PinnedMessage[]          @relation("PinnedMessagesByUser")
-  savedMessages           SavedMessage[]
-  conversationPreferences ConversationPreference[]
-  blockedUsers            UserBlock[]              @relation("BlocksInitiated")
-  blockedByUsers          UserBlock[]              @relation("BlockedBy")
-  sessions                UserSession[]
-  loginChallenges         LoginChallenge[]
+  conversationsAsUserOne       Conversation[]           @relation("UserOne")
+  conversationsAsUserTwo       Conversation[]           @relation("UserTwo")
+  createdConversations         Conversation[]           @relation("GroupCreator")
+  conversationMemberships      ConversationMember[]
+  sentMessages                 Message[]                @relation("SentMessages")
+  receivedMessages             Message[]                @relation("ReceivedMessages")
+  createdReports               Report[]                 @relation("ReportsCreated")
+  reviewedReports              Report[]                 @relation("ReportsReviewed")
+  assignedReports              Report[]                 @relation("ReportsAssigned")
+  targetedReports              Report[]                 @relation("TargetUserReports")
+  reportStatusEvents           ReportStatusEvent[]      @relation("ReportStatusEventsActor")
+  auditLogs                    AuditLog[]               @relation("UserAuditLogs")
+  createdSupportTickets        SupportTicket[]          @relation("SupportTicketsCreated")
+  assignedSupportTickets       SupportTicket[]          @relation("SupportTicketsAssigned")
+  supportTicketMessages        SupportTicketMessage[]   @relation("SupportTicketMessagesAuthor")
+  verificationRequests         VerificationRequest[]    @relation("VerificationRequestsTarget")
+  createdVerificationRequests  VerificationRequest[]    @relation("VerificationRequestsCreatedBy")
+  reviewedVerificationRequests VerificationRequest[]    @relation("VerificationRequestsReviewedBy")
+  securityEvents               SecurityEvent[]
+  createdModerationRules       ContentModerationRule[]  @relation("ModerationRulesCreated")
+  createdBroadcastCampaigns    BroadcastCampaign[]      @relation("BroadcastCampaignsCreated")
+  featureFlagsCreated          FeatureFlag[]            @relation("FeatureFlagsCreated")
+  featureFlagsUpdated          FeatureFlag[]            @relation("FeatureFlagsUpdated")
+  createdCallSessions          CallSession[]            @relation("CreatedCallSessions")
+  endedCallSessions            CallSession[]            @relation("EndedCallSessions")
+  callParticipations           CallParticipant[]        @relation("CallParticipants")
+  callInvitationsSent          CallParticipant[]        @relation("CallInvitationsSent")
+  stories                      Story[]
+  seenStories                  StoryView[]              @relation("StoryViews")
+  messageReactions             MessageReaction[]
+  pinnedMessagesCreated        PinnedMessage[]          @relation("PinnedMessagesByUser")
+  savedMessages                SavedMessage[]
+  conversationPreferences      ConversationPreference[]
+  blockedUsers                 UserBlock[]              @relation("BlocksInitiated")
+  blockedByUsers               UserBlock[]              @relation("BlockedBy")
+  sessions                     UserSession[]
+  loginChallenges              LoginChallenge[]
+  createdGroupInviteLinks      GroupInviteLink[]        @relation("GroupInviteLinksCreated")
+  groupJoinRequests            GroupJoinRequest[]       @relation("GroupJoinRequestUser")
+  respondedJoinRequests        GroupJoinRequest[]       @relation("GroupJoinRequestResponder")
+  createdGroupPolls            GroupPoll[]              @relation("GroupPollsCreated")
+  groupPollVotes               GroupPollVote[]
+  createdGroupEvents           GroupEvent[]             @relation("GroupEventsCreated")
+  createdAnnouncements         GroupAnnouncement[]      @relation("GroupAnnouncementsCreated")
 }
 
 model Conversation {
@@ -147,6 +252,8 @@ model Conversation {
   isPrivate                   Boolean                  @default(false)
   memberLimit                 Int?
   disappearingMessagesSeconds Int?
+  slowModeSeconds             Int?
+  pinnedRules                 Json?
   createdAt                   DateTime                 @default(now())
   updatedAt                   DateTime                 @updatedAt
 
@@ -159,6 +266,11 @@ model Conversation {
   callSessions   CallSession[]
   pinnedMessages PinnedMessage[]
   preferences    ConversationPreference[]
+  inviteLinks    GroupInviteLink[]
+  joinRequests   GroupJoinRequest[]
+  polls          GroupPoll[]
+  events         GroupEvent[]
+  announcements  GroupAnnouncement[]
 
   @@unique([userOneId, userTwoId, type])
   @@index([userOneId])
@@ -227,8 +339,10 @@ model Report {
   id                   String           @id @default(uuid())
   createdById          String?
   reviewedById         String?
+  assignedToId         String?
   targetType           ReportTargetType
   status               ReportStatus     @default(OPEN)
+  priority             ReportPriority   @default(MEDIUM)
   reason               String
   details              String?          @default("")
   resolutionNote       String?
@@ -241,20 +355,41 @@ model Report {
   updatedAt            DateTime         @updatedAt
   reviewedAt           DateTime?
 
-  createdBy          User?         @relation("ReportsCreated", fields: [createdById], references: [id], onDelete: SetNull)
-  reviewedBy         User?         @relation("ReportsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
-  targetUser         User?         @relation("TargetUserReports", fields: [targetUserId], references: [id], onDelete: SetNull)
-  targetConversation Conversation? @relation("TargetConversationReports", fields: [targetConversationId], references: [id], onDelete: SetNull)
-  targetMessage      Message?      @relation("TargetMessageReports", fields: [targetMessageId], references: [id], onDelete: SetNull)
+  createdBy          User?               @relation("ReportsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  reviewedBy         User?               @relation("ReportsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  assignedTo         User?               @relation("ReportsAssigned", fields: [assignedToId], references: [id], onDelete: SetNull)
+  targetUser         User?               @relation("TargetUserReports", fields: [targetUserId], references: [id], onDelete: SetNull)
+  targetConversation Conversation?       @relation("TargetConversationReports", fields: [targetConversationId], references: [id], onDelete: SetNull)
+  targetMessage      Message?            @relation("TargetMessageReports", fields: [targetMessageId], references: [id], onDelete: SetNull)
+  events             ReportStatusEvent[]
 
   @@index([status])
+  @@index([priority])
   @@index([targetType])
   @@index([createdById])
   @@index([reviewedById])
+  @@index([assignedToId])
   @@index([targetUserId])
   @@index([targetConversationId])
   @@index([targetMessageId])
   @@index([createdAt])
+}
+
+model ReportStatusEvent {
+  id          String          @id @default(uuid())
+  reportId    String
+  actorId     String?
+  status      ReportStatus
+  priority    ReportPriority?
+  note        String?
+  actionTaken String?
+  createdAt   DateTime        @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  actor  User?  @relation("ReportStatusEventsActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([reportId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model AuditLog {
@@ -273,6 +408,151 @@ model AuditLog {
   @@index([actorId])
   @@index([entityType])
   @@index([createdAt])
+}
+
+model SupportTicket {
+  id             String                @id @default(uuid())
+  createdById    String
+  assignedToId   String?
+  subject        String
+  category       String                @default("GENERAL")
+  status         SupportTicketStatus   @default(OPEN)
+  priority       SupportTicketPriority @default(MEDIUM)
+  details        String
+  resolutionNote String?
+  tags           String[]              @default([])
+  closedAt       DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  createdBy  User                   @relation("SupportTicketsCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  assignedTo User?                  @relation("SupportTicketsAssigned", fields: [assignedToId], references: [id], onDelete: SetNull)
+  messages   SupportTicketMessage[]
+
+  @@index([createdById, createdAt])
+  @@index([assignedToId, status])
+  @@index([status, priority, createdAt])
+}
+
+model SupportTicketMessage {
+  id         String   @id @default(uuid())
+  ticketId   String
+  authorId   String
+  message    String
+  isInternal Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User          @relation("SupportTicketMessagesAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model VerificationRequest {
+  id            String                    @id @default(uuid())
+  userId        String
+  requestedById String
+  reviewedById  String?
+  status        VerificationRequestStatus @default(PENDING)
+  requestNote   String?
+  reviewNote    String?
+  proofLinks    String[]                  @default([])
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  reviewedAt    DateTime?
+
+  user        User  @relation("VerificationRequestsTarget", fields: [userId], references: [id], onDelete: Cascade)
+  requestedBy User  @relation("VerificationRequestsCreatedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  reviewedBy  User? @relation("VerificationRequestsReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, status, createdAt])
+  @@index([requestedById, createdAt])
+  @@index([reviewedById, status])
+}
+
+model SecurityEvent {
+  id        String            @id @default(uuid())
+  userId    String?
+  eventType SecurityEventType
+  riskLevel SecurityRiskLevel @default(LOW)
+  ipAddress String?
+  userAgent String?
+  summary   String
+  details   Json?
+  createdAt DateTime          @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([riskLevel, createdAt])
+}
+
+model ContentModerationRule {
+  id          String              @id @default(uuid())
+  label       String
+  pattern     String
+  isRegex     Boolean             @default(false)
+  scope       ModerationRuleScope @default(MESSAGE)
+  severity    ReportPriority      @default(MEDIUM)
+  actionHint  String?
+  isActive    Boolean             @default(true)
+  createdById String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  createdBy User? @relation("ModerationRulesCreated", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([scope, isActive, createdAt])
+  @@index([createdById])
+}
+
+model BroadcastCampaign {
+  id                 String                @id @default(uuid())
+  createdById        String
+  title              String
+  subject            String?
+  content            String
+  type               BroadcastType         @default(IN_APP)
+  audienceType       BroadcastAudienceType @default(ALL_USERS)
+  status             BroadcastStatus       @default(DRAFT)
+  filterJson         Json?
+  audienceCount      Int                   @default(0)
+  deliveryCount      Int                   @default(0)
+  emailDeliveryCount Int                   @default(0)
+  failureReason      String?
+  sentAt             DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  createdBy User @relation("BroadcastCampaignsCreated", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([createdById, createdAt])
+  @@index([status, createdAt])
+}
+
+model FeatureFlag {
+  id               String   @id @default(uuid())
+  key              String   @unique
+  name             String
+  description      String?  @default("")
+  isEnabled        Boolean  @default(false)
+  rolloutPercent   Int      @default(0)
+  targetRoles      String[] @default([])
+  allowListUserIds String[] @default([])
+  createdById      String?
+  updatedById      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdBy User? @relation("FeatureFlagsCreated", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("FeatureFlagsUpdated", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([isEnabled, updatedAt])
+  @@index([createdById])
+  @@index([updatedById])
 }
 
 model CallSession {
@@ -411,6 +691,122 @@ model ConversationPreference {
 
   @@id([conversationId, userId])
   @@index([userId, isArchived])
+}
+
+model GroupInviteLink {
+  id             String    @id @default(uuid())
+  conversationId String
+  code           String    @unique
+  createdById    String
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdBy    User               @relation("GroupInviteLinksCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  joinRequests GroupJoinRequest[]
+
+  @@index([conversationId, revokedAt, createdAt])
+  @@index([createdById])
+}
+
+model GroupJoinRequest {
+  id             String                 @id @default(uuid())
+  conversationId String
+  requesterId    String
+  inviteLinkId   String?
+  status         GroupJoinRequestStatus @default(PENDING)
+  message        String?                @default("")
+  respondedById  String?
+  respondedAt    DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  requester    User             @relation("GroupJoinRequestUser", fields: [requesterId], references: [id], onDelete: Cascade)
+  inviteLink   GroupInviteLink? @relation(fields: [inviteLinkId], references: [id], onDelete: SetNull)
+  respondedBy  User?            @relation("GroupJoinRequestResponder", fields: [respondedById], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, status, createdAt])
+  @@index([requesterId, status, createdAt])
+}
+
+model GroupPoll {
+  id             String    @id @default(uuid())
+  conversationId String
+  question       String
+  allowsMultiple Boolean   @default(false)
+  closesAt       DateTime?
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  conversation  Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdBy     User              @relation("GroupPollsCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  options       GroupPollOption[]
+  GroupPollVote GroupPollVote[]
+
+  @@index([conversationId, createdAt])
+  @@index([createdById])
+}
+
+model GroupPollOption {
+  id       String @id @default(uuid())
+  pollId   String
+  label    String
+  position Int
+
+  poll  GroupPoll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes GroupPollVote[]
+
+  @@index([pollId, position])
+}
+
+model GroupPollVote {
+  pollId    String
+  optionId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  poll   GroupPoll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option GroupPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([optionId, userId])
+  @@index([pollId, userId])
+}
+
+model GroupEvent {
+  id             String    @id @default(uuid())
+  conversationId String
+  title          String
+  description    String?   @default("")
+  startsAt       DateTime
+  endsAt         DateTime?
+  location       String?   @default("")
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("GroupEventsCreated", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, startsAt])
+  @@index([createdById])
+}
+
+model GroupAnnouncement {
+  id             String   @id @default(uuid())
+  conversationId String
+  content        String
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("GroupAnnouncementsCreated", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([createdById])
 }
 
 model UserBlock {

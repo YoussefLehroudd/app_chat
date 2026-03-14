@@ -14,16 +14,31 @@ const REPORT_STATUSES = {
 	DISMISSED: "DISMISSED",
 };
 
+const REPORT_PRIORITIES = {
+	LOW: "LOW",
+	MEDIUM: "MEDIUM",
+	HIGH: "HIGH",
+	CRITICAL: "CRITICAL",
+};
+
 const REPORT_TARGET_TYPES = {
 	USER: "USER",
 	GROUP: "GROUP",
 	MESSAGE: "MESSAGE",
 };
 
+const MODERATION_RULE_SCOPES = {
+	MESSAGE: "MESSAGE",
+	USERNAME: "USERNAME",
+	PROFILE: "PROFILE",
+	REPORT: "REPORT",
+};
+
 const GROUP_ROLE_ORDER = {
 	[CONVERSATION_MEMBER_ROLES.OWNER]: 0,
 	[CONVERSATION_MEMBER_ROLES.ADMIN]: 1,
-	[CONVERSATION_MEMBER_ROLES.MEMBER]: 2,
+	[CONVERSATION_MEMBER_ROLES.MODERATOR]: 2,
+	[CONVERSATION_MEMBER_ROLES.MEMBER]: 3,
 };
 
 const DEVELOPER_GROUP_MESSAGE_LIMIT = 80;
@@ -136,6 +151,9 @@ const reportInclude = {
 	reviewedBy: {
 		select: developerUserSelect,
 	},
+	assignedTo: {
+		select: developerUserSelect,
+	},
 	targetUser: {
 		select: developerUserSelect,
 	},
@@ -165,11 +183,114 @@ const reportInclude = {
 			},
 		},
 	},
+	events: {
+		orderBy: { createdAt: "asc" },
+		include: {
+			actor: {
+				select: developerUserSelect,
+			},
+		},
+	},
 };
 
 const normalizeText = (value, maxLength = 500) => {
 	if (typeof value !== "string") return "";
 	return value.trim().slice(0, maxLength);
+};
+
+const normalizeReportPriority = (value) => {
+	const normalizedValue = typeof value === "string" ? value.trim().toUpperCase() : "";
+	return Object.values(REPORT_PRIORITIES).includes(normalizedValue)
+		? normalizedValue
+		: REPORT_PRIORITIES.MEDIUM;
+};
+
+const normalizeModerationRuleScope = (value) => {
+	const normalizedValue = typeof value === "string" ? value.trim().toUpperCase() : "";
+	return Object.values(MODERATION_RULE_SCOPES).includes(normalizedValue)
+		? normalizedValue
+		: MODERATION_RULE_SCOPES.MESSAGE;
+};
+
+const buildModerationTextBlocks = (report) => [
+	{
+		scope: MODERATION_RULE_SCOPES.REPORT,
+		value: [report.reason, report.details].filter(Boolean).join("\n"),
+	},
+	{
+		scope: MODERATION_RULE_SCOPES.MESSAGE,
+		value: [
+			report.targetMessage?.message,
+			report.targetMessage?.attachmentFileName,
+			report.targetMessage?.attachmentMimeType,
+		]
+			.filter(Boolean)
+			.join("\n"),
+	},
+	{
+		scope: MODERATION_RULE_SCOPES.USERNAME,
+		value: report.targetUser?.username || "",
+	},
+	{
+		scope: MODERATION_RULE_SCOPES.PROFILE,
+		value: [report.targetUser?.fullName, report.targetUser?.bio].filter(Boolean).join("\n"),
+	},
+];
+
+const moderationRuleMatchesText = (rule, text) => {
+	if (!rule?.pattern || !text) {
+		return false;
+	}
+
+	if (rule.isRegex) {
+		try {
+			return new RegExp(rule.pattern, "i").test(text);
+		} catch {
+			return false;
+		}
+	}
+
+	return text.toLowerCase().includes(rule.pattern.toLowerCase());
+};
+
+const buildModerationInsights = ({ report, rules = [], relatedReportCount = 0, repeatedReasonCount = 0 }) => {
+	const textBlocks = buildModerationTextBlocks(report);
+	const matchedRules = rules
+		.filter((rule) => {
+			if (!rule?.isActive) return false;
+			const matchingText = textBlocks.find((block) => block.scope === rule.scope);
+			return moderationRuleMatchesText(rule, matchingText?.value || "");
+		})
+		.map((rule) => ({
+			id: rule.id,
+			label: rule.label,
+			scope: rule.scope,
+			severity: rule.severity,
+			actionHint: rule.actionHint || "",
+		}));
+
+	const severityWeight = matchedRules.reduce((sum, rule) => {
+		if (rule.severity === REPORT_PRIORITIES.CRITICAL) return sum + 4;
+		if (rule.severity === REPORT_PRIORITIES.HIGH) return sum + 3;
+		if (rule.severity === REPORT_PRIORITIES.MEDIUM) return sum + 2;
+		return sum + 1;
+	}, 0);
+	const repeatedAbuseScore = Math.max(0, relatedReportCount - 1) + Math.max(0, repeatedReasonCount - 1);
+	const totalScore = severityWeight + repeatedAbuseScore;
+
+	return {
+		matchedRules,
+		relatedReportCount,
+		repeatedReasonCount,
+		riskLevel:
+			totalScore >= 8
+				? "CRITICAL"
+				: totalScore >= 5
+					? "HIGH"
+					: totalScore >= 3
+						? "MEDIUM"
+						: "LOW",
+	};
 };
 
 const parseGroupMemberLimit = (memberLimit) => {
@@ -418,11 +539,22 @@ const logDeveloperAudit = async (actor, entry) => {
 	}
 };
 
-const mapReport = (report) => {
+const mapReportStatusEvent = (event) => ({
+	_id: event.id,
+	status: event.status,
+	priority: event.priority ?? null,
+	note: event.note ?? "",
+	actionTaken: event.actionTaken ?? "",
+	createdAt: event.createdAt,
+	actor: event.actor ? toUserDto(event.actor) : null,
+});
+
+const mapReport = (report, insights = null) => {
 	const targetMessage = report.targetMessage ? toMessagePreviewDto(report.targetMessage) : null;
 	return {
 		_id: report.id,
 		status: report.status,
+		priority: report.priority ?? REPORT_PRIORITIES.MEDIUM,
 		targetType: report.targetType,
 		reason: report.reason,
 		details: report.details ?? "",
@@ -439,6 +571,7 @@ const mapReport = (report) => {
 		reviewedAt: report.reviewedAt ?? null,
 		createdBy: report.createdBy ? toUserDto(report.createdBy) : null,
 		reviewedBy: report.reviewedBy ? toUserDto(report.reviewedBy) : null,
+		assignedTo: report.assignedTo ? toUserDto(report.assignedTo) : null,
 		targetUser: report.targetUser ? toUserDto(report.targetUser) : null,
 		targetConversation: report.targetConversation
 			? {
@@ -452,6 +585,8 @@ const mapReport = (report) => {
 			  }
 			: null,
 		targetMessage,
+		timeline: (report.events || []).map(mapReportStatusEvent),
+		moderationInsights: insights,
 	};
 };
 
@@ -561,14 +696,85 @@ const resolveReportTarget = async (targetType, targetId) => {
 	throw error;
 };
 
+const resolveReportAssignment = async (assignedToId) => {
+	const normalizedAssignedToId = typeof assignedToId === "string" ? assignedToId.trim() : "";
+	if (!normalizedAssignedToId) {
+		return null;
+	}
+
+	const assignedDeveloper = await prisma.user.findUnique({
+		where: { id: normalizedAssignedToId },
+		select: {
+			id: true,
+			role: true,
+			isArchived: true,
+			isBanned: true,
+		},
+	});
+
+	if (!assignedDeveloper || assignedDeveloper.role !== "DEVELOPER" || assignedDeveloper.isArchived || assignedDeveloper.isBanned) {
+		const error = new Error("Assigned reviewer must be an active developer");
+		error.statusCode = 400;
+		throw error;
+	}
+
+	return assignedDeveloper.id;
+};
+
+const buildReportAnalyticsMaps = (reports) => {
+	const targetCountMap = new Map();
+	const reasonCountMap = new Map();
+
+	for (const report of reports) {
+		const targetKey =
+			report.targetMessageId ||
+			report.targetConversationId ||
+			report.targetUserId ||
+			`${report.targetType}:${report.targetLabel || report.id}`;
+		const reasonKey = (report.reason || "").trim().toLowerCase();
+
+		targetCountMap.set(targetKey, (targetCountMap.get(targetKey) || 0) + 1);
+		if (reasonKey) {
+			reasonCountMap.set(reasonKey, (reasonCountMap.get(reasonKey) || 0) + 1);
+		}
+	}
+
+	return { reasonCountMap, targetCountMap };
+};
+
 export const getDeveloperReports = async (req, res) => {
 	try {
-		const reports = await prisma.report.findMany({
-			orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-			include: reportInclude,
-		});
+		const [reports, rules] = await Promise.all([
+			prisma.report.findMany({
+				orderBy: [{ status: "asc" }, { priority: "desc" }, { createdAt: "desc" }],
+				include: reportInclude,
+			}),
+			prisma.contentModerationRule.findMany({
+				where: { isActive: true },
+				orderBy: [{ severity: "desc" }, { createdAt: "desc" }],
+			}),
+		]);
+		const { reasonCountMap, targetCountMap } = buildReportAnalyticsMaps(reports);
 
-		return res.status(200).json(reports.map(mapReport));
+		return res.status(200).json(
+			reports.map((report) => {
+				const targetKey =
+					report.targetMessageId ||
+					report.targetConversationId ||
+					report.targetUserId ||
+					`${report.targetType}:${report.targetLabel || report.id}`;
+				const reasonKey = (report.reason || "").trim().toLowerCase();
+				return mapReport(
+					report,
+					buildModerationInsights({
+						report,
+						rules,
+						relatedReportCount: targetCountMap.get(targetKey) || 0,
+						repeatedReasonCount: reasonKey ? reasonCountMap.get(reasonKey) || 0 : 0,
+					})
+				);
+			})
+		);
 	} catch (error) {
 		return handleWorkspaceError(error, res, "getDeveloperReports");
 	}
@@ -581,6 +787,7 @@ export const createDeveloperReport = async (req, res) => {
 		const targetId = typeof req.body?.targetId === "string" ? req.body.targetId.trim() : "";
 		const reason = normalizeText(req.body?.reason, 220);
 		const details = normalizeText(req.body?.details, 2000);
+		const priority = normalizeReportPriority(req.body?.priority);
 
 		if (!Object.values(REPORT_TARGET_TYPES).includes(targetType)) {
 			return res.status(400).json({ error: "Invalid report target type" });
@@ -590,14 +797,27 @@ export const createDeveloperReport = async (req, res) => {
 			return res.status(400).json({ error: "Report reason is required" });
 		}
 
-		const target = await resolveReportTarget(targetType, targetId);
+		const [target, assignedToId] = await Promise.all([
+			resolveReportTarget(targetType, targetId),
+			resolveReportAssignment(req.body?.assignedToId),
+		]);
 		const report = await prisma.report.create({
 			data: {
 				createdById: req.user._id,
+				assignedToId,
 				targetType,
+				priority,
 				reason,
 				details,
 				...target,
+				events: {
+					create: {
+						actorId: req.user._id,
+						status: REPORT_STATUSES.OPEN,
+						priority,
+						note: details || null,
+					},
+				},
 			},
 			include: reportInclude,
 		});
@@ -612,6 +832,8 @@ export const createDeveloperReport = async (req, res) => {
 				targetType,
 				targetId,
 				reason,
+				priority,
+				assignedToId,
 			},
 		});
 		emitDeveloperWorkspaceRefresh({
@@ -639,6 +861,10 @@ export const updateDeveloperReport = async (req, res) => {
 		const status = typeof req.body?.status === "string" ? req.body.status.trim().toUpperCase() : "";
 		const resolutionNote = normalizeText(req.body?.resolutionNote, 1200);
 		const actionTaken = normalizeText(req.body?.actionTaken, 500);
+		const priority = normalizeReportPriority(req.body?.priority);
+		const assignedToId = await resolveReportAssignment(
+			Object.prototype.hasOwnProperty.call(req.body || {}, "assignedToId") ? req.body?.assignedToId : undefined
+		);
 
 		if (!Object.values(REPORT_STATUSES).includes(status)) {
 			return res.status(400).json({ error: "Invalid report status" });
@@ -653,14 +879,37 @@ export const updateDeveloperReport = async (req, res) => {
 			return res.status(404).json({ error: "Report not found" });
 		}
 
+		const hasStatusChanged = existingReport.status !== status;
+		const hasPriorityChanged = existingReport.priority !== priority;
+		const hasAssignmentChanged =
+			(existingReport.assignedToId || null) !==
+			(Object.prototype.hasOwnProperty.call(req.body || {}, "assignedToId") ? assignedToId : existingReport.assignedToId || null);
+		const nextAssignedToId = Object.prototype.hasOwnProperty.call(req.body || {}, "assignedToId")
+			? assignedToId
+			: existingReport.assignedToId || null;
+
 		const report = await prisma.report.update({
 			where: { id },
 			data: {
 				status,
+				priority,
+				assignedToId: nextAssignedToId,
 				resolutionNote: resolutionNote || null,
 				actionTaken: actionTaken || null,
 				reviewedById: status === REPORT_STATUSES.OPEN ? null : req.user._id,
 				reviewedAt: status === REPORT_STATUSES.OPEN ? null : new Date(),
+				events:
+					hasStatusChanged || hasPriorityChanged || resolutionNote || actionTaken || hasAssignmentChanged
+						? {
+								create: {
+									actorId: req.user._id,
+									status,
+									priority,
+									note: resolutionNote || null,
+									actionTaken: actionTaken || null,
+								},
+						  }
+						: undefined,
 			},
 			include: reportInclude,
 		});
@@ -674,6 +923,10 @@ export const updateDeveloperReport = async (req, res) => {
 			details: {
 				previousStatus: existingReport.status,
 				nextStatus: status,
+				previousPriority: existingReport.priority,
+				nextPriority: priority,
+				previousAssignedToId: existingReport.assignedToId || null,
+				nextAssignedToId,
 				actionTaken: actionTaken || null,
 			},
 		});
@@ -752,6 +1005,302 @@ export const getDeveloperAuditLogs = async (req, res) => {
 		return res.status(200).json(auditLogs.map(mapAuditLog));
 	} catch (error) {
 		return handleWorkspaceError(error, res, "getDeveloperAuditLogs");
+	}
+};
+
+const mapModerationRule = (rule) => ({
+	_id: rule.id,
+	label: rule.label,
+	pattern: rule.pattern,
+	isRegex: Boolean(rule.isRegex),
+	scope: rule.scope,
+	severity: rule.severity,
+	actionHint: rule.actionHint || "",
+	isActive: Boolean(rule.isActive),
+	createdAt: rule.createdAt,
+	updatedAt: rule.updatedAt,
+	createdBy: rule.createdBy ? toUserDto(rule.createdBy) : null,
+});
+
+export const getDeveloperModerationCenter = async (req, res) => {
+	try {
+		const [reports, rules] = await Promise.all([
+			prisma.report.findMany({
+				orderBy: [{ createdAt: "desc" }],
+				include: reportInclude,
+			}),
+			prisma.contentModerationRule.findMany({
+				orderBy: [{ isActive: "desc" }, { severity: "desc" }, { createdAt: "desc" }],
+				include: {
+					createdBy: {
+						select: developerUserSelect,
+					},
+				},
+			}),
+		]);
+
+		const { reasonCountMap, targetCountMap } = buildReportAnalyticsMaps(reports);
+		const topReasons = Array.from(reasonCountMap.entries())
+			.sort((entryA, entryB) => entryB[1] - entryA[1])
+			.slice(0, 5)
+			.map(([reason, count]) => ({ reason, count }));
+		const repeatTargets = reports
+			.map((report) => {
+				const targetKey =
+					report.targetMessageId ||
+					report.targetConversationId ||
+					report.targetUserId ||
+					`${report.targetType}:${report.targetLabel || report.id}`;
+				return {
+					targetKey,
+					targetLabel: report.targetLabel || report.targetUser?.fullName || report.targetConversation?.title || "Unknown target",
+					count: targetCountMap.get(targetKey) || 0,
+				};
+			})
+			.filter((entry, index, entries) => entry.count > 1 && entries.findIndex((candidate) => candidate.targetKey === entry.targetKey) === index)
+			.sort((entryA, entryB) => entryB.count - entryA.count)
+			.slice(0, 5);
+
+		const keywordHitsMap = new Map();
+		const mappedQueue = reports.map((report) => {
+			const targetKey =
+				report.targetMessageId ||
+				report.targetConversationId ||
+				report.targetUserId ||
+				`${report.targetType}:${report.targetLabel || report.id}`;
+			const reasonKey = (report.reason || "").trim().toLowerCase();
+			const insights = buildModerationInsights({
+				report,
+				rules,
+				relatedReportCount: targetCountMap.get(targetKey) || 0,
+				repeatedReasonCount: reasonKey ? reasonCountMap.get(reasonKey) || 0 : 0,
+			});
+
+			insights.matchedRules.forEach((rule) => {
+				keywordHitsMap.set(rule.label, (keywordHitsMap.get(rule.label) || 0) + 1);
+			});
+
+			return mapReport(report, insights);
+		});
+
+		const keywordHits = Array.from(keywordHitsMap.entries())
+			.sort((entryA, entryB) => entryB[1] - entryA[1])
+			.slice(0, 6)
+			.map(([label, count]) => ({ label, count }));
+
+		return res.status(200).json({
+			queue: mappedQueue,
+			rules: rules.map(mapModerationRule),
+			summary: {
+				openCount: reports.filter((report) => report.status === REPORT_STATUSES.OPEN).length,
+				inReviewCount: reports.filter((report) => report.status === REPORT_STATUSES.IN_REVIEW).length,
+				criticalCount: reports.filter((report) => report.priority === REPORT_PRIORITIES.CRITICAL).length,
+				highCount: reports.filter((report) => report.priority === REPORT_PRIORITIES.HIGH).length,
+			},
+			abusePatterns: {
+				topReasons,
+				repeatTargets,
+				keywordHits,
+			},
+		});
+	} catch (error) {
+		return handleWorkspaceError(error, res, "getDeveloperModerationCenter");
+	}
+};
+
+export const createDeveloperModerationRule = async (req, res) => {
+	try {
+		ensureDeveloperPermission(req.user, "manageReports", "You do not have permission to manage moderation rules");
+		const label = normalizeText(req.body?.label, 120);
+		const pattern = normalizeText(req.body?.pattern, 240);
+		const actionHint = normalizeText(req.body?.actionHint, 320);
+		const scope = normalizeModerationRuleScope(req.body?.scope);
+		const severity = normalizeReportPriority(req.body?.severity);
+		const isRegex = req.body?.isRegex === true || req.body?.isRegex === "true";
+		const isActive = req.body?.isActive !== false && req.body?.isActive !== "false";
+
+		if (!label || !pattern) {
+			return res.status(400).json({ error: "Rule label and pattern are required" });
+		}
+
+		const rule = await prisma.contentModerationRule.create({
+			data: {
+				label,
+				pattern,
+				scope,
+				severity,
+				actionHint: actionHint || null,
+				isRegex,
+				isActive,
+				createdById: req.user._id,
+			},
+			include: {
+				createdBy: {
+					select: developerUserSelect,
+				},
+			},
+		});
+
+		await logDeveloperAudit(req.user, {
+			action: "MODERATION_RULE_CREATED",
+			entityType: "MODERATION_RULE",
+			entityId: rule.id,
+			entityLabel: rule.label,
+			summary: `${req.user.fullName} created a moderation rule`,
+			details: { scope, severity, isRegex, isActive },
+		});
+		emitDeveloperWorkspaceRefresh({
+			action: "MODERATION_RULE_CREATED",
+			entityType: "MODERATION_RULE",
+			entityId: rule.id,
+		});
+
+		return res.status(201).json({
+			message: "Moderation rule created",
+			rule: mapModerationRule(rule),
+		});
+	} catch (error) {
+		return handleWorkspaceError(error, res, "createDeveloperModerationRule");
+	}
+};
+
+export const updateDeveloperModerationRule = async (req, res) => {
+	try {
+		ensureDeveloperPermission(req.user, "manageReports", "You do not have permission to manage moderation rules");
+		const { id } = req.params;
+		const existingRule = await prisma.contentModerationRule.findUnique({
+			where: { id },
+			include: {
+				createdBy: {
+					select: developerUserSelect,
+				},
+			},
+		});
+
+		if (!existingRule) {
+			return res.status(404).json({ error: "Moderation rule not found" });
+		}
+
+		const nextLabel = typeof req.body?.label === "string" ? normalizeText(req.body.label, 120) : existingRule.label;
+		const nextPattern =
+			typeof req.body?.pattern === "string" ? normalizeText(req.body.pattern, 240) : existingRule.pattern;
+		const nextActionHint =
+			typeof req.body?.actionHint === "string"
+				? normalizeText(req.body.actionHint, 320) || null
+				: existingRule.actionHint;
+		const nextScope =
+			typeof req.body?.scope === "string" ? normalizeModerationRuleScope(req.body.scope) : existingRule.scope;
+		const nextSeverity =
+			typeof req.body?.severity === "string" ? normalizeReportPriority(req.body.severity) : existingRule.severity;
+		const nextIsRegex =
+			typeof req.body?.isRegex !== "undefined" ? req.body.isRegex === true || req.body.isRegex === "true" : existingRule.isRegex;
+		const nextIsActive =
+			typeof req.body?.isActive !== "undefined"
+				? req.body.isActive === true || req.body.isActive === "true"
+				: existingRule.isActive;
+
+		if (!nextLabel || !nextPattern) {
+			return res.status(400).json({ error: "Rule label and pattern are required" });
+		}
+
+		const rule = await prisma.contentModerationRule.update({
+			where: { id },
+			data: {
+				label: nextLabel,
+				pattern: nextPattern,
+				scope: nextScope,
+				severity: nextSeverity,
+				actionHint: nextActionHint,
+				isRegex: nextIsRegex,
+				isActive: nextIsActive,
+			},
+			include: {
+				createdBy: {
+					select: developerUserSelect,
+				},
+			},
+		});
+
+		await logDeveloperAudit(req.user, {
+			action: "MODERATION_RULE_UPDATED",
+			entityType: "MODERATION_RULE",
+			entityId: rule.id,
+			entityLabel: rule.label,
+			summary: `${req.user.fullName} updated a moderation rule`,
+			details: {
+				previous: {
+					label: existingRule.label,
+					scope: existingRule.scope,
+					severity: existingRule.severity,
+					isRegex: existingRule.isRegex,
+					isActive: existingRule.isActive,
+				},
+				next: {
+					label: rule.label,
+					scope: rule.scope,
+					severity: rule.severity,
+					isRegex: rule.isRegex,
+					isActive: rule.isActive,
+				},
+			},
+		});
+		emitDeveloperWorkspaceRefresh({
+			action: "MODERATION_RULE_UPDATED",
+			entityType: "MODERATION_RULE",
+			entityId: rule.id,
+		});
+
+		return res.status(200).json({
+			message: "Moderation rule updated",
+			rule: mapModerationRule(rule),
+		});
+	} catch (error) {
+		return handleWorkspaceError(error, res, "updateDeveloperModerationRule");
+	}
+};
+
+export const deleteDeveloperModerationRule = async (req, res) => {
+	try {
+		ensureDeveloperPermission(req.user, "manageReports", "You do not have permission to manage moderation rules");
+		const { id } = req.params;
+		const existingRule = await prisma.contentModerationRule.findUnique({
+			where: { id },
+			select: {
+				id: true,
+				label: true,
+				scope: true,
+				severity: true,
+			},
+		});
+
+		if (!existingRule) {
+			return res.status(404).json({ error: "Moderation rule not found" });
+		}
+
+		await prisma.contentModerationRule.delete({
+			where: { id },
+		});
+
+		await logDeveloperAudit(req.user, {
+			action: "MODERATION_RULE_DELETED",
+			entityType: "MODERATION_RULE",
+			entityId: id,
+			entityLabel: existingRule.label,
+			summary: `${req.user.fullName} deleted a moderation rule`,
+			details: {
+				scope: existingRule.scope,
+				severity: existingRule.severity,
+			},
+		});
+		emitDeveloperWorkspaceRefresh({
+			action: "MODERATION_RULE_DELETED",
+			entityType: "MODERATION_RULE",
+			entityId: id,
+		});
+
+		return res.status(200).json({ message: "Moderation rule deleted", ruleId: id });
+	} catch (error) {
+		return handleWorkspaceError(error, res, "deleteDeveloperModerationRule");
 	}
 };
 
@@ -974,6 +1523,7 @@ export const updateDeveloperGroupMemberRole = async (req, res) => {
 			![
 				CONVERSATION_MEMBER_ROLES.OWNER,
 				CONVERSATION_MEMBER_ROLES.ADMIN,
+				CONVERSATION_MEMBER_ROLES.MODERATOR,
 				CONVERSATION_MEMBER_ROLES.MEMBER,
 			].includes(normalizedRole)
 		) {

@@ -12,10 +12,17 @@ import {
 } from "react-icons/io5";
 import DeveloperAuditLogsPage from "../../components/developer/DeveloperAuditLogsPage";
 import DeveloperAnalyticsPage from "../../components/developer/DeveloperAnalyticsPage";
+import DeveloperBroadcastsPage from "../../components/developer/DeveloperBroadcastsPage";
+import DeveloperFeatureFlagsPage from "../../components/developer/DeveloperFeatureFlagsPage";
 import DeveloperGroupInspectorModal from "../../components/developer/DeveloperGroupInspectorModal";
 import DeveloperGroupsPage from "../../components/developer/DeveloperGroupsPage";
 import DeveloperReportsPage from "../../components/developer/DeveloperReportsPage";
+import DeveloperSecurityPage from "../../components/developer/DeveloperSecurityPage";
+import DeveloperSelect from "../../components/developer/DeveloperSelect";
+import DeveloperSupportTicketsPage from "../../components/developer/DeveloperSupportTicketsPage";
+import DeveloperUserInsightsModal from "../../components/developer/DeveloperUserInsightsModal";
 import DeveloperUsersPage from "../../components/developer/DeveloperUsersPage";
+import DeveloperVerificationQueuePage from "../../components/developer/DeveloperVerificationQueuePage";
 import {
 	developerPermissionDefinitions,
 	developerSections,
@@ -31,6 +38,11 @@ const getDeveloperSection = (pathname) => {
 	if (pathname.startsWith("/developer/users")) return "users";
 	if (pathname.startsWith("/developer/groups")) return "groups";
 	if (pathname.startsWith("/developer/reports")) return "reports";
+	if (pathname.startsWith("/developer/tickets")) return "tickets";
+	if (pathname.startsWith("/developer/verification")) return "verification";
+	if (pathname.startsWith("/developer/security")) return "security";
+	if (pathname.startsWith("/developer/broadcasts")) return "broadcasts";
+	if (pathname.startsWith("/developer/flags")) return "flags";
 	if (pathname.startsWith("/developer/audit")) return "audit";
 	if (pathname.startsWith("/developer/analytics")) return "analytics";
 	return null;
@@ -46,6 +58,19 @@ const createEditUserDraft = (user) => ({
 	profilePicFile: null,
 	profilePicPreviewUrl: "",
 });
+
+const getSectionSubtitle = (sectionId) => {
+	if (sectionId === "analytics") return "Charts and totals";
+	if (sectionId === "users") return "Roles and moderation";
+	if (sectionId === "groups") return "Group activity";
+	if (sectionId === "reports") return "Queue and rules";
+	if (sectionId === "tickets") return "Support follow-up";
+	if (sectionId === "verification") return "Badge reviews";
+	if (sectionId === "security") return "Sessions and risk";
+	if (sectionId === "broadcasts") return "Announcements";
+	if (sectionId === "flags") return "Controlled rollout";
+	return "Action history";
+};
 
 const DeveloperDashboard = () => {
 	const { authUser } = useAuthContext();
@@ -69,6 +94,15 @@ const DeveloperDashboard = () => {
 	const [groups, setGroups] = useState([]);
 	const [reports, setReports] = useState([]);
 	const [auditLogs, setAuditLogs] = useState([]);
+	const [analyticsData, setAnalyticsData] = useState({ kpis: {}, series: {} });
+	const [moderationCenter, setModerationCenter] = useState({ rules: [], abusePatterns: {}, summary: {} });
+	const [supportTickets, setSupportTickets] = useState([]);
+	const [verificationData, setVerificationData] = useState({ requests: [], eligibleUsers: [] });
+	const [securityData, setSecurityData] = useState({ kpis: {}, recentEvents: [], suspiciousIps: [], lockedAccounts: [] });
+	const [broadcasts, setBroadcasts] = useState([]);
+	const [featureFlags, setFeatureFlags] = useState([]);
+	const [userInsightsLoading, setUserInsightsLoading] = useState(false);
+	const [selectedUserInsights, setSelectedUserInsights] = useState(null);
 	const [searchValue, setSearchValue] = useState("");
 	const [groupSearchValue, setGroupSearchValue] = useState("");
 	const [loading, setLoading] = useState(true);
@@ -90,12 +124,32 @@ const DeveloperDashboard = () => {
 
 		try {
 			setErrorMessage("");
-			const [overviewData, usersData, groupsData, reportsData, auditLogsData] = await Promise.all([
+			const [
+				overviewData,
+				usersData,
+				groupsData,
+				reportsData,
+				auditLogsData,
+				analyticsPayload,
+				moderationPayload,
+				supportTicketsData,
+				verificationPayload,
+				securityPayload,
+				broadcastsPayload,
+				featureFlagsPayload,
+			] = await Promise.all([
 				fetchDeveloperJson("/api/developer/overview"),
 				fetchDeveloperJson("/api/developer/users"),
 				fetchDeveloperJson("/api/developer/groups"),
 				fetchDeveloperJson("/api/developer/reports"),
 				fetchDeveloperJson("/api/developer/audit-logs"),
+				fetchDeveloperJson("/api/developer/analytics"),
+				fetchDeveloperJson("/api/developer/moderation-center"),
+				fetchDeveloperJson("/api/developer/support-tickets"),
+				fetchDeveloperJson("/api/developer/verification-requests"),
+				fetchDeveloperJson("/api/developer/security"),
+				fetchDeveloperJson("/api/developer/broadcasts"),
+				fetchDeveloperJson("/api/developer/feature-flags"),
 			]);
 
 			setOverview(overviewData);
@@ -103,6 +157,13 @@ const DeveloperDashboard = () => {
 			setGroups(groupsData);
 			setReports(reportsData);
 			setAuditLogs(auditLogsData);
+			setAnalyticsData(analyticsPayload);
+			setModerationCenter(moderationPayload);
+			setSupportTickets(supportTicketsData);
+			setVerificationData(verificationPayload);
+			setSecurityData(securityPayload);
+			setBroadcasts(broadcastsPayload);
+			setFeatureFlags(featureFlagsPayload);
 		} catch (error) {
 			setErrorMessage(error.message || "Unable to load developer dashboard");
 		} finally {
@@ -156,7 +217,7 @@ const DeveloperDashboard = () => {
 	}, []);
 
 	useEffect(() => {
-		if (!modalState && !confirmState && !selectedGroupId) return undefined;
+		if (!modalState && !confirmState && !selectedGroupId && !selectedUserInsights) return undefined;
 
 		const handleKeyDown = (event) => {
 			if (event.key === "Escape" && !actionKey) {
@@ -169,13 +230,17 @@ const DeveloperDashboard = () => {
 					setSelectedGroupDetails(null);
 					return;
 				}
+				if (selectedUserInsights) {
+					closeUserInsightsModal();
+					return;
+				}
 				setModalState(null);
 			}
 		};
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [actionKey, confirmState, modalState, selectedGroupId]);
+	}, [actionKey, confirmState, modalState, selectedGroupId, selectedUserInsights]);
 
 	useEffect(() => {
 		const previewUrl =
@@ -524,6 +589,277 @@ const DeveloperDashboard = () => {
 		} finally {
 			setActionKey("");
 		}
+	};
+
+	const handleCreateModerationRule = async (payload) => {
+		setActionKey("create-rule");
+		try {
+			const data = await fetchDeveloperJson("/api/developer/moderation-rules", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleUpdateModerationRule = async (rule, payload) => {
+		if (!rule?._id) return false;
+		setActionKey(`update-rule-${rule._id}`);
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/moderation-rules/${rule._id}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setModerationCenter((current) => ({
+				...current,
+				rules: (current.rules || []).map((currentRule) => (currentRule._id === rule._id ? data.rule : currentRule)),
+			}));
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleDeleteModerationRule = async (rule) => {
+		if (!rule?._id) return false;
+		setActionKey(`delete-rule-${rule._id}`);
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/moderation-rules/${rule._id}`, {
+				method: "DELETE",
+			});
+			setModerationCenter((current) => ({
+				...current,
+				rules: (current.rules || []).filter((currentRule) => currentRule._id !== rule._id),
+			}));
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleCreateSupportTicket = async (payload) => {
+		setActionKey("create-ticket");
+		try {
+			const data = await fetchDeveloperJson("/api/developer/support-tickets", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setSupportTickets((currentTickets) => [data.ticket, ...currentTickets]);
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleUpdateSupportTicket = async (ticket, payload) => {
+		if (!ticket?._id) return false;
+		setActionKey(`ticket-update-${ticket._id}`);
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/support-tickets/${ticket._id}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setSupportTickets((currentTickets) =>
+				currentTickets.map((currentTicket) => (currentTicket._id === ticket._id ? data.ticket : currentTicket))
+			);
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleAddSupportTicketMessage = async (ticket, message) => {
+		if (!ticket?._id || !message.trim()) return false;
+		setActionKey(`ticket-message-${ticket._id}`);
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/support-tickets/${ticket._id}/messages`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message, isInternal: true }),
+			});
+			setSupportTickets((currentTickets) =>
+				currentTickets.map((currentTicket) => (currentTicket._id === ticket._id ? data.ticket : currentTicket))
+			);
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleCreateVerificationRequest = async (payload) => {
+		setActionKey("create-verification-request");
+		try {
+			const data = await fetchDeveloperJson("/api/developer/verification-requests", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setVerificationData((current) => ({
+				...current,
+				requests: [data.request, ...(current.requests || [])],
+			}));
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleReviewVerificationRequest = async (request, payload) => {
+		if (!request?._id) return false;
+		setActionKey(`review-verification-${request._id}`);
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/verification-requests/${request._id}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setVerificationData((current) => ({
+				...current,
+				requests: (current.requests || []).map((currentRequest) =>
+					currentRequest._id === request._id ? data.request : currentRequest
+				),
+			}));
+			if (data.user) {
+				setUsers((currentUsers) =>
+					currentUsers.map((currentUser) =>
+						currentUser._id === data.user._id ? { ...currentUser, ...data.user } : currentUser
+					)
+				);
+			}
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleSendBroadcast = async (payload) => {
+		setActionKey("send-broadcast");
+		try {
+			const data = await fetchDeveloperJson("/api/developer/broadcasts", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setBroadcasts((currentCampaigns) => [data.campaign, ...currentCampaigns]);
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleCreateFeatureFlag = async (payload) => {
+		setActionKey("create-flag");
+		try {
+			const data = await fetchDeveloperJson("/api/developer/feature-flags", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setFeatureFlags((currentFlags) => [data.flag, ...currentFlags]);
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleUpdateFeatureFlag = async (flag, payload) => {
+		if (!flag?._id) return false;
+		setActionKey(`update-flag-${flag._id}`);
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/feature-flags/${flag._id}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload),
+			});
+			setFeatureFlags((currentFlags) =>
+				currentFlags.map((currentFlag) => (currentFlag._id === flag._id ? data.flag : currentFlag))
+			);
+			await loadDashboard({ silent: true });
+			toast.success(data.message);
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const openUserInsightsModal = async (user) => {
+		if (!user?._id) return;
+		setSelectedUserInsights({ userId: user._id, data: null });
+		setUserInsightsLoading(true);
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/users/${user._id}/insights`);
+			setSelectedUserInsights({ userId: user._id, data });
+		} catch (error) {
+			toast.error(error.message);
+			setSelectedUserInsights(null);
+		} finally {
+			setUserInsightsLoading(false);
+		}
+	};
+
+	const closeUserInsightsModal = () => {
+		if (actionKey) return;
+		setSelectedUserInsights(null);
+		setUserInsightsLoading(false);
 	};
 
 	const handleSaveGroupSettings = async (groupId, payload) => {
@@ -917,8 +1253,33 @@ const DeveloperDashboard = () => {
 		},
 		reports: {
 			eyebrow: "Incidents",
-			title: "Reports desk",
-			description: "Track moderation cases, review them by status, and record the action taken on each issue.",
+			title: "Moderation center",
+			description: "Track moderation cases, priorities, keyword matches, repeated abuse patterns, and full status timelines.",
+		},
+		tickets: {
+			eyebrow: "Support",
+			title: "Support tickets",
+			description: "Handle user help requests separately from abuse review, with assignees, priorities, and internal notes.",
+		},
+		verification: {
+			eyebrow: "Trust",
+			title: "Verification workflow",
+			description: "Review badge requests, keep approval notes, and fast-track trusted users with verified recovery email.",
+		},
+		security: {
+			eyebrow: "Risk",
+			title: "Session and security",
+			description: "Watch failed logins, suspicious IPs, locked accounts, and active device sessions across the platform.",
+		},
+		broadcasts: {
+			eyebrow: "Comms",
+			title: "Broadcast campaigns",
+			description: "Send in-app or email announcements to audience segments without leaving the developer console.",
+		},
+		flags: {
+			eyebrow: "Release",
+			title: "Feature flags",
+			description: "Roll out new features gradually by percentage before shipping them to everyone.",
 		},
 		audit: {
 			eyebrow: "Traceability",
@@ -978,17 +1339,7 @@ const DeveloperDashboard = () => {
 											</div>
 											<div>
 												<p className='text-sm font-semibold'>{label}</p>
-												<p className='mt-1 text-xs text-slate-500'>
-													{id === "analytics"
-														? "Charts and totals"
-														: id === "users"
-															? "Roles and moderation"
-															: id === "groups"
-																? "Group activity"
-																: id === "reports"
-																	? "Cases and review"
-																	: "Action history"}
-												</p>
+												<p className='mt-1 text-xs text-slate-500'>{getSectionSubtitle(id)}</p>
 											</div>
 										</div>
 										<span className='text-xs font-semibold uppercase tracking-[0.18em] text-slate-500'>
@@ -1155,7 +1506,13 @@ const DeveloperDashboard = () => {
 
 							<div className='order-4 mt-3 min-w-0 overflow-x-hidden overflow-y-visible sm:mt-4 xl:order-none xl:custom-scrollbar xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1'>
 								{activeSection === "analytics" ? (
-									<DeveloperAnalyticsPage loading={loading} overview={overview} users={users} groups={groups} />
+									<DeveloperAnalyticsPage
+										loading={loading}
+										overview={overview}
+										users={users}
+										groups={groups}
+										analyticsData={analyticsData}
+									/>
 								) : null}
 
 								{activeSection === "users" ? (
@@ -1171,6 +1528,7 @@ const DeveloperDashboard = () => {
 										openBanModal={openBanModal}
 										openArchiveModal={openArchiveModal}
 										openEditUserModal={openEditUserModal}
+										openUserInsightsModal={openUserInsightsModal}
 										openDeveloperPermissionsModal={openDeveloperPermissionsModal}
 										canManageUsers={canManageUsers}
 										canEditUserData={canEditUserData}
@@ -1201,10 +1559,60 @@ const DeveloperDashboard = () => {
 										actionKey={actionKey}
 										onCreateReport={handleCreateReport}
 										onUpdateReport={handleUpdateReport}
-										onDeleteReport={handleDeleteReport}
+										moderationCenter={moderationCenter}
+										onCreateRule={handleCreateModerationRule}
+										onUpdateRule={handleUpdateModerationRule}
+										onDeleteRule={handleDeleteModerationRule}
 										openDeleteReportPopup={openDeleteReportPopup}
 										canManageReports={canManageReports}
 										canDeleteReports={canDeleteReports}
+									/>
+								) : null}
+
+								{activeSection === "tickets" ? (
+									<DeveloperSupportTicketsPage
+										loading={loading}
+										tickets={supportTickets}
+										users={users}
+										actionKey={actionKey}
+										onCreateTicket={handleCreateSupportTicket}
+										onUpdateTicket={handleUpdateSupportTicket}
+										onAddTicketMessage={handleAddSupportTicketMessage}
+										canManageReports={canManageReports}
+									/>
+								) : null}
+
+								{activeSection === "verification" ? (
+									<DeveloperVerificationQueuePage
+										loading={loading}
+										verificationData={verificationData}
+										actionKey={actionKey}
+										onCreateRequest={handleCreateVerificationRequest}
+										onReviewRequest={handleReviewVerificationRequest}
+										canManageUsers={canManageUsers}
+									/>
+								) : null}
+
+								{activeSection === "security" ? (
+									<DeveloperSecurityPage loading={loading} securityData={securityData} />
+								) : null}
+
+								{activeSection === "broadcasts" ? (
+									<DeveloperBroadcastsPage
+										campaigns={broadcasts}
+										actionKey={actionKey}
+										onSendBroadcast={handleSendBroadcast}
+										canSendBroadcasts={hasDeveloperPermission(authUser, "fullAccess")}
+									/>
+								) : null}
+
+								{activeSection === "flags" ? (
+									<DeveloperFeatureFlagsPage
+										flags={featureFlags}
+										actionKey={actionKey}
+										onCreateFlag={handleCreateFeatureFlag}
+										onUpdateFlag={handleUpdateFeatureFlag}
+										canManageFeatureFlags={hasDeveloperPermission(authUser, "fullAccess")}
 									/>
 								) : null}
 
@@ -1236,6 +1644,13 @@ const DeveloperDashboard = () => {
 					canDeleteMessage={canDeleteMessages}
 				/>
 			) : null}
+
+			<DeveloperUserInsightsModal
+				open={Boolean(selectedUserInsights)}
+				loading={userInsightsLoading}
+				data={selectedUserInsights?.data || null}
+				onClose={closeUserInsightsModal}
+			/>
 
 			{confirmState ? (
 				<div className='absolute inset-0 z-50 flex items-center justify-center bg-slate-950/78 px-4 backdrop-blur-md'>
@@ -1471,14 +1886,15 @@ const DeveloperDashboard = () => {
 
 									<label className='block'>
 										<span className='mb-2 block text-sm font-medium text-slate-200'>Gender</span>
-										<select
+										<DeveloperSelect
 											value={modalState.draft.gender}
-											onChange={(event) => updateEditUserDraft("gender", event.target.value)}
-											className='h-12 w-full rounded-[18px] border border-white/10 bg-slate-950/45 px-4 text-sm text-slate-100 outline-none transition focus:border-sky-400/40 focus:bg-slate-950/60'
-										>
-											<option value='male'>Male</option>
-											<option value='female'>Female</option>
-										</select>
+											onChange={(nextValue) => updateEditUserDraft("gender", nextValue)}
+											options={[
+												{ value: "male", label: "Male", description: "Default blue avatar fallback." },
+												{ value: "female", label: "Female", description: "Default pink avatar fallback." },
+											]}
+											ariaLabel='User gender'
+										/>
 									</label>
 
 									<div className='rounded-[18px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300'>

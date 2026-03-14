@@ -49,6 +49,8 @@ const toUserDto = (user, options = {}) => {
 		userDto.email = user.email ?? "";
 		userDto.hasRecoveryEmail = Boolean(user.email);
 		userDto.currentSessionId = user.currentSessionId ?? null;
+		userDto.failedLoginAttempts = user.failedLoginAttempts ?? 0;
+		userDto.lockedUntil = user.lockedUntil ?? null;
 	}
 
 	return userDto;

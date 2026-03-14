@@ -44,6 +44,24 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const [groupMemberLimit, setGroupMemberLimit] = useState("");
 	const [groupPrivate, setGroupPrivate] = useState(false);
 	const [groupImageFile, setGroupImageFile] = useState(null);
+	const [groupWorkspace, setGroupWorkspace] = useState(null);
+	const [isGroupWorkspaceLoading, setIsGroupWorkspaceLoading] = useState(false);
+	const [groupWorkspaceAction, setGroupWorkspaceAction] = useState("");
+	const [newRule, setNewRule] = useState("");
+	const [newAnnouncement, setNewAnnouncement] = useState("");
+	const [inviteLinkDays, setInviteLinkDays] = useState("7");
+	const [eventDraft, setEventDraft] = useState({
+		title: "",
+		description: "",
+		location: "",
+		startsAt: "",
+	});
+	const [pollDraft, setPollDraft] = useState({
+		question: "",
+		options: ["", ""],
+		allowsMultiple: false,
+		closesAt: "",
+	});
 	const [isBlockedUser, setIsBlockedUser] = useState(false);
 	const [isDirectActionLoading, setIsDirectActionLoading] = useState(false);
 	const [toolSearchQuery, setToolSearchQuery] = useState("");
@@ -71,7 +89,9 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const isGroupMember = isGroupConversation && Boolean(currentGroupMember);
 	const isGroupOwner = isGroupConversation && currentGroupMember?.memberRole === "OWNER";
 	const isGroupAdmin = isGroupConversation && currentGroupMember?.memberRole === "ADMIN";
+	const isGroupModerator = isGroupConversation && currentGroupMember?.memberRole === "MODERATOR";
 	const canManageGroup = isGroupOwner || isGroupAdmin;
+	const canModerateGroup = isGroupOwner || isGroupAdmin || isGroupModerator;
 	const canInviteToGroup = isGroupMember;
 	const currentMemberCount = user?.memberCount || user?.members?.length || 0;
 	const limitReached = Boolean(user?.memberLimit && currentMemberCount >= user.memberLimit);
@@ -92,6 +112,57 @@ const UserInfoModal = ({ user, open, onClose }) => {
 			return matchesUserSearchQuery(memberSearchValue, [member.fullName, member.username, member.bio]);
 		});
 	}, [isGroupConversation, memberSearchValue, selectableUsers, user?.members]);
+
+	const getRoleActionOptions = (memberRole) => {
+		switch (memberRole) {
+			case "ADMIN":
+				return [
+					{
+						label: "Make moderator",
+						role: "MODERATOR",
+						className:
+							"rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-violet-100 transition hover:border-violet-300/35 hover:bg-violet-500/16 disabled:cursor-not-allowed disabled:opacity-60",
+					},
+					{
+						label: "Make member",
+						role: "MEMBER",
+						className:
+							"rounded-full border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-100 transition hover:border-amber-300/35 hover:bg-amber-500/16 disabled:cursor-not-allowed disabled:opacity-60",
+					},
+				];
+			case "MODERATOR":
+				return [
+					{
+						label: "Make admin",
+						role: "ADMIN",
+						className:
+							"rounded-full border border-sky-300/20 bg-sky-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-100 transition hover:border-sky-300/35 hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-60",
+					},
+					{
+						label: "Make member",
+						role: "MEMBER",
+						className:
+							"rounded-full border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-100 transition hover:border-amber-300/35 hover:bg-amber-500/16 disabled:cursor-not-allowed disabled:opacity-60",
+					},
+				];
+			case "MEMBER":
+			default:
+				return [
+					{
+						label: "Make moderator",
+						role: "MODERATOR",
+						className:
+							"rounded-full border border-violet-300/20 bg-violet-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-violet-100 transition hover:border-violet-300/35 hover:bg-violet-500/16 disabled:cursor-not-allowed disabled:opacity-60",
+					},
+					{
+						label: "Make admin",
+						role: "ADMIN",
+						className:
+							"rounded-full border border-sky-300/20 bg-sky-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-100 transition hover:border-sky-300/35 hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-60",
+					},
+				];
+		}
+	};
 
 	const applyConversationUpdate = (conversation) => {
 		if (!conversation?._id) return;
@@ -151,6 +222,23 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		setGroupMemberLimit(user?.memberLimit ? String(user.memberLimit) : "");
 		setGroupPrivate(Boolean(user?.isPrivate));
 		setGroupImageFile(null);
+		setGroupWorkspace(null);
+		setGroupWorkspaceAction("");
+		setNewRule("");
+		setNewAnnouncement("");
+		setInviteLinkDays("7");
+		setEventDraft({
+			title: "",
+			description: "",
+			location: "",
+			startsAt: "",
+		});
+		setPollDraft({
+			question: "",
+			options: ["", ""],
+			allowsMultiple: false,
+			closesAt: "",
+		});
 		setIsEditMode(false);
 		setShowAddMembers(false);
 		setShowInviteMembers(false);
@@ -203,6 +291,43 @@ const UserInfoModal = ({ user, open, onClose }) => {
 			isCancelled = true;
 		};
 	}, [open, isGroupConversation, user?._id]);
+
+	useEffect(() => {
+		if (!open || !isGroupConversation || !user?._id || !isGroupMember) {
+			return undefined;
+		}
+
+		let isCancelled = false;
+
+		const loadGroupWorkspace = async () => {
+			setIsGroupWorkspaceLoading(true);
+			try {
+				const response = await fetch(`/api/conversations/groups/${user._id}/workspace`);
+				const data = await response.json();
+				if (!response.ok) {
+					throw new Error(data.error || "Failed to load group workspace");
+				}
+
+				if (!isCancelled) {
+					setGroupWorkspace(data);
+				}
+			} catch (error) {
+				if (!isCancelled) {
+					toast.error(error.message);
+				}
+			} finally {
+				if (!isCancelled) {
+					setIsGroupWorkspaceLoading(false);
+				}
+			}
+		};
+
+		loadGroupWorkspace();
+
+		return () => {
+			isCancelled = true;
+		};
+	}, [open, isGroupConversation, isGroupMember, user?._id]);
 
 	useEffect(() => {
 		setToolSearchResults([]);
@@ -388,13 +513,15 @@ const UserInfoModal = ({ user, open, onClose }) => {
 			}
 
 			applyConversationUpdate(data);
-			toast.success(
+			const roleSuccessMessage =
 				role === "OWNER"
 					? "Ownership transferred"
 					: role === "ADMIN"
 						? "Member promoted to admin"
-						: "Admin changed to member"
-			);
+						: role === "MODERATOR"
+							? "Member promoted to moderator"
+							: "Member changed to standard access";
+			toast.success(roleSuccessMessage);
 		} catch (error) {
 			toast.error(error.message);
 		} finally {
@@ -686,6 +813,210 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		} finally {
 			setToolLoadingState("");
 		}
+	};
+
+	const runGroupWorkspaceAction = async ({
+		endpoint,
+		method = "POST",
+		body,
+		successMessage = "",
+		afterSuccess,
+	}) => {
+		if (!isGroupConversation || !user?._id || groupWorkspaceAction) return;
+
+		setGroupWorkspaceAction(endpoint);
+		try {
+			const response = await fetch(endpoint, {
+				method,
+				headers: {
+					"Content-Type": "application/json",
+				},
+				...(typeof body !== "undefined" ? { body: JSON.stringify(body) } : {}),
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to update group workspace");
+			}
+
+			setGroupWorkspace(data);
+			if (successMessage) {
+				toast.success(successMessage);
+			}
+			if (typeof afterSuccess === "function") {
+				afterSuccess();
+			}
+			window.dispatchEvent(new Event("chat:conversations-refresh"));
+			return data;
+		} catch (error) {
+			toast.error(error.message);
+			return null;
+		} finally {
+			setGroupWorkspaceAction("");
+		}
+	};
+
+	const handleUpdateGroupWorkspaceSettings = async (payload, successMessage) =>
+		runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/workspace/settings`,
+			method: "PATCH",
+			body: payload,
+			successMessage,
+		});
+
+	const handleAddPinnedRule = async () => {
+		const nextRule = newRule.trim();
+		if (!nextRule || !groupWorkspace) return;
+
+		const nextRules = [...(groupWorkspace.group?.pinnedRules || []), nextRule];
+		const result = await handleUpdateGroupWorkspaceSettings(
+			{ pinnedRules: nextRules },
+			"Rules updated"
+		);
+		if (result) {
+			setNewRule("");
+		}
+	};
+
+	const handleRemovePinnedRule = async (ruleIndex) => {
+		if (!groupWorkspace) return;
+		const nextRules = (groupWorkspace.group?.pinnedRules || []).filter((_, index) => index !== ruleIndex);
+		await handleUpdateGroupWorkspaceSettings({ pinnedRules: nextRules }, "Rules updated");
+	};
+
+	const handleUpdateSlowMode = async (seconds) => {
+		await handleUpdateGroupWorkspaceSettings(
+			{ slowModeSeconds: seconds },
+			seconds ? "Slow mode updated" : "Slow mode disabled"
+		);
+	};
+
+	const handleCreateAnnouncement = async () => {
+		const content = newAnnouncement.trim();
+		if (!content) return;
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/announcements`,
+			body: { content },
+			successMessage: "Announcement posted",
+		});
+
+		if (result) {
+			setNewAnnouncement("");
+		}
+	};
+
+	const handleCreateEvent = async () => {
+		if (!eventDraft.title.trim() || !eventDraft.startsAt) {
+			toast.error("Event title and date are required");
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/events`,
+			body: {
+				title: eventDraft.title.trim(),
+				description: eventDraft.description.trim(),
+				location: eventDraft.location.trim(),
+				startsAt: eventDraft.startsAt,
+			},
+			successMessage: "Event created",
+		});
+
+		if (result) {
+			setEventDraft({
+				title: "",
+				description: "",
+				location: "",
+				startsAt: "",
+			});
+		}
+	};
+
+	const handlePollOptionChange = (index, value) => {
+		setPollDraft((currentDraft) => ({
+			...currentDraft,
+			options: currentDraft.options.map((option, optionIndex) =>
+				optionIndex === index ? value : option
+			),
+		}));
+	};
+
+	const handleAddPollOption = () => {
+		setPollDraft((currentDraft) => ({
+			...currentDraft,
+			options: [...currentDraft.options, ""].slice(0, 8),
+		}));
+	};
+
+	const handleCreatePoll = async () => {
+		const normalizedOptions = pollDraft.options.map((option) => option.trim()).filter(Boolean);
+		if (!pollDraft.question.trim() || normalizedOptions.length < 2) {
+			toast.error("Poll question and two options are required");
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/polls`,
+			body: {
+				question: pollDraft.question.trim(),
+				options: normalizedOptions,
+				allowsMultiple: pollDraft.allowsMultiple,
+				closesAt: pollDraft.closesAt || null,
+			},
+			successMessage: "Poll created",
+		});
+
+		if (result) {
+			setPollDraft({
+				question: "",
+				options: ["", ""],
+				allowsMultiple: false,
+				closesAt: "",
+			});
+		}
+	};
+
+	const handleVotePoll = async (pollId, optionId) => {
+		await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/polls/${pollId}/votes`,
+			body: { optionId },
+		});
+	};
+
+	const handleCreateInviteLink = async () => {
+		await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/invite-links`,
+			body: { expiresInDays: Number(inviteLinkDays) || 7 },
+			successMessage: "Invite link created",
+		});
+	};
+
+	const handleCopyInviteLink = async (code) => {
+		if (!code) return;
+		const inviteUrl = `${window.location.origin}/?groupInvite=${code}`;
+
+		try {
+			await navigator.clipboard.writeText(inviteUrl);
+			toast.success("Invite link copied");
+		} catch {
+			toast.error("Unable to copy invite link");
+		}
+	};
+
+	const handleRevokeInviteLink = async (linkId) => {
+		await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/invite-links/${linkId}`,
+			method: "DELETE",
+			successMessage: "Invite link revoked",
+		});
+	};
+
+	const handleRespondJoinRequest = async (requestId, action) => {
+		await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/join-requests/${requestId}/respond`,
+			body: { action },
+			successMessage: action === "APPROVE" ? "Join request approved" : "Join request declined",
+		});
 	};
 
 	return (
@@ -1144,6 +1475,466 @@ const UserInfoModal = ({ user, open, onClose }) => {
 									</div>
 								</div>
 
+								{isGroupMember ? (
+									isGroupWorkspaceLoading && !groupWorkspace ? (
+										<div className='rounded-[24px] border border-white/10 bg-white/[0.03] px-4 py-6 text-sm text-slate-400'>
+											Loading group workspace...
+										</div>
+									) : groupWorkspace ? (
+										<>
+											<div className='grid gap-4 lg:grid-cols-2'>
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+													<div className='flex items-center justify-between gap-3'>
+														<div>
+															<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Pinned rules</p>
+															<p className='mt-1 text-sm text-slate-300'>Set expectations and pace for this group.</p>
+														</div>
+														<span className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-200'>
+															{currentGroupMember?.memberRole || "Member"}
+														</span>
+													</div>
+
+													<div className='mt-4 flex flex-wrap gap-2'>
+														{[
+															{ label: "Off", value: null },
+															{ label: "15s", value: 15 },
+															{ label: "30s", value: 30 },
+															{ label: "1m", value: 60 },
+															{ label: "5m", value: 300 },
+														].map((option) => {
+															const isActive = (groupWorkspace.group?.slowModeSeconds || null) === option.value;
+															return (
+																<button
+																	key={option.label}
+																	type='button'
+																	onClick={() => handleUpdateSlowMode(option.value)}
+																	className={`rounded-full border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
+																		isActive
+																			? "border-sky-300/35 bg-sky-500/16 text-sky-50"
+																			: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
+																	}`}
+																	disabled={!canModerateGroup || Boolean(groupWorkspaceAction)}
+																>
+																	{option.label}
+																</button>
+															);
+														})}
+													</div>
+
+													<div className='mt-4 space-y-2'>
+														{(groupWorkspace.group?.pinnedRules || []).length ? (
+															groupWorkspace.group.pinnedRules.map((rule, index) => (
+																<div
+																	key={`${rule}-${index}`}
+																	className='flex items-start justify-between gap-3 rounded-[18px] border border-white/10 bg-slate-950/30 px-3 py-3'
+																>
+																	<p className='text-sm leading-6 text-slate-100'>{rule}</p>
+																	{canModerateGroup ? (
+																		<button
+																			type='button'
+																			onClick={() => handleRemovePinnedRule(index)}
+																			className='rounded-full border border-rose-300/20 bg-rose-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-rose-100'
+																			disabled={Boolean(groupWorkspaceAction)}
+																		>
+																			Remove
+																		</button>
+																	) : null}
+																</div>
+															))
+														) : (
+															<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
+																No pinned rules yet.
+															</div>
+														)}
+													</div>
+
+													{canModerateGroup ? (
+														<div className='mt-4 flex gap-2'>
+															<input
+																type='text'
+																value={newRule}
+																onChange={(event) => setNewRule(event.target.value)}
+																placeholder='Add a pinned rule'
+																className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+															/>
+															<button
+																type='button'
+																onClick={handleAddPinnedRule}
+																className='rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+																disabled={!newRule.trim() || Boolean(groupWorkspaceAction)}
+															>
+																Add
+															</button>
+														</div>
+													) : null}
+												</div>
+
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+													<div className='flex items-center justify-between gap-3'>
+														<div>
+															<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Member activity</p>
+															<p className='mt-1 text-sm text-slate-300'>Latest interaction and most active people.</p>
+														</div>
+														<span className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-200'>
+															Top {Math.min(5, groupWorkspace.memberActivity?.length || 0)}
+														</span>
+													</div>
+
+													<div className='mt-4 space-y-2'>
+														{(groupWorkspace.memberActivity || []).slice(0, 5).map((entry) => (
+															<div key={entry.user?._id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-3 py-3'>
+																<div className='flex items-center justify-between gap-3'>
+																	<div className='min-w-0'>
+																		<p className='truncate text-sm font-semibold text-slate-100'>{entry.user?.fullName || "Unknown member"}</p>
+																		<p className='truncate text-xs text-slate-400'>@{entry.user?.username || "unknown"} · {entry.memberRole}</p>
+																	</div>
+																	<span className='rounded-full border border-cyan-300/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100'>
+																		{entry.messageCount} msgs
+																	</span>
+																</div>
+																<p className='mt-2 text-xs text-slate-400'>
+																	Last active {entry.lastInteractionAt ? new Date(entry.lastInteractionAt).toLocaleString() : "not available"}
+																</p>
+															</div>
+														))}
+													</div>
+												</div>
+											</div>
+
+											<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+												<div className='flex items-center justify-between gap-3'>
+													<div>
+														<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Announcements</p>
+														<p className='mt-1 text-sm text-slate-300'>Share important updates with everyone.</p>
+													</div>
+												</div>
+
+												{canModerateGroup ? (
+													<div className='mt-4 flex flex-col gap-3 sm:flex-row'>
+														<textarea
+															rows='2'
+															value={newAnnouncement}
+															onChange={(event) => setNewAnnouncement(event.target.value)}
+															placeholder='Post a group announcement'
+															className='custom-scrollbar w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+														/>
+														<button
+															type='button'
+															onClick={handleCreateAnnouncement}
+															className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+															disabled={!newAnnouncement.trim() || Boolean(groupWorkspaceAction)}
+														>
+															Post
+														</button>
+													</div>
+												) : null}
+
+												<div className='mt-4 space-y-2'>
+													{(groupWorkspace.announcements || []).length ? (
+														groupWorkspace.announcements.map((announcement) => (
+															<div key={announcement.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																<p className='text-sm leading-6 text-slate-100'>{announcement.content}</p>
+																<p className='mt-2 text-xs text-slate-400'>
+																	{announcement.createdBy?.fullName || "Unknown"} · {new Date(announcement.createdAt).toLocaleString()}
+																</p>
+															</div>
+														))
+													) : (
+														<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
+															No announcements yet.
+														</div>
+													)}
+												</div>
+											</div>
+
+											<div className='grid gap-4 xl:grid-cols-2'>
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+													<div>
+														<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Polls</p>
+														<p className='mt-1 text-sm text-slate-300'>Run quick decisions inside the group.</p>
+													</div>
+
+													{canModerateGroup ? (
+														<div className='mt-4 space-y-3'>
+															<input
+																type='text'
+																value={pollDraft.question}
+																onChange={(event) => setPollDraft((currentDraft) => ({ ...currentDraft, question: event.target.value }))}
+																placeholder='Poll question'
+																className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+															/>
+															{pollDraft.options.map((option, index) => (
+																<input
+																	key={`poll-option-${index}`}
+																	type='text'
+																	value={option}
+																	onChange={(event) => handlePollOptionChange(index, event.target.value)}
+																	placeholder={`Option ${index + 1}`}
+																	className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+																/>
+															))}
+															<div className='flex flex-wrap items-center gap-3'>
+																<button
+																	type='button'
+																	onClick={handleAddPollOption}
+																	className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-100'
+																	disabled={pollDraft.options.length >= 8}
+																>
+																	Add option
+																</button>
+																<label className='flex items-center gap-2 text-sm text-slate-300'>
+																	<input
+																		type='checkbox'
+																		checked={pollDraft.allowsMultiple}
+																		onChange={(event) =>
+																			setPollDraft((currentDraft) => ({
+																				...currentDraft,
+																				allowsMultiple: event.target.checked,
+																			}))
+																		}
+																		className='checkbox checkbox-sm checkbox-info'
+																	/>
+																	Allow multiple votes
+																</label>
+															</div>
+															<input
+																type='datetime-local'
+																value={pollDraft.closesAt}
+																onChange={(event) => setPollDraft((currentDraft) => ({ ...currentDraft, closesAt: event.target.value }))}
+																className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-sky-300/30 focus:bg-white/[0.06]'
+															/>
+															<button
+																type='button'
+																onClick={handleCreatePoll}
+																className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+																disabled={Boolean(groupWorkspaceAction)}
+															>
+																Create poll
+															</button>
+														</div>
+													) : null}
+
+													<div className='mt-4 space-y-3'>
+														{(groupWorkspace.polls || []).length ? (
+															groupWorkspace.polls.map((poll) => (
+																<div key={poll.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																	<div className='flex items-start justify-between gap-3'>
+																		<div>
+																			<p className='text-sm font-semibold text-slate-100'>{poll.question}</p>
+																			<p className='mt-1 text-xs text-slate-400'>
+																				{poll.totalVotes} votes · {poll.allowsMultiple ? "Multiple choice" : "Single choice"}
+																				{poll.closesAt ? ` · closes ${new Date(poll.closesAt).toLocaleString()}` : ""}
+																			</p>
+																		</div>
+																	</div>
+																	<div className='mt-3 flex flex-wrap gap-2'>
+																		{poll.options.map((option) => (
+																			<button
+																				key={option.id}
+																				type='button'
+																				onClick={() => handleVotePoll(poll.id, option.id)}
+																				className={`rounded-full border px-3 py-2 text-[11px] font-semibold transition ${
+																					option.selectedByMe
+																						? "border-cyan-300/35 bg-cyan-500/16 text-cyan-50"
+																						: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
+																				}`}
+																				disabled={Boolean(groupWorkspaceAction)}
+																			>
+																				{option.label} · {option.voteCount}
+																			</button>
+																		))}
+																	</div>
+																</div>
+															))
+														) : (
+															<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
+																No polls yet.
+															</div>
+														)}
+													</div>
+												</div>
+
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+													<div>
+														<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Events</p>
+														<p className='mt-1 text-sm text-slate-300'>Schedule launches, calls, and group moments.</p>
+													</div>
+
+													{canModerateGroup ? (
+														<div className='mt-4 space-y-3'>
+															<input
+																type='text'
+																value={eventDraft.title}
+																onChange={(event) => setEventDraft((currentDraft) => ({ ...currentDraft, title: event.target.value }))}
+																placeholder='Event title'
+																className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+															/>
+															<textarea
+																rows='2'
+																value={eventDraft.description}
+																onChange={(event) => setEventDraft((currentDraft) => ({ ...currentDraft, description: event.target.value }))}
+																placeholder='Description'
+																className='custom-scrollbar w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+															/>
+															<input
+																type='text'
+																value={eventDraft.location}
+																onChange={(event) => setEventDraft((currentDraft) => ({ ...currentDraft, location: event.target.value }))}
+																placeholder='Location or room'
+																className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+															/>
+															<input
+																type='datetime-local'
+																value={eventDraft.startsAt}
+																onChange={(event) => setEventDraft((currentDraft) => ({ ...currentDraft, startsAt: event.target.value }))}
+																className='w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-sky-300/30 focus:bg-white/[0.06]'
+															/>
+															<button
+																type='button'
+																onClick={handleCreateEvent}
+																className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+																disabled={Boolean(groupWorkspaceAction)}
+															>
+																Create event
+															</button>
+														</div>
+													) : null}
+
+													<div className='mt-4 space-y-3'>
+														{(groupWorkspace.events || []).length ? (
+															groupWorkspace.events.map((event) => (
+																<div key={event.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																	<p className='text-sm font-semibold text-slate-100'>{event.title}</p>
+																	<p className='mt-1 text-xs text-slate-400'>{new Date(event.startsAt).toLocaleString()}</p>
+																	{event.location ? <p className='mt-2 text-xs text-slate-300'>Location: {event.location}</p> : null}
+																	{event.description ? <p className='mt-2 text-sm leading-6 text-slate-200'>{event.description}</p> : null}
+																</div>
+															))
+														) : (
+															<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
+																No events scheduled yet.
+															</div>
+														)}
+													</div>
+												</div>
+											</div>
+
+											{canModerateGroup ? (
+												<div className='grid gap-4 xl:grid-cols-2'>
+													<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+														<div className='flex items-center justify-between gap-3'>
+															<div>
+																<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Invite links</p>
+																<p className='mt-1 text-sm text-slate-300'>Create links that let people join or request access.</p>
+															</div>
+														</div>
+
+														<div className='mt-4 flex flex-wrap items-center gap-3'>
+															<select
+																value={inviteLinkDays}
+																onChange={(event) => setInviteLinkDays(event.target.value)}
+																className='rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none'
+															>
+																<option value='1'>1 day</option>
+																<option value='7'>7 days</option>
+																<option value='14'>14 days</option>
+																<option value='30'>30 days</option>
+															</select>
+															<button
+																type='button'
+																onClick={handleCreateInviteLink}
+																className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+																disabled={Boolean(groupWorkspaceAction)}
+															>
+																Create link
+															</button>
+														</div>
+
+														<div className='mt-4 space-y-2'>
+															{(groupWorkspace.inviteLinks || []).length ? (
+																groupWorkspace.inviteLinks.map((inviteLink) => (
+																	<div key={inviteLink.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																		<p className='truncate text-sm font-semibold text-slate-100'>{`${window.location.origin}/?groupInvite=${inviteLink.code}`}</p>
+																		<p className='mt-1 text-xs text-slate-400'>
+																			Expires {inviteLink.expiresAt ? new Date(inviteLink.expiresAt).toLocaleString() : "never"}
+																		</p>
+																		<div className='mt-3 flex flex-wrap gap-2'>
+																			<button
+																				type='button'
+																				onClick={() => handleCopyInviteLink(inviteLink.code)}
+																				className='rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-100'
+																			>
+																				Copy
+																			</button>
+																			<button
+																				type='button'
+																				onClick={() => handleRevokeInviteLink(inviteLink.id)}
+																				className='rounded-full border border-rose-300/20 bg-rose-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-rose-100'
+																				disabled={Boolean(groupWorkspaceAction)}
+																			>
+																				Revoke
+																			</button>
+																		</div>
+																	</div>
+																))
+															) : (
+																<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
+																	No active invite links.
+																</div>
+															)}
+														</div>
+													</div>
+
+													<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+														<div>
+															<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Join requests</p>
+															<p className='mt-1 text-sm text-slate-300'>Approve or decline people waiting to get in.</p>
+														</div>
+
+														<div className='mt-4 space-y-2'>
+															{(groupWorkspace.joinRequests || []).length ? (
+																groupWorkspace.joinRequests.map((joinRequest) => (
+																	<div key={joinRequest.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																		<p className='text-sm font-semibold text-slate-100'>{joinRequest.requester?.fullName || "Unknown user"}</p>
+																		<p className='mt-1 text-xs text-slate-400'>
+																			@{joinRequest.requester?.username || "unknown"} · {new Date(joinRequest.createdAt).toLocaleString()}
+																		</p>
+																		{joinRequest.message ? (
+																			<p className='mt-2 text-sm leading-6 text-slate-200'>{joinRequest.message}</p>
+																		) : null}
+																		<div className='mt-3 flex flex-wrap gap-2'>
+																			<button
+																				type='button'
+																				onClick={() => handleRespondJoinRequest(joinRequest.id, "APPROVE")}
+																				className='rounded-full border border-emerald-300/20 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-emerald-100'
+																				disabled={Boolean(groupWorkspaceAction)}
+																			>
+																				Approve
+																			</button>
+																			<button
+																				type='button'
+																				onClick={() => handleRespondJoinRequest(joinRequest.id, "DECLINE")}
+																				className='rounded-full border border-rose-300/20 bg-rose-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-rose-100'
+																				disabled={Boolean(groupWorkspaceAction)}
+																			>
+																				Decline
+																			</button>
+																		</div>
+																	</div>
+																))
+															) : (
+																<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
+																	No pending join requests.
+																</div>
+															)}
+														</div>
+													</div>
+												</div>
+											) : null}
+										</>
+									) : null
+								) : null}
+
 								<div className='rounded-[24px] border border-slate-800 bg-slate-800/80 px-4 py-3.5'>
 									<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>About this group</p>
 									<p className='mt-1 min-h-12 text-sm leading-6 text-slate-200'>
@@ -1186,23 +1977,17 @@ const UserInfoModal = ({ user, open, onClose }) => {
 																		{isMemberActionPending("role", member._id) ? "Saving..." : "Make owner"}
 																	</button>
 																) : null}
-																<button
-																	type='button'
-																	onClick={() =>
-																		handleUpdateMemberRole(
-																			member._id,
-																			member.memberRole === "ADMIN" ? "MEMBER" : "ADMIN"
-																		)
-																	}
-																	className='rounded-full border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-100 transition hover:border-amber-300/35 hover:bg-amber-500/16 disabled:cursor-not-allowed disabled:opacity-60'
-																	disabled={hasPendingMemberAction}
-																>
-																	{isMemberActionPending("role", member._id)
-																		? "Saving..."
-																		: member.memberRole === "ADMIN"
-																			? "Make member"
-																			: "Make admin"}
-																</button>
+																{getRoleActionOptions(member.memberRole || "MEMBER").map((roleAction) => (
+																	<button
+																		key={`${member._id}-${roleAction.role}`}
+																		type='button'
+																		onClick={() => handleUpdateMemberRole(member._id, roleAction.role)}
+																		className={roleAction.className}
+																		disabled={hasPendingMemberAction}
+																	>
+																		{isMemberActionPending("role", member._id) ? "Saving..." : roleAction.label}
+																	</button>
+																))}
 																<button
 																	type='button'
 																	onClick={() => handleRemoveMember(member._id)}

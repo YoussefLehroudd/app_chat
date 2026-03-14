@@ -3,11 +3,13 @@ import jwt from "jsonwebtoken";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseAvailable, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import generateTokenAndSetCookie from "../utils/generateToken.js";
 import { toUserDto } from "../utils/formatters.js";
+import { mapResolvedFeatureFlag } from "../utils/featureFlags.js";
 import { emitPublicUserUpdated } from "../utils/realtime.js";
 import { buildEmailVerificationEmail, buildPasswordResetEmail, buildUsernameReminderEmail } from "../utils/emailTemplates.js";
 import { createRecoveryToken, hashRecoveryToken } from "../utils/recoveryTokens.js";
 import { ensureEmailDeliveryIsConfigured, sendTransactionalEmail } from "../utils/resend.js";
 import { SESSION_COOKIE_NAME, createVerificationToken } from "../utils/authSecurity.js";
+import { createRequestSecurityEvent } from "../utils/securityEvents.js";
 import { createTwoFactorSetup, verifyTwoFactorCode } from "../utils/twoFactor.js";
 import {
 	createUserSessionRecord,
@@ -26,6 +28,8 @@ import {
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_MIN_LENGTH = 6;
 const GENERIC_RECOVERY_RESPONSE = "If the account exists, a recovery email has been sent.";
+const LOGIN_FAILURE_LIMIT = 5;
+const LOGIN_LOCK_DURATION_MS = 15 * 60 * 1000;
 
 const buildUsernameBase = (username) => {
 	return (
@@ -126,6 +130,68 @@ const createAuthenticatedSession = async ({ user, req, res }) => {
 	generateTokenAndSetCookie(user.id, session.sessionTokenId, res);
 
 	return buildAuthenticatedUserDto(user, session.sessionTokenId);
+};
+
+const recordFailedLoginAttempt = async ({ user, req, reason = "invalid_credentials" }) => {
+	if (!user?.id) {
+		await createRequestSecurityEvent({
+			req,
+			eventType: "FAILED_LOGIN",
+			riskLevel: "LOW",
+			summary: "Failed login attempt for an unknown account",
+			details: {
+				reason,
+			},
+		});
+		return {
+			locked: false,
+		};
+	}
+
+	const nextAttempts = (user.failedLoginAttempts || 0) + 1;
+	const shouldLock = nextAttempts >= LOGIN_FAILURE_LIMIT;
+	const lockedUntil = shouldLock ? new Date(Date.now() + LOGIN_LOCK_DURATION_MS) : null;
+	const updatedUser = await prisma.user.update({
+		where: { id: user.id },
+		data: {
+			failedLoginAttempts: nextAttempts,
+			lockedUntil,
+		},
+	});
+
+	await createRequestSecurityEvent({
+		req,
+		userId: user.id,
+		eventType: "FAILED_LOGIN",
+		riskLevel: shouldLock ? "HIGH" : "MEDIUM",
+		summary: shouldLock ? "Account temporarily locked after repeated failed logins" : "Failed login attempt",
+		details: {
+			reason,
+			attempts: nextAttempts,
+			lockedUntil,
+		},
+	});
+
+	if (shouldLock) {
+		await createRequestSecurityEvent({
+			req,
+			userId: user.id,
+			eventType: "ACCOUNT_LOCKED",
+			riskLevel: "HIGH",
+			summary: "Account locked after repeated failed sign-in attempts",
+			details: {
+				reason,
+				attempts: nextAttempts,
+				lockedUntil,
+			},
+		});
+	}
+
+	return {
+		locked: Boolean(lockedUntil),
+		lockedUntil,
+		user: updatedUser,
+	};
 };
 
 const sendEmailVerificationToUser = async ({ user, req }) => {
@@ -333,12 +399,31 @@ export const login = async (req, res) => {
 		});
 
 		if (!user) {
+			await recordFailedLoginAttempt({ user: null, req, reason: "unknown_username" });
 			return res.status(400).json({ error: "Invalid username or password" });
+		}
+
+		if (user.lockedUntil && new Date(user.lockedUntil).getTime() > Date.now()) {
+			return res.status(423).json({
+				error: "Too many failed attempts. Try again in a few minutes.",
+				lockedUntil: user.lockedUntil,
+			});
 		}
 
 		const isPasswordCorrect = await bcrypt.compare(password, user.password);
 
 		if (!isPasswordCorrect) {
+			const failedAttempt = await recordFailedLoginAttempt({
+				user,
+				req,
+				reason: "invalid_password",
+			});
+			if (failedAttempt.locked) {
+				return res.status(423).json({
+					error: "Too many failed attempts. Try again in a few minutes.",
+					lockedUntil: failedAttempt.lockedUntil,
+				});
+			}
 			return res.status(400).json({ error: "Invalid username or password" });
 		}
 
@@ -351,6 +436,17 @@ export const login = async (req, res) => {
 			}
 
 			if (!verifyTwoFactorCode(user.twoFactorSecret, twoFactorCode)) {
+				const failedAttempt = await recordFailedLoginAttempt({
+					user,
+					req,
+					reason: "invalid_two_factor_code",
+				});
+				if (failedAttempt.locked) {
+					return res.status(423).json({
+						error: "Too many failed attempts. Try again in a few minutes.",
+						lockedUntil: failedAttempt.lockedUntil,
+					});
+				}
 				return res.status(400).json({ error: "Invalid authentication code" });
 			}
 		}
@@ -393,11 +489,56 @@ export const login = async (req, res) => {
 			});
 		}
 
+		const currentRequestIp = req.get("x-forwarded-for")?.split(",")[0]?.trim() || req.ip || req.socket?.remoteAddress || null;
+		const previousSessions = await prisma.userSession.findMany({
+			where: {
+				userId: user.id,
+			},
+			orderBy: { createdAt: "desc" },
+			take: 8,
+			select: {
+				ipAddress: true,
+			},
+		});
+		const knownIpAddresses = new Set(previousSessions.map((session) => session.ipAddress).filter(Boolean));
+
+		if (user.failedLoginAttempts || user.lockedUntil) {
+			user = await prisma.user.update({
+				where: { id: user.id },
+				data: {
+					failedLoginAttempts: 0,
+					lockedUntil: null,
+				},
+			});
+		}
+
 		const authenticatedUser = await createAuthenticatedSession({
 			user,
 			req,
 			res,
 		});
+
+		await createRequestSecurityEvent({
+			req,
+			userId: user.id,
+			eventType: "LOGIN_SUCCESS",
+			riskLevel: "LOW",
+			summary: "Successful login",
+		});
+
+		if (currentRequestIp && knownIpAddresses.size > 0 && !knownIpAddresses.has(currentRequestIp)) {
+			await createRequestSecurityEvent({
+				req,
+				userId: user.id,
+				eventType: "SUSPICIOUS_IP",
+				riskLevel: "HIGH",
+				summary: "New IP address used for sign in",
+				details: {
+					ipAddress: currentRequestIp,
+					knownIpAddresses: Array.from(knownIpAddresses),
+				},
+			});
+		}
 
 		res.status(200).json(authenticatedUser);
 	} catch (error) {
@@ -561,6 +702,14 @@ export const resetPassword = async (req, res) => {
 			},
 		});
 
+		await createRequestSecurityEvent({
+			req,
+			userId: user.id,
+			eventType: "PASSWORD_RESET",
+			riskLevel: "MEDIUM",
+			summary: "Password reset completed",
+		});
+
 		return res.status(200).json({ message: "Password updated successfully" });
 	} catch (error) {
 		console.log("Error in resetPassword controller", error.message);
@@ -637,6 +786,14 @@ export const verifyEmail = async (req, res) => {
 				emailVerificationTokenExpiresAt: null,
 				emailVerifiedAt: new Date(),
 			},
+		});
+
+		await createRequestSecurityEvent({
+			req,
+			userId: user.id,
+			eventType: "EMAIL_VERIFIED",
+			riskLevel: "LOW",
+			summary: "Recovery email verified",
 		});
 
 		return res.status(200).json({ message: "Email verified successfully" });
@@ -728,6 +885,14 @@ export const verifyTwoFactorSetup = async (req, res) => {
 			},
 		});
 
+		await createRequestSecurityEvent({
+			req,
+			userId: user.id,
+			eventType: "TWO_FACTOR_ENABLED",
+			riskLevel: "LOW",
+			summary: "Two-factor authentication enabled",
+		});
+
 		return res.status(200).json({ message: "2FA enabled successfully" });
 	} catch (error) {
 		console.log("Error in verifyTwoFactorSetup controller", error.message);
@@ -767,6 +932,14 @@ export const disableTwoFactor = async (req, res) => {
 			},
 		});
 
+		await createRequestSecurityEvent({
+			req,
+			userId: user.id,
+			eventType: "TWO_FACTOR_DISABLED",
+			riskLevel: "MEDIUM",
+			summary: "Two-factor authentication disabled",
+		});
+
 		return res.status(200).json({ message: "2FA disabled successfully" });
 	} catch (error) {
 		console.log("Error in disableTwoFactor controller", error.message);
@@ -783,6 +956,32 @@ export const getCurrentUser = (req, res) => {
 	} catch (error) {
 		console.log("Error in getCurrentUser controller", error.message);
 		res.status(500).json({ error: "Internal Server Error" });
+	}
+};
+
+export const getMyFeatureFlags = async (req, res) => {
+	try {
+		const flags = await prisma.featureFlag.findMany({
+			where: {
+				isEnabled: true,
+			},
+			orderBy: { updatedAt: "desc" },
+		});
+
+		return res.status(200).json({
+			flags: flags.map((flag) =>
+				mapResolvedFeatureFlag(flag, {
+					id: req.user._id,
+					role: req.user.role,
+				})
+			),
+		});
+	} catch (error) {
+		console.log("Error in getMyFeatureFlags controller", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal Server Error" });
 	}
 };
 

@@ -3,6 +3,7 @@ import { Readable } from "stream";
 import { getUserSocketIds, io } from "../socket/socket.js";
 import { deleteMessageEverywhere } from "../utils/messageModeration.js";
 import {
+	CONVERSATION_MEMBER_ROLES,
 	CONVERSATION_TYPES,
 	DIRECT_CONVERSATION_STATUSES,
 	findDirectConversationByUsers,
@@ -660,13 +661,42 @@ export const sendGroupMessage = async (req, res) => {
 		const conversation = await getGroupConversationForMember(conversationId, senderId, {
 			include: {
 				members: {
-					select: { userId: true },
+					select: { userId: true, role: true },
 				},
 			},
 		});
 
 		if (!conversation) {
 			return res.status(404).json({ error: "Group not found" });
+		}
+
+		const senderMembership = conversation.members.find((member) => member.userId === senderId);
+		const isSlowModeExempt = [
+			CONVERSATION_MEMBER_ROLES.OWNER,
+			CONVERSATION_MEMBER_ROLES.ADMIN,
+			CONVERSATION_MEMBER_ROLES.MODERATOR,
+		].includes(senderMembership?.role);
+
+		if (conversation.slowModeSeconds && !isSlowModeExempt) {
+			const lastOwnMessage = await prisma.message.findFirst({
+				where: {
+					conversationId: conversation.id,
+					senderId,
+				},
+				orderBy: { createdAt: "desc" },
+				select: { createdAt: true },
+			});
+
+			if (lastOwnMessage?.createdAt) {
+				const elapsedMs = Date.now() - new Date(lastOwnMessage.createdAt).getTime();
+				const remainingMs = conversation.slowModeSeconds * 1000 - elapsedMs;
+
+				if (remainingMs > 0) {
+					return res.status(429).json({
+						error: `Slow mode is active. Wait ${Math.ceil(remainingMs / 1000)}s before sending again.`,
+					});
+				}
+			}
 		}
 
 		const newMessage = await prisma.message.create({

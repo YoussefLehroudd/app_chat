@@ -25,6 +25,7 @@ import {
 	isImageAttachment,
 	isVideoAttachment,
 } from "../../utils/messageAttachments";
+import DeveloperSelect from "./DeveloperSelect";
 
 const formatDateTime = (value) => {
 	if (!value) return "Unknown time";
@@ -91,10 +92,11 @@ const getReplyPreview = (message) => {
 const badgeClassNamesByRole = {
 	OWNER: "border-amber-300/25 bg-amber-400/12 text-amber-100",
 	ADMIN: "border-sky-300/25 bg-sky-500/12 text-sky-100",
+	MODERATOR: "border-violet-300/25 bg-violet-500/12 text-violet-100",
 	MEMBER: "border-white/10 bg-white/[0.05] text-slate-300",
 };
 
-const roleOptions = ["OWNER", "ADMIN", "MEMBER"];
+const roleOptions = ["OWNER", "ADMIN", "MODERATOR", "MEMBER"];
 
 const DeveloperGroupInspectorModal = ({
 	group,
@@ -152,6 +154,21 @@ const DeveloperGroupInspectorModal = ({
 			),
 		[allUsers, members]
 	);
+	const availableUserOptions = useMemo(
+		() =>
+			availableUsers.length === 0
+				? [{ value: "", label: "No users available", description: "Everyone eligible is already in this group.", disabled: true }]
+				: availableUsers.map((user) => ({
+					value: user._id,
+					label: user.fullName,
+					description: `@${user.username}`,
+				})),
+		[availableUsers]
+	);
+	const accessOptions = [
+		{ value: "PUBLIC", label: "Public", description: "Visible in discovery and open to direct joins." },
+		{ value: "PRIVATE", label: "Private", description: "Invite-only access with controlled membership." },
+	];
 
 	useEffect(() => {
 		if (selectedNewMemberId && availableUsers.some((user) => user._id === selectedNewMemberId)) {
@@ -305,20 +322,20 @@ const DeveloperGroupInspectorModal = ({
 									<div className='grid gap-4 sm:grid-cols-2'>
 										<div>
 											<label className='text-xs font-medium uppercase tracking-[0.18em] text-slate-500'>Access</label>
-											<select
+											<DeveloperSelect
 												value={settings.isPrivate ? "PRIVATE" : "PUBLIC"}
-												onChange={(event) =>
+												onChange={(nextValue) =>
 													setSettings((currentSettings) => ({
 														...currentSettings,
-														isPrivate: event.target.value === "PRIVATE",
+														isPrivate: nextValue === "PRIVATE",
 													}))
 												}
-												className='mt-2 h-11 w-full rounded-[16px] border border-white/10 bg-slate-950/35 px-4 text-sm text-slate-100 outline-none'
+												options={accessOptions}
+												size='sm'
+												className='mt-2'
+												ariaLabel='Group access'
 												disabled={!canManageGroups}
-											>
-												<option value='PUBLIC'>Public</option>
-												<option value='PRIVATE'>Private</option>
-											</select>
+											/>
 										</div>
 
 										<div>
@@ -387,19 +404,15 @@ const DeveloperGroupInspectorModal = ({
 								<div className='mt-5 rounded-[22px] border border-white/8 bg-slate-950/30 p-4'>
 									<p className='text-xs font-medium uppercase tracking-[0.18em] text-slate-500'>Add member</p>
 									<div className='mt-3 flex flex-col gap-3'>
-										<select
+										<DeveloperSelect
 											value={selectedNewMemberId}
-											onChange={(event) => setSelectedNewMemberId(event.target.value)}
+											onChange={(nextValue) => setSelectedNewMemberId(nextValue)}
+											options={availableUserOptions}
+											size='sm'
 											disabled={!canManageGroups || availableUsers.length === 0 || isAddingMember}
-											className='h-11 w-full rounded-[16px] border border-white/10 bg-slate-950/35 px-4 text-sm text-slate-100 outline-none disabled:opacity-50'
-										>
-											{availableUsers.length === 0 ? <option value=''>No users available</option> : null}
-											{availableUsers.map((user) => (
-												<option key={user._id} value={user._id}>
-													{user.fullName} (@{user.username})
-												</option>
-											))}
-										</select>
+											className='disabled:opacity-50'
+											ariaLabel='Add member'
+										/>
 										<button
 											type='button'
 											onClick={handleAddMember}

@@ -1,13 +1,15 @@
 import { Link } from "react-router-dom";
-import { IoChevronDownOutline, IoChevronUpOutline, IoCodeSlashOutline } from "react-icons/io5";
-import { HiOutlineUserGroup, HiOutlineUserPlus } from "react-icons/hi2";
-import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
+import { IoChevronDownOutline, IoChevronUpOutline, IoCodeSlashOutline, IoNotificationsOutline } from "react-icons/io5";
+import { HiOutlineLink, HiOutlineUserGroup, HiOutlineUserPlus } from "react-icons/hi2";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import BroadcastInboxPanel from "./BroadcastInboxPanel";
 import CallDirectory from "./CallDirectory";
 import Conversations from "./Conversations";
 import CreateGroupModal from "./CreateGroupModal";
 import DirectInviteModal from "./DirectInviteModal";
 import DirectInvitationsPanel from "./DirectInvitationsPanel";
+import JoinGroupLinkModal from "./JoinGroupLinkModal";
 import LogoutButton from "./LogoutButton";
 import SearchInput from "./SearchInput";
 import ProfileButton from "./ProfileButton";
@@ -40,9 +42,11 @@ const Sidebar = () => {
 	const [showQuickActions, setShowQuickActions] = useState(false);
 	const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
 	const [showDirectInviteModal, setShowDirectInviteModal] = useState(false);
+	const [showJoinGroupLinkModal, setShowJoinGroupLinkModal] = useState(false);
 	const [showInvitationsPanel, setShowInvitationsPanel] = useState(false);
 	const [showStoryComposer, setShowStoryComposer] = useState(false);
 	const [showStoryViewer, setShowStoryViewer] = useState(false);
+	const [showBroadcastInbox, setShowBroadcastInbox] = useState(false);
 	const [storyViewerTarget, setStoryViewerTarget] = useState(null);
 	const [storyViewerGroupsOverride, setStoryViewerGroupsOverride] = useState(null);
 	const { loading, conversations } = useGetConversations();
@@ -69,11 +73,13 @@ const Sidebar = () => {
 		reactToStory,
 		commentOnStory,
 	} = useStories();
-	const { onlineUsers } = useSocketContext();
+	const { onlineUsers, broadcastAnnouncements, unreadBroadcastCount, markBroadcastsRead, dismissBroadcast, clearBroadcasts } =
+		useSocketContext();
 	const { authUser } = useAuthContext();
 	const { setSelectedConversation, setShowSidebar } = useConversation();
 	const isDeveloper = authUser?.role === "DEVELOPER";
 	const resolvedStoryGroups = Array.isArray(storyViewerGroupsOverride) ? storyViewerGroupsOverride : storyGroups;
+	const handledInviteCodeRef = useRef("");
 	const { containerRef: filterRowRef, isDragging: isDraggingFilterRow, dragScrollProps: filterRowDragScrollProps } =
 		useHorizontalDragScroll();
 
@@ -221,6 +227,65 @@ const Sidebar = () => {
 		});
 	}, []);
 
+	const handleOpenJoinGroupLinkModal = useCallback(() => {
+		startTransition(() => {
+			setShowJoinGroupLinkModal(true);
+		});
+	}, []);
+
+	const handleRestoreConversation = useCallback((conversation) => {
+		if (!conversation?._id) return;
+
+		window.dispatchEvent(
+			new CustomEvent("chat:conversation-restored", {
+				detail: { conversation },
+			})
+		);
+		setSelectedConversation(conversation);
+		setShowSidebar(false);
+	}, [setSelectedConversation, setShowSidebar]);
+
+	const handleJoinGroupByInviteLink = useCallback(
+		async (inviteLink) => {
+			const normalizedInviteLink = typeof inviteLink === "string" ? inviteLink.trim() : "";
+			if (!normalizedInviteLink) return false;
+
+			try {
+				const response = await fetch("/api/conversations/groups/join-by-link", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ inviteLink: normalizedInviteLink }),
+				});
+				const data = await response.json();
+
+				if (!response.ok) {
+					throw new Error(data.error || "Failed to join group");
+				}
+
+				if (data.status === "JOINED" && data.conversation) {
+					handleRestoreConversation(data.conversation);
+					toast.success("Group joined");
+					return true;
+				}
+
+				if (data.status === "REQUESTED") {
+					window.dispatchEvent(new Event("chat:conversations-refresh"));
+					toast.success("Join request sent");
+					return true;
+				}
+
+				toast.success("Invite link processed");
+				return true;
+			} catch (error) {
+				toast.error(error.message);
+				return false;
+			}
+		},
+		[handleRestoreConversation]
+	);
+
 	const handleCreateStory = useCallback(
 		(storyInput) => {
 			const result = createStory(storyInput);
@@ -232,6 +297,15 @@ const Sidebar = () => {
 	const handleClearSearch = useCallback(() => {
 		setSearchValue("");
 	}, []);
+
+	const handleToggleBroadcastInbox = useCallback(() => {
+		const nextOpenState = !showBroadcastInbox;
+		if (nextOpenState) {
+			markBroadcastsRead();
+			setShowQuickActions(false);
+		}
+		setShowBroadcastInbox(nextOpenState);
+	}, [markBroadcastsRead, showBroadcastInbox]);
 
 	useEffect(() => {
 		if (!creatingStory) return undefined;
@@ -346,6 +420,25 @@ const Sidebar = () => {
 		};
 	}, [authUser, refreshStories, storyGroups]);
 
+	useEffect(() => {
+		const currentUrl = new URL(window.location.href);
+		const inviteCode = currentUrl.searchParams.get("groupInvite");
+		if (!inviteCode || handledInviteCodeRef.current === inviteCode) {
+			return;
+		}
+
+		handledInviteCodeRef.current = inviteCode;
+
+		const clearInviteCodeFromUrl = () => {
+			const nextUrl = new URL(window.location.href);
+			nextUrl.searchParams.delete("groupInvite");
+			const nextLocation = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+			window.history.replaceState({}, "", nextLocation);
+		};
+
+		void handleJoinGroupByInviteLink(inviteCode).finally(clearInviteCodeFromUrl);
+	}, [handleJoinGroupByInviteLink]);
+
 	return (
 		<aside className='flex h-full min-h-0 w-full flex-col border-r border-white/10 bg-[linear-gradient(180deg,rgba(7,12,25,0.92),rgba(3,8,20,0.84))] p-3 md:w-[390px] lg:w-[430px] lg:p-5 xl:w-[460px]'>
 			<div className='sidebar-mobile-collapsible'>
@@ -408,6 +501,14 @@ const Sidebar = () => {
 					</button>
 					<button
 						type='button'
+						onClick={handleOpenJoinGroupLinkModal}
+						className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-300/20 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-100 hover:border-emerald-300/35 hover:bg-emerald-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
+					>
+						<HiOutlineLink className='h-3.5 w-3.5 sm:h-4 sm:w-4' />
+						<span>Join via link</span>
+					</button>
+					<button
+						type='button'
 						onClick={handleOpenDirectInviteModal}
 						className='inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-300/20 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-100 hover:border-amber-300/35 hover:bg-amber-500/16 sm:gap-2 sm:px-4 sm:py-2 sm:text-xs'
 					>
@@ -465,7 +566,15 @@ const Sidebar = () => {
 				/>
 			)}
 
-			<div className='sidebar-mobile-bottom sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pt-2 md:static md:bottom-auto md:z-auto md:bg-transparent md:pb-0 md:pt-0'>
+			<div className='sidebar-mobile-bottom relative sticky bottom-0 z-20 mt-3 bg-[linear-gradient(180deg,rgba(2,6,23,0),rgba(2,6,23,0.92)_24%,rgba(2,6,23,0.97))] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] pt-2 md:relative md:bottom-auto md:z-20 md:bg-transparent md:pb-0 md:pt-0'>
+				<BroadcastInboxPanel
+					open={showBroadcastInbox}
+					unreadCount={unreadBroadcastCount}
+					announcements={broadcastAnnouncements}
+					onClose={() => setShowBroadcastInbox(false)}
+					onDismiss={dismissBroadcast}
+					onClear={clearBroadcasts}
+				/>
 				<div className='flex items-center gap-2.5'>
 					<div className='min-w-0 flex-1'>
 						<SearchInput
@@ -479,10 +588,29 @@ const Sidebar = () => {
 							compact
 						/>
 					</div>
+					<div className='shrink-0'>
+						<button
+							type='button'
+							onClick={handleToggleBroadcastInbox}
+							aria-expanded={showBroadcastInbox}
+							aria-label={showBroadcastInbox ? "Hide announcements" : "Show announcements"}
+							title={showBroadcastInbox ? "Hide announcements" : "Show announcements"}
+							className='relative inline-flex shrink-0 items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100 hover:border-cyan-300/35 hover:bg-cyan-500/16 sm:px-4'
+						>
+							<IoNotificationsOutline className='h-4 w-4' />
+							<span className='hidden sm:inline'>Alerts</span>
+							{unreadBroadcastCount > 0 ? (
+								<span className='absolute -right-1 -top-1 inline-flex min-h-[1.2rem] min-w-[1.2rem] items-center justify-center rounded-full border border-amber-200/40 bg-amber-400 px-1 text-[10px] font-bold text-slate-950 shadow-[0_8px_16px_rgba(251,191,36,0.3)]'>
+									{unreadBroadcastCount > 9 ? "9+" : unreadBroadcastCount}
+								</span>
+							) : null}
+						</button>
+					</div>
 					<button
 						type='button'
 						onClick={() =>
 							startTransition(() => {
+								setShowBroadcastInbox(false);
 								setShowQuickActions((currentValue) => !currentValue);
 							})
 						}
@@ -553,6 +681,12 @@ const Sidebar = () => {
 				isSendingToUser={isSendingToUser}
 				connectedUserIds={directConnectedUserIds}
 				pendingCounterpartIds={pendingCounterpartIds}
+			/>
+
+			<JoinGroupLinkModal
+				open={showJoinGroupLinkModal}
+				onClose={() => setShowJoinGroupLinkModal(false)}
+				onJoin={handleJoinGroupByInviteLink}
 			/>
 
 			<StoryComposerModal

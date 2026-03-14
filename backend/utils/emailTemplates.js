@@ -212,4 +212,88 @@ const buildEmailVerificationEmail = ({ fullName, verificationUrl }) => {
 	};
 };
 
-export { buildEmailVerificationEmail, buildPasswordResetEmail, buildUsernameReminderEmail };
+const buildBroadcastEmail = ({ fullName, title, content }) => {
+	const safeName = escapeHtml(fullName || "there");
+	const safeTitle = escapeHtml(title || "Platform update");
+	const paragraphs = String(content || "")
+		.split(/\n{2,}/)
+		.map((segment) => segment.trim())
+		.filter(Boolean)
+		.map((segment) => `<p style="margin: 0 0 14px;">${escapeHtml(segment)}</p>`)
+		.join("");
+	const html = renderEmailShell({
+		preheader: safeTitle,
+		eyebrow: "Platform announcement",
+		title: safeTitle,
+		lead: `Hi ${safeName}, here is a new update from the ${APP_NAME} team.`,
+		bodyHtml: paragraphs || `<p style="margin: 0;">${escapeHtml(content || "")}</p>`,
+		accent: "#f59e0b",
+		footnote: "This email was sent from the ChatApp developer console to keep your account informed.",
+	});
+
+	const text = [
+		`Hi ${fullName || "there"},`,
+		"",
+		title || "Platform update",
+		"",
+		content || "",
+	].join("\n");
+
+	return {
+		subject: title || "ChatApp update",
+		html,
+		text,
+	};
+};
+
+const buildVerificationDecisionEmail = ({ fullName, isApproved, reviewNote }) => {
+	const safeName = escapeHtml(fullName || "there");
+	const safeReviewNote = escapeHtml(reviewNote || "");
+	const title = isApproved ? "Your verification is approved" : "Your verification request was reviewed";
+	const lead = isApproved
+		? `Hi ${safeName}, your ChatApp verification review has been approved.`
+		: `Hi ${safeName}, the team reviewed your ChatApp verification request.`;
+	const bodyHtml = isApproved
+		? `
+			<p style="margin: 0;">Your account now carries the verified badge in the app.</p>
+			${safeReviewNote ? `<p style="margin: 14px 0 0;">Reviewer note: ${safeReviewNote}</p>` : ""}
+		  `
+		: `
+			<p style="margin: 0;">Your request was not approved at this time.</p>
+			${safeReviewNote ? `<p style="margin: 14px 0 0;">Reviewer note: ${safeReviewNote}</p>` : ""}
+		  `;
+	const html = renderEmailShell({
+		preheader: title,
+		eyebrow: "Verification review",
+		title,
+		lead,
+		bodyHtml,
+		accent: isApproved ? "#38bdf8" : "#f59e0b",
+		footnote: isApproved
+			? "Your verified badge is now visible across ChatApp."
+			: "You can contact the team again later if your account details change.",
+	});
+
+	const text = [
+		`Hi ${fullName || "there"},`,
+		"",
+		isApproved
+			? "Your ChatApp verification request has been approved."
+			: "Your ChatApp verification request was reviewed and not approved at this time.",
+		reviewNote ? `Reviewer note: ${reviewNote}` : "",
+	].filter(Boolean).join("\n");
+
+	return {
+		subject: title,
+		html,
+		text,
+	};
+};
+
+export {
+	buildBroadcastEmail,
+	buildEmailVerificationEmail,
+	buildPasswordResetEmail,
+	buildUsernameReminderEmail,
+	buildVerificationDecisionEmail,
+};

@@ -1197,6 +1197,7 @@ export const updateGroupMemberRole = async (req, res) => {
 			![
 				CONVERSATION_MEMBER_ROLES.OWNER,
 				CONVERSATION_MEMBER_ROLES.ADMIN,
+				CONVERSATION_MEMBER_ROLES.MODERATOR,
 				CONVERSATION_MEMBER_ROLES.MEMBER,
 			].includes(normalizedRole)
 		) {

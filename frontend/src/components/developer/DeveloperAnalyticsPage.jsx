@@ -96,7 +96,7 @@ const DonutChart = ({ title, subtitle, segments, centerLabel, centerValue }) => 
 	);
 };
 
-const DeveloperAnalyticsPage = ({ loading, overview, users, groups }) => {
+const DeveloperAnalyticsPage = ({ loading, overview, users, groups, analyticsData }) => {
 	const analytics = useMemo(() => {
 		const activeUsers = users.filter((user) => !user.isArchived && !user.isBanned).length;
 		const verifiedUsers = users.filter((user) => user.isVerified).length;
@@ -164,9 +164,65 @@ const DeveloperAnalyticsPage = ({ loading, overview, users, groups }) => {
 	];
 
 	const maxBarValue = Math.max(...statusBars.map((bar) => bar.value), 1);
+	const analyticsKpis = analyticsData?.kpis || {};
+	const trendSeries = analyticsData?.series?.messages || [];
+	const trendMax = Math.max(...trendSeries.map((point) => point.count || 0), 1);
+	const platformKpis = [
+		{ label: "DAU", value: analyticsKpis.dau ?? 0, accent: "text-cyan-100" },
+		{ label: "WAU", value: analyticsKpis.wau ?? 0, accent: "text-sky-100" },
+		{ label: "Msgs today", value: analyticsKpis.messagesToday ?? 0, accent: "text-amber-100" },
+		{ label: "7d retention", value: `${analyticsKpis.retention7d ?? 0}%`, accent: "text-emerald-100" },
+		{ label: "30d retention", value: `${analyticsKpis.retention30d ?? 0}%`, accent: "text-violet-100" },
+		{ label: "Locked", value: analyticsKpis.lockedAccounts ?? 0, accent: "text-rose-100" },
+	];
 
 	return (
 		<div className='w-full min-w-0 space-y-3 sm:space-y-4'>
+			<div className='grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]'>
+				<div className='rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,15,30,0.88),rgba(13,24,42,0.68))] p-4 shadow-[0_24px_70px_rgba(2,6,23,0.3)] sm:rounded-[30px] sm:p-6'>
+					<div className='flex flex-col gap-3 md:flex-row md:items-end md:justify-between'>
+						<div>
+							<p className='text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400'>Growth engine</p>
+							<h3 className='mt-2 text-xl font-semibold text-white sm:text-2xl'>Real usage and retention</h3>
+							<p className='mt-2 max-w-2xl text-sm leading-7 text-slate-400'>
+								Track active users, message volume, and whether new accounts return after the first week.
+							</p>
+						</div>
+						<div className='rounded-[20px] border border-white/10 bg-white/[0.03] px-4 py-3'>
+							<p className='text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500'>Avg / day</p>
+							<p className='mt-2 text-2xl font-semibold text-white'>{analyticsKpis.averageMessagesPerDay ?? 0}</p>
+						</div>
+					</div>
+
+					<div className='mt-6 flex items-end gap-2 overflow-x-auto pb-1'>
+						{trendSeries.map((point) => (
+							<div key={point.date} className='flex min-w-[40px] flex-1 flex-col items-center gap-2'>
+								<div className='flex h-36 w-full items-end rounded-[16px] bg-slate-950/55 px-1.5 py-1.5'>
+									<div
+										className='w-full rounded-[12px] bg-gradient-to-t from-sky-500 via-cyan-400 to-cyan-200'
+										style={{ height: `${Math.max(10, ((point.count || 0) / trendMax) * 100)}%` }}
+									></div>
+								</div>
+								<p className='text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500'>{point.label}</p>
+								<p className='text-xs font-semibold text-white'>{point.count}</p>
+							</div>
+						))}
+					</div>
+				</div>
+
+				<div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
+					{platformKpis.map((item) => (
+						<div
+							key={item.label}
+							className='rounded-[22px] border border-white/10 bg-[linear-gradient(180deg,rgba(5,11,24,0.92),rgba(13,22,43,0.7))] p-4 shadow-[0_18px_44px_rgba(2,6,23,0.28)]'
+						>
+							<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500'>{item.label}</p>
+							<p className={`mt-4 text-3xl font-semibold ${item.accent}`}>{item.value}</p>
+						</div>
+					))}
+				</div>
+			</div>
+
 			<div className='grid gap-4 md:grid-cols-2 xl:grid-cols-6'>
 				{statCards.map(({ id, label, icon: Icon }) => (
 					<div
