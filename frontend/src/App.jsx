@@ -1,8 +1,13 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import "./App.css";
+import RecoveryEmailRequiredModal from "./components/auth/RecoveryEmailRequiredModal";
+import ForgotPassword from "./pages/forgotPassword/ForgotPassword";
+import ForgotUsername from "./pages/forgotUsername/ForgotUsername";
 import Login from "./pages/login/Login";
+import ResetPassword from "./pages/resetPassword/ResetPassword";
 import SignUp from "./pages/signup/SignUp";
+import VerifyEmail from "./pages/verifyEmail/VerifyEmail";
 import { Toaster, toast } from "react-hot-toast";
 import { useAuthContext } from "./context/AuthContext";
 
@@ -42,7 +47,9 @@ function App() {
 	const location = useLocation();
 	const [isMobileKeyboardOpen, setIsMobileKeyboardOpen] = useState(false);
 	const lastCopiedUserRef = useRef({ value: "", at: 0 });
-	const isAuthRoute = location.pathname === "/login" || location.pathname === "/signup";
+	const isAuthRoute = ["/login", "/signup", "/forgot-password", "/forgot-username", "/reset-password", "/verify-email"].includes(
+		location.pathname
+	);
 	const isProfileRoute = location.pathname === "/profile";
 	const authSwitchFrom = location.state?.authSwitchFrom;
 	const authSwitchDirection =
@@ -63,10 +70,15 @@ function App() {
 			? "pt-1 pb-1"
 			: "pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)]"
 	}`;
+	const authViewportShell = `h-[var(--app-viewport-height)] justify-center overflow-hidden px-1.5 ${
+		isMobileKeyboardOpen
+			? "items-start pt-1 pb-1"
+			: "items-center pt-[calc(env(safe-area-inset-top,0px)+0.35rem)] pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)]"
+	} sm:h-dvh sm:items-center sm:overflow-hidden sm:px-4 sm:py-4 lg:px-6 lg:py-6`;
 	const mobileDesktopShell = "sm:h-dvh sm:items-center sm:overflow-hidden sm:p-4";
 	const profileDesktopShell = "sm:min-h-screen sm:items-start sm:p-4 lg:p-6";
 	const appShellClass = isAuthRoute
-		? `box-border flex min-h-[var(--app-viewport-height)] ${mobileViewportShell} sm:px-4 sm:py-4 lg:px-6 lg:py-6`
+		? `box-border flex ${authViewportShell}`
 		: isWorkbenchRoute
 			? isDeveloperRoute
 				? `box-border flex min-h-[var(--app-viewport-height)] ${mobileViewportShell} sm:min-h-screen sm:h-auto sm:p-4 xl:h-dvh xl:items-center xl:overflow-hidden`
@@ -174,6 +186,10 @@ function App() {
 							<Route path='/' element={<Home />} />
 							<Route path='/login' element={<Navigate to='/' />} />
 							<Route path='/signup' element={<Navigate to='/' />} />
+							<Route path='/forgot-password' element={<Navigate to='/' />} />
+							<Route path='/forgot-username' element={<Navigate to='/' />} />
+							<Route path='/reset-password' element={<Navigate to='/' />} />
+							<Route path='/verify-email' element={<VerifyEmail />} />
 							<Route path='/profile' element={<Profile />} />
 							<Route
 								path='/developer/*'
@@ -187,11 +203,16 @@ function App() {
 						<Route path='/' element={<Navigate to={"/login"} />} />
 						<Route path='/login' element={renderAuthRoute(<Login />)} />
 						<Route path='/signup' element={renderAuthRoute(<SignUp />)} />
+						<Route path='/forgot-password' element={renderAuthRoute(<ForgotPassword />)} />
+						<Route path='/forgot-username' element={renderAuthRoute(<ForgotUsername />)} />
+						<Route path='/reset-password' element={renderAuthRoute(<ResetPassword />)} />
+						<Route path='/verify-email' element={renderAuthRoute(<VerifyEmail />)} />
 						<Route path='/profile' element={<Navigate to={"/login"} />} />
 						<Route path='/developer/*' element={<Navigate to={"/login"} />} />
 					</Routes>
 				)}
 			</Suspense>
+			<RecoveryEmailRequiredModal />
 			<Toaster />
 		</div>
 	);

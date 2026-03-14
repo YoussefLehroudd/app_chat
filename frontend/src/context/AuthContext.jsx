@@ -13,6 +13,8 @@ const normalizeAuthUser = (user) => {
 		...user,
 		_id: userId,
 		id: userId,
+		email: user.email || "",
+		hasRecoveryEmail: Boolean(user.email || user.hasRecoveryEmail),
 		role: user.role || "USER",
 		isPrimaryDeveloper: user.isPrimaryDeveloper || false,
 		isVerified: user.isVerified || false,
@@ -51,15 +53,7 @@ export const AuthContextProvider = ({ children }) => {
 
 		const syncSessionUser = async () => {
 			try {
-				const res = await fetch("/api/auth/me");
-
-				if (res.status === 401 || res.status === 403 || res.status === 404) {
-					if (isCancelled) return;
-					localStorage.removeItem("chat-user");
-					localStorage.removeItem("chat-conversations");
-					setAuthUser(null);
-					return;
-				}
+				const res = await fetch("/api/auth/session");
 
 				if (!res.ok) {
 					return;
@@ -67,6 +61,13 @@ export const AuthContextProvider = ({ children }) => {
 
 				const data = normalizeAuthUser(await res.json());
 				if (isCancelled) return;
+
+				if (!data) {
+					localStorage.removeItem("chat-user");
+					localStorage.removeItem("chat-conversations");
+					setAuthUser(null);
+					return;
+				}
 
 				localStorage.setItem("chat-user", JSON.stringify(data));
 				setAuthUser(data);

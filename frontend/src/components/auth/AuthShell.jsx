@@ -19,6 +19,51 @@ const features = [
 	},
 ];
 
+const AuthPanelScene = () => (
+	<div className='auth-panel-scene' aria-hidden='true'>
+		<div className='auth-panel-scene__mesh'></div>
+		<div className='auth-panel-scene__beam'></div>
+		<div className='auth-panel-scene__halo auth-panel-scene__halo--amber'></div>
+		<div className='auth-panel-scene__halo auth-panel-scene__halo--cyan'></div>
+		<div className='auth-panel-scene__stack'>
+			<div className='auth-panel-scene__platform auth-panel-scene__platform--outer'></div>
+			<div className='auth-panel-scene__platform auth-panel-scene__platform--inner'></div>
+			<div className='auth-panel-scene__core'>
+				<span className='auth-panel-scene__core-face auth-panel-scene__core-face--top'></span>
+				<span className='auth-panel-scene__core-face auth-panel-scene__core-face--front'></span>
+				<span className='auth-panel-scene__core-face auth-panel-scene__core-face--side'></span>
+				<span className='auth-panel-scene__core-orb'></span>
+			</div>
+			<div className='auth-panel-scene__satellite auth-panel-scene__satellite--left'>
+				<span className='auth-panel-scene__satellite-dot'></span>
+				<span className='auth-panel-scene__satellite-bar auth-panel-scene__satellite-bar--accent'></span>
+				<span className='auth-panel-scene__satellite-bar'></span>
+			</div>
+			<div className='auth-panel-scene__satellite auth-panel-scene__satellite--right'>
+				<span className='auth-panel-scene__satellite-dot auth-panel-scene__satellite-dot--cyan'></span>
+				<span className='auth-panel-scene__satellite-bar auth-panel-scene__satellite-bar--accent auth-panel-scene__satellite-bar--cyan'></span>
+				<span className='auth-panel-scene__satellite-bar auth-panel-scene__satellite-bar--short'></span>
+			</div>
+		</div>
+		<div className='auth-panel-scene__hud auth-panel-scene__hud--left'>
+			<span></span>
+			<span></span>
+			<span></span>
+		</div>
+		<div className='auth-panel-scene__hud auth-panel-scene__hud--right'>
+			<span></span>
+			<span></span>
+			<span></span>
+		</div>
+		<div className='auth-panel-scene__particles'>
+			<span></span>
+			<span></span>
+			<span></span>
+			<span></span>
+		</div>
+	</div>
+);
+
 const AuthShell = ({
 	eyebrow,
 	title,
@@ -27,26 +72,32 @@ const AuthShell = ({
 	footerPrompt,
 	footerLinkLabel,
 	footerTo,
+	shellVariant = "default",
+	shellClassName = "",
 	children,
 }) => {
 	const location = useLocation();
+	const isCompactShell = shellVariant === "compact";
+	const shellClasses = ["auth-shell", isCompactShell ? "auth-shell--compact" : "", shellClassName]
+		.filter(Boolean)
+		.join(" ");
 	const footerLinkState =
 		location.pathname === "/login" || location.pathname === "/signup"
 			? { authSwitchFrom: location.pathname }
 			: undefined;
 
 	return (
-		<div className='auth-shell'>
+		<div className={shellClasses}>
 			<div className='auth-shell__orb auth-shell__orb--one'></div>
 			<div className='auth-shell__orb auth-shell__orb--two'></div>
 
-			<div className='relative z-10 grid h-full lg:min-h-[760px] lg:grid-cols-[0.98fr_1.02fr]'>
-				<section className='auth-shell__desktop-panel relative hidden border-r border-white/10 px-8 py-8 lg:flex lg:flex-col lg:justify-between lg:gap-6 xl:px-10 xl:py-10'>
+			<div className='auth-shell__grid relative z-10 grid h-full lg:grid-cols-[0.98fr_1.02fr]'>
+				<section className='auth-shell__desktop-panel relative hidden min-h-0 border-r border-white/10 px-8 py-8 lg:flex lg:flex-col lg:justify-between lg:gap-6 xl:px-10 xl:py-10'>
 					<div className='pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.12),transparent_28%),linear-gradient(180deg,rgba(15,23,42,0.24),rgba(2,6,23,0.62))]'></div>
 					<div className='pointer-events-none absolute left-8 top-8 h-24 w-24 rounded-full border border-white/10'></div>
 					<div className='pointer-events-none absolute bottom-10 right-10 h-40 w-40 rounded-full bg-amber-300/10 blur-3xl'></div>
 
-					<div className='auth-shell__desktop-content space-y-5'>
+					<div className={`auth-shell__desktop-content ${isCompactShell ? "space-y-4" : "space-y-5"}`}>
 						<div className='inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-200'>
 							<span className='h-2 w-2 rounded-full bg-amber-300 shadow-[0_0_14px_rgba(252,211,77,0.75)]'></span>
 							{eyebrow}
@@ -63,7 +114,7 @@ const AuthShell = ({
 							<p className='auth-shell__desktop-description max-w-lg text-base leading-7 text-slate-300/90'>{description}</p>
 						</div>
 
-						<div className='auth-shell__feature-list grid gap-3'>
+						<div className={`auth-shell__feature-list grid ${isCompactShell ? "gap-2.5" : "gap-3"}`}>
 							{features.map(({ icon: Icon, title: featureTitle, description: featureDescription }, index) => (
 								<div
 									key={featureTitle}
@@ -88,7 +139,11 @@ const AuthShell = ({
 						</div>
 					</div>
 
-					<div className='auth-shell__desktop-footer flex items-center gap-4 rounded-[24px] border border-white/10 bg-black/20 px-5 py-4 backdrop-blur-md'>
+					<div
+						className={`auth-shell__desktop-footer flex items-center gap-4 rounded-[24px] border border-white/10 bg-black/20 px-5 py-4 backdrop-blur-md ${
+							isCompactShell ? "lg:hidden" : ""
+						}`}
+					>
 						<div className='flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f5efe4] text-lg font-bold text-slate-900'>
 							C
 						</div>
@@ -99,26 +154,16 @@ const AuthShell = ({
 					</div>
 				</section>
 
-				<section className='relative flex items-center p-4 sm:p-6 lg:p-5 xl:p-6'>
+				<section
+					className={`auth-shell__form-section relative flex items-center p-4 sm:p-6 ${
+						isCompactShell ? "lg:p-4 xl:p-5" : "lg:p-5 xl:p-6"
+					}`}
+				>
 					<div className='auth-form-panel w-full'>
-						<div className='auth-panel-header mb-6 space-y-3'>
-							<div className='inline-flex items-center gap-2 rounded-full border border-slate-300/60 bg-white/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-700 lg:hidden'>
-								<span className='h-2 w-2 rounded-full bg-amber-500'></span>
-								{eyebrow}
-							</div>
-							<div className='inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-300/60 bg-white text-lg font-bold text-slate-900 shadow-[0_10px_30px_rgba(15,23,42,0.08)]'>
-								C
-							</div>
-							<h2 className='auth-panel-title text-3xl font-semibold tracking-[-0.03em] text-slate-900 sm:text-4xl'>
-								{title}
-								<span className='block text-slate-500'>{accent}</span>
-							</h2>
-							<p className='auth-panel-description max-w-md text-sm leading-6 text-slate-600'>{description}</p>
-						</div>
+						<AuthPanelScene />
+						<div className='auth-panel-body relative z-10'>{children}</div>
 
-						<div className='auth-panel-body'>{children}</div>
-
-						<div className='auth-panel-footer mt-6 border-t border-slate-300/80 pt-4 text-sm text-slate-500'>
+						<div className='auth-panel-footer relative z-10 mt-6 border-t border-slate-300/80 pt-4 text-sm text-slate-500'>
 							{footerPrompt}{" "}
 							<Link to={footerTo} state={footerLinkState} className='auth-inline-link'>
 								{footerLinkLabel}

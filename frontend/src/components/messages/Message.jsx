@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
-import { BsCopy, BsReply, BsTrash } from "react-icons/bs";
+import { BsBookmark, BsCopy, BsPencil, BsPinAngle, BsReply, BsTrash } from "react-icons/bs";
 import { HiOutlinePhone, HiOutlineVideoCamera } from "react-icons/hi2";
 import { IoAttachOutline, IoDocumentOutline, IoDownloadOutline, IoImageOutline, IoVideocamOutline } from "react-icons/io5";
 import { useAuthContext } from "../../context/AuthContext";
@@ -61,6 +61,18 @@ const formatCallDuration = (totalSeconds = 0) => {
 	return `${minutes}:${String(seconds).padStart(2, "0")}`;
 };
 
+const getReceiptLabel = (message) => {
+	if (message?.isSeen) {
+		return <span className='text-blue-200'>✓✓</span>;
+	}
+
+	if (message?.deliveredAt) {
+		return <span className='text-slate-100/90'>✓✓</span>;
+	}
+
+	return "✓";
+};
+
 const Message = ({
 	message,
 	onDeleteMessage,
@@ -93,6 +105,9 @@ const Message = ({
 	const [deleteType, setDeleteType] = useState("me");
 	const [isDeleting, setIsDeleting] = useState(false);
 	const [isHandlingInvite, setIsHandlingInvite] = useState(false);
+	const [isEditing, setIsEditing] = useState(false);
+	const [editDraft, setEditDraft] = useState(message.message || "");
+	const [isMutatingMessage, setIsMutatingMessage] = useState(false);
 	const [menuPosition, setMenuPosition] = useState(null);
 	const [isPlaying, setIsPlaying] = useState(false);
 	const [progress, setProgress] = useState(0);
@@ -127,6 +142,10 @@ const Message = ({
 		setProgress(0);
 		setDuration(0);
 	}, [message.audio]);
+
+	useEffect(() => {
+		setEditDraft(message.message || "");
+	}, [message._id, message.message]);
 
 	useEffect(() => {
 		const handleAudioControl = (event) => {
@@ -306,6 +325,117 @@ const Message = ({
 		}
 	};
 
+	const applyUpdatedMessage = (nextMessage) => {
+		if (!nextMessage?._id) return;
+		useConversation.getState().updateMessage(nextMessage._id, nextMessage);
+	};
+
+	const runMessageMutation = async (requestFactory, successMessage = "") => {
+		if (isMutatingMessage) return null;
+
+		setIsMutatingMessage(true);
+		try {
+			const response = await requestFactory();
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Unable to update message");
+			}
+
+			const nextMessage = data.message || data;
+			if (nextMessage?._id) {
+				applyUpdatedMessage(nextMessage);
+			}
+
+			if (successMessage) {
+				toast.success(successMessage, { duration: 1200 });
+			}
+
+			return data;
+		} catch (error) {
+			toast.error(error.message);
+			return null;
+		} finally {
+			setIsMutatingMessage(false);
+		}
+	};
+
+	const toggleReaction = async (emoji) => {
+		setContextMenuMessageId(null);
+		setMenuPosition(null);
+		await runMessageMutation(
+			() =>
+				fetch(`/api/messages/${message._id}/reactions`, {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ emoji }),
+				}),
+			"Reaction updated"
+		);
+	};
+
+	const toggleSavedState = async () => {
+		setContextMenuMessageId(null);
+		setMenuPosition(null);
+		const result = await runMessageMutation(
+			() =>
+				fetch(`/api/messages/${message._id}/save`, {
+					method: "POST",
+				}),
+			message.isSaved ? "Removed from saved" : "Saved message"
+		);
+		if (result?.message?._id) {
+			applyUpdatedMessage(result.message);
+		}
+	};
+
+	const togglePinnedState = async () => {
+		setContextMenuMessageId(null);
+		setMenuPosition(null);
+		const result = await runMessageMutation(
+			() =>
+				fetch(`/api/messages/${message._id}/pin`, {
+					method: "POST",
+				}),
+			message.isPinned ? "Message unpinned" : "Message pinned"
+		);
+		if (result?.message?._id) {
+			applyUpdatedMessage(result.message);
+		}
+	};
+
+	const startEditing = () => {
+		setEditDraft(message.message || "");
+		setIsEditing(true);
+		setContextMenuMessageId(null);
+		setMenuPosition(null);
+	};
+
+	const submitEdit = async () => {
+		const nextText = editDraft.trim();
+		if (!nextText) {
+			toast.error("Message cannot be empty");
+			return;
+		}
+
+		const result = await runMessageMutation(
+			() =>
+				fetch(`/api/messages/${message._id}`, {
+					method: "PATCH",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ message: nextText }),
+				}),
+			"Message edited"
+		);
+
+		if (result?._id || result?.message?._id) {
+			setIsEditing(false);
+		}
+	};
+
 	const formatAudioTime = (seconds) => {
 		const safeSeconds = getSafeAudioValue(seconds);
 		const mins = Math.floor(safeSeconds / 60);
@@ -343,6 +473,16 @@ const Message = ({
 			: "inline-block h-[1.08em] w-[1.62em] align-[-0.15em] rounded-[0.18em] object-cover sm:h-[1.14em] sm:w-[1.72em]"
 			: "inline-block h-[1.02em] w-[1.5em] align-[-0.16em] rounded-[0.16em] object-cover";
 	const attachmentDownloadUrl = getAttachmentDownloadUrl(message);
+	const canEditMessage =
+		fromMe &&
+		!message.audio &&
+		!message.attachment &&
+		!message.isSystem &&
+		!message.isCallMessage &&
+		!message.isGroupInvite &&
+		!message.isStoryInteraction &&
+		typeof message.message === "string" &&
+		message.message.trim().length > 0;
 
 	const handleInvitationResponse = async (action) => {
 		if (!message.isGroupInvite || !message.groupInvite || isHandlingInvite) return;
@@ -743,7 +883,7 @@ const Message = ({
 
 					<div className={`mt-2 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
 						<span>{message.isPending ? "Sending..." : formattedTime}</span>
-						{fromMe && !message.isPending ? <span>{message.isSeen ? <span className='text-blue-200'>✓✓</span> : "✓"}</span> : null}
+						{fromMe && !message.isPending ? <span>{getReceiptLabel(message)}</span> : null}
 					</div>
 				</div>
 			</div>
@@ -968,30 +1108,100 @@ const Message = ({
 						) : null}
 
 						{message.message ? (
-							<p
-								className={`w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
-									message.attachment
-										? "mt-3 leading-6"
-										: isEmojiOnlyMessage
-											? "text-[28px] leading-[1.35] tracking-[0.08em] sm:text-[32px]"
-											: isFlagOnlyMessage
-												? "leading-[1.22]"
-												: "leading-6"
-								}`}
-							>
-								<FlagText
-									text={message.message}
-									className={flagMessageClassName}
-									imgClassName={flagImageClassName}
-								/>
-							</p>
+							isEditing ? (
+								<div className='mt-2 space-y-2'>
+									<textarea
+										value={editDraft}
+										onChange={(event) => setEditDraft(event.target.value)}
+										className='custom-scrollbar min-h-[96px] w-full rounded-[18px] border border-white/10 bg-black/10 px-3 py-2.5 text-sm text-white outline-none'
+									/>
+									<div className='flex justify-end gap-2'>
+										<button
+											type='button'
+											className='rounded-full border border-white/10 px-3 py-1.5 text-xs text-slate-100'
+											onClick={() => {
+												setIsEditing(false);
+												setEditDraft(message.message || "");
+											}}
+										>
+											Cancel
+										</button>
+										<button
+											type='button'
+											className='rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold text-white'
+											onClick={submitEdit}
+											disabled={isMutatingMessage}
+										>
+											Save
+										</button>
+									</div>
+								</div>
+							) : (
+								<p
+									className={`w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${
+										message.attachment
+											? "mt-3 leading-6"
+											: isEmojiOnlyMessage
+												? "text-[28px] leading-[1.35] tracking-[0.08em] sm:text-[32px]"
+												: isFlagOnlyMessage
+													? "leading-[1.22]"
+													: "leading-6"
+									}`}
+								>
+									<FlagText
+										text={message.message}
+										className={flagMessageClassName}
+										imgClassName={flagImageClassName}
+									/>
+								</p>
+							)
 						) : null}
 					</>
 				)}
 
+				{Array.isArray(message.reactions) && message.reactions.length > 0 ? (
+					<div className='mt-3 flex flex-wrap gap-2'>
+						{message.reactions.map((reaction) => (
+							<button
+								key={`${message._id}-${reaction.emoji}`}
+								type='button'
+								onClick={(event) => {
+									event.stopPropagation();
+									toggleReaction(reaction.emoji);
+								}}
+								className={`rounded-full border px-2.5 py-1 text-xs font-medium transition ${
+									reaction.reactedByMe
+										? "border-cyan-300/35 bg-cyan-500/14 text-cyan-50"
+										: "border-white/10 bg-white/[0.06] text-slate-100"
+								}`}
+							>
+								{reaction.emoji} {reaction.count}
+							</button>
+						))}
+					</div>
+				) : null}
+
+				{message.isPinned || message.isSaved ? (
+					<div className='mt-3 flex flex-wrap gap-2'>
+						{message.isPinned ? (
+							<span className='inline-flex items-center gap-1 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-100'>
+								<BsPinAngle className='h-3 w-3' />
+								Pinned
+							</span>
+						) : null}
+						{message.isSaved ? (
+							<span className='inline-flex items-center gap-1 rounded-full border border-amber-300/20 bg-amber-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-100'>
+								<BsBookmark className='h-3 w-3' />
+								Saved
+							</span>
+						) : null}
+					</div>
+				) : null}
+
 				<div className={`mt-2 flex items-center justify-end gap-1 text-[11px] ${metaClassName}`}>
 					<span>{message.isPending ? "Sending..." : formattedTime}</span>
-					{fromMe && !message.isPending ? <span>{message.isSeen ? <span className='text-blue-200'>✓✓</span> : "✓"}</span> : null}
+					{message.editedAt && !message.isPending ? <span>· Edited</span> : null}
+					{fromMe && !message.isPending ? <span>{getReceiptLabel(message)}</span> : null}
 				</div>
 
 				{contextMenuMessageId === message._id && menuPosition
@@ -1002,6 +1212,24 @@ const Message = ({
 							onClick={(event) => event.stopPropagation()}
 							onMouseDown={(event) => event.stopPropagation()}
 						>
+						<li className='px-2 pb-1 pt-1'>
+							<div className='flex items-center gap-1 rounded-2xl bg-white/[0.04] p-1'>
+								{["👍", "❤️", "😂", "🔥"].map((emoji) => (
+									<button
+										key={emoji}
+										type='button'
+										className='flex-1 rounded-xl px-2 py-2 text-lg transition hover:bg-white/[0.08]'
+										onClick={(event) => {
+											event.stopPropagation();
+											toggleReaction(emoji);
+										}}
+										title={`React with ${emoji}`}
+									>
+										{emoji}
+									</button>
+								))}
+							</div>
+						</li>
 						<li>
 							<button
 								type='button'
@@ -1017,6 +1245,47 @@ const Message = ({
 								<span>Reply</span>
 							</button>
 						</li>
+						<li>
+							<button
+								type='button'
+								className='flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-slate-100 transition hover:bg-white/[0.06]'
+								onClick={(event) => {
+									event.stopPropagation();
+									toggleSavedState();
+								}}
+							>
+								<BsBookmark className='h-4 w-4' />
+								<span>{message.isSaved ? "Unsave" : "Save message"}</span>
+							</button>
+						</li>
+						<li>
+							<button
+								type='button'
+								className='flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-slate-100 transition hover:bg-white/[0.06]'
+								onClick={(event) => {
+									event.stopPropagation();
+									togglePinnedState();
+								}}
+							>
+								<BsPinAngle className='h-4 w-4' />
+								<span>{message.isPinned ? "Unpin" : "Pin message"}</span>
+							</button>
+						</li>
+						{canEditMessage ? (
+							<li>
+								<button
+									type='button'
+									className='flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-slate-100 transition hover:bg-white/[0.06]'
+									onClick={(event) => {
+										event.stopPropagation();
+										startEditing();
+									}}
+								>
+									<BsPencil className='h-4 w-4' />
+									<span>Edit</span>
+								</button>
+							</li>
+						) : null}
 						<li>
 							<button
 								type='button'

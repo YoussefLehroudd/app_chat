@@ -4,7 +4,7 @@ import useConversation from "../zustand/useConversation";
 
 const useListenMessagesSeen = () => {
 	const { socket } = useSocketContext();
-	const { markMessagesSeen, selectedConversation } = useConversation();
+	const { markMessagesDelivered, markMessagesSeen, selectedConversation } = useConversation();
 
 	useEffect(() => {
 		if (!socket) return undefined;
@@ -16,10 +16,20 @@ const useListenMessagesSeen = () => {
 			}
 		};
 
-		socket.on("messagesSeen", handleMessagesSeen);
+		const handleMessagesDelivered = ({ conversationId, messageIds, deliveredAt }) => {
+			if (selectedConversation?.type === "DIRECT" && selectedConversation?._id === conversationId) {
+				markMessagesDelivered(messageIds, deliveredAt);
+			}
+		};
 
-		return () => socket.off("messagesSeen", handleMessagesSeen);
-	}, [socket, markMessagesSeen, selectedConversation]);
+		socket.on("messagesSeen", handleMessagesSeen);
+		socket.on("messagesDelivered", handleMessagesDelivered);
+
+		return () => {
+			socket.off("messagesSeen", handleMessagesSeen);
+			socket.off("messagesDelivered", handleMessagesDelivered);
+		};
+	}, [socket, markMessagesDelivered, markMessagesSeen, selectedConversation]);
 };
 
 export default useListenMessagesSeen;

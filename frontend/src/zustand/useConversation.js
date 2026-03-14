@@ -113,8 +113,18 @@ const useConversation = create((set) => ({
 				messageIds.includes(message._id) ? { ...message, isSeen: true } : message
 			),
 		})),
+	markMessagesDelivered: (messageIds, deliveredAt) =>
+		set((state) => ({
+			messages: state.messages.map((message) =>
+				messageIds.includes(message._id)
+					? { ...message, deliveredAt: deliveredAt || message.deliveredAt || new Date().toISOString() }
+					: message
+			),
+		})),
 	isTyping: false,
 	setIsTyping: (isTyping) => set({ isTyping }),
+	isRecording: false,
+	setIsRecording: (isRecording) => set({ isRecording }),
 	showSidebar: true,
 	setShowSidebar: (showSidebar) => set({ showSidebar }),
 	repliedMessage: null,

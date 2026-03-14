@@ -21,6 +21,7 @@ import {
 	parseStoryInteractionMessageContent,
 	updateGroupInviteMessageStatus,
 } from "../utils/systemMessages.js";
+import { normalizeDisappearingSeconds, upsertConversationPreference } from "../utils/chatRelationships.js";
 
 const buildVisibleMessageInclude = (viewerId) => ({
 	where: {
@@ -57,7 +58,21 @@ const userSelect = {
 	updatedAt: true,
 };
 
-const groupConversationInclude = {
+const buildConversationPreferenceInclude = (viewerId) => ({
+	preferences: {
+		where: {
+			userId: viewerId,
+		},
+		take: 1,
+		select: {
+			isArchived: true,
+			archivedAt: true,
+			mutedUntil: true,
+		},
+	},
+});
+
+const groupConversationInclude = (viewerId) => ({
 	members: {
 		include: {
 			user: {
@@ -66,7 +81,8 @@ const groupConversationInclude = {
 		},
 		orderBy: { joinedAt: "asc" },
 	},
-};
+	...buildConversationPreferenceInclude(viewerId),
+});
 
 const groupSystemMessageInclude = {
 	sender: {
@@ -151,6 +167,11 @@ const emitToUsers = (userIds, eventName, payload) => {
 	});
 };
 
+const getViewerPreference = (conversation) =>
+	Array.isArray(conversation?.preferences) && conversation.preferences.length > 0
+		? conversation.preferences[0]
+		: null;
+
 const buildGroupConversationItemForUser = async (conversationId, viewerId) => {
 	const conversation = await prisma.conversation.findFirst({
 		where: {
@@ -161,7 +182,7 @@ const buildGroupConversationItemForUser = async (conversationId, viewerId) => {
 			},
 		},
 		include: {
-			...groupConversationInclude,
+			...groupConversationInclude(viewerId),
 			messages: buildVisibleMessageInclude(viewerId),
 		},
 	});
@@ -189,6 +210,7 @@ const buildGroupConversationItemForUser = async (conversationId, viewerId) => {
 	});
 
 	const latestMessage = conversation.messages[0];
+	const viewerPreference = getViewerPreference(conversation);
 
 	return toConversationItemDto(
 		{
@@ -197,6 +219,9 @@ const buildGroupConversationItemForUser = async (conversationId, viewerId) => {
 			lastMessageAt: latestMessage?.createdAt ?? null,
 			unreadCount,
 			groupRole: currentMember?.role ?? null,
+			isArchived: Boolean(viewerPreference?.isArchived),
+			archivedAt: viewerPreference?.archivedAt ?? null,
+			mutedUntil: viewerPreference?.mutedUntil ?? null,
 		},
 		viewerId
 	);
@@ -240,12 +265,14 @@ const buildDirectConversationItemForUser = async (conversationId, viewerId) => {
 			userOne: { select: userSelect },
 			userTwo: { select: userSelect },
 			messages: buildVisibleMessageInclude(viewerId),
+			...buildConversationPreferenceInclude(viewerId),
 		},
 	});
 
 	if (!conversation) return null;
 
 	const latestMessage = conversation.messages[0];
+	const viewerPreference = getViewerPreference(conversation);
 	const unreadCount = await prisma.message.count({
 		where: {
 			conversationId: conversation.id,
@@ -265,6 +292,9 @@ const buildDirectConversationItemForUser = async (conversationId, viewerId) => {
 			lastMessage: getLatestMessagePreview(latestMessage),
 			lastMessageAt: latestMessage?.createdAt ?? null,
 			unreadCount,
+			isArchived: Boolean(viewerPreference?.isArchived),
+			archivedAt: viewerPreference?.archivedAt ?? null,
+			mutedUntil: viewerPreference?.mutedUntil ?? null,
 		},
 		viewerId
 	);
@@ -288,7 +318,7 @@ const emitPublicGroupsChanged = () => {
 
 const getManagedGroupConversation = async (conversationId, userId) =>
 	getGroupConversationForMember(conversationId, userId, {
-		include: groupConversationInclude,
+		include: groupConversationInclude(userId),
 	});
 
 const getGroupConversationById = async (conversationId) =>
@@ -297,7 +327,16 @@ const getGroupConversationById = async (conversationId) =>
 			id: conversationId,
 			type: CONVERSATION_TYPES.GROUP,
 		},
-		include: groupConversationInclude,
+		include: {
+			members: {
+				include: {
+					user: {
+						select: userSelect,
+					},
+				},
+				orderBy: { joinedAt: "asc" },
+			},
+		},
 	});
 
 const isGroupManagerRole = (role) =>
@@ -412,6 +451,149 @@ const sendDirectPayloadMessage = async ({ senderId, receiverId, rawMessage }) =>
 	return formattedMessage;
 };
 
+const getAccessibleConversationForUser = (conversationId, userId) =>
+	prisma.conversation.findFirst({
+		where: {
+			id: conversationId,
+			OR: [
+				{
+					type: CONVERSATION_TYPES.DIRECT,
+					OR: [{ userOneId: userId }, { userTwoId: userId }],
+				},
+				{
+					type: CONVERSATION_TYPES.GROUP,
+					members: {
+						some: {
+							userId,
+						},
+					},
+				},
+			],
+		},
+		include: {
+			...(groupConversationInclude(userId)),
+			userOne: { select: userSelect },
+			userTwo: { select: userSelect },
+		},
+	});
+
+export const updateConversationPreferences = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const conversationId = req.params.id;
+		const conversation = await getAccessibleConversationForUser(conversationId, userId);
+
+		if (!conversation) {
+			return res.status(404).json({ error: "Conversation not found" });
+		}
+
+		const data = {};
+		if (typeof req.body?.isArchived === "boolean") {
+			data.isArchived = req.body.isArchived;
+			data.archivedAt = req.body.isArchived ? new Date() : null;
+		}
+
+		if (typeof req.body?.mutedForSeconds !== "undefined") {
+			if (
+				req.body.mutedForSeconds === null ||
+				req.body.mutedForSeconds === "" ||
+				req.body.mutedForSeconds === "off" ||
+				Number(req.body.mutedForSeconds) <= 0
+			) {
+				data.mutedUntil = null;
+			} else {
+				const mutedForSeconds = Number.parseInt(req.body.mutedForSeconds, 10);
+				if (!Number.isFinite(mutedForSeconds) || mutedForSeconds <= 0) {
+					return res.status(400).json({ error: "Muted duration must be a positive number of seconds" });
+				}
+				data.mutedUntil = new Date(Date.now() + mutedForSeconds * 1000);
+			}
+		}
+
+		if (Object.keys(data).length === 0) {
+			return res.status(400).json({ error: "No preference changes were provided" });
+		}
+
+		await upsertConversationPreference({
+			conversationId: conversation.id,
+			userId,
+			data,
+		});
+
+		const refreshedConversation =
+			conversation.type === CONVERSATION_TYPES.GROUP
+				? await buildGroupConversationItemForUser(conversation.id, userId)
+				: await buildDirectConversationItemForUser(conversation.id, userId);
+
+		if (refreshedConversation) {
+			emitToUsers([userId], "conversationUpserted", refreshedConversation);
+		}
+
+		return res.status(200).json(refreshedConversation);
+	} catch (error) {
+		console.error("Error in updateConversationPreferences:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const updateConversationDisappearingMessages = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const conversationId = req.params.id;
+		const normalizedSeconds = normalizeDisappearingSeconds(req.body?.seconds);
+
+		if (Number.isNaN(normalizedSeconds)) {
+			return res.status(400).json({ error: "Invalid disappearing message duration" });
+		}
+
+		const conversation = await getAccessibleConversationForUser(conversationId, userId);
+		if (!conversation) {
+			return res.status(404).json({ error: "Conversation not found" });
+		}
+
+		if (conversation.type === CONVERSATION_TYPES.GROUP) {
+			const managerCheck = requireGroupManager(conversation, userId);
+			if (!managerCheck.ok) {
+				return res.status(managerCheck.status).json({ error: managerCheck.error });
+			}
+		}
+
+		await prisma.conversation.update({
+			where: { id: conversation.id },
+			data: {
+				disappearingMessagesSeconds: normalizedSeconds,
+			},
+		});
+
+		const audienceUserIds =
+			conversation.type === CONVERSATION_TYPES.GROUP
+				? conversation.members.map((member) => member.userId)
+				: [conversation.userOneId, conversation.userTwoId].filter(Boolean);
+
+		if (conversation.type === CONVERSATION_TYPES.GROUP) {
+			await emitGroupConversationUpsert(conversation.id, audienceUserIds);
+		} else {
+			await emitDirectConversationUpsert(conversation.id, audienceUserIds);
+		}
+
+		const refreshedConversation =
+			conversation.type === CONVERSATION_TYPES.GROUP
+				? await buildGroupConversationItemForUser(conversation.id, userId)
+				: await buildDirectConversationItemForUser(conversation.id, userId);
+
+		return res.status(200).json(refreshedConversation);
+	} catch (error) {
+		console.error("Error in updateConversationDisappearingMessages:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
 export const getSidebarConversations = async (req, res) => {
 	try {
 		const loggedInUserId = req.user._id;
@@ -427,6 +609,7 @@ export const getSidebarConversations = async (req, res) => {
 					userOne: { select: userSelect },
 					userTwo: { select: userSelect },
 					messages: buildVisibleMessageInclude(loggedInUserId),
+					...buildConversationPreferenceInclude(loggedInUserId),
 				},
 			}),
 			prisma.conversation.findMany({
@@ -444,7 +627,7 @@ export const getSidebarConversations = async (req, res) => {
 					],
 				},
 				include: {
-					...groupConversationInclude,
+					...groupConversationInclude(loggedInUserId),
 					messages: buildVisibleMessageInclude(loggedInUserId),
 				},
 			}),
@@ -453,6 +636,7 @@ export const getSidebarConversations = async (req, res) => {
 		const directItems = await Promise.all(
 			directConversations.map(async (conversation) => {
 				const latestMessage = conversation.messages[0];
+				const viewerPreference = getViewerPreference(conversation);
 				const unreadCount = await prisma.message.count({
 					where: {
 						conversationId: conversation.id,
@@ -472,6 +656,9 @@ export const getSidebarConversations = async (req, res) => {
 						lastMessage: getLatestMessagePreview(latestMessage),
 						lastMessageAt: latestMessage?.createdAt ?? null,
 						unreadCount,
+						isArchived: Boolean(viewerPreference?.isArchived),
+						archivedAt: viewerPreference?.archivedAt ?? null,
+						mutedUntil: viewerPreference?.mutedUntil ?? null,
 					},
 					loggedInUserId
 				);
@@ -482,6 +669,7 @@ export const getSidebarConversations = async (req, res) => {
 			groupConversations.map(async (conversation) => {
 				const latestMessage = conversation.messages[0];
 				const currentMember = conversation.members.find((member) => member.userId === loggedInUserId);
+				const viewerPreference = getViewerPreference(conversation);
 				const isMember = Boolean(currentMember);
 
 				const unreadCount = isMember
@@ -513,6 +701,9 @@ export const getSidebarConversations = async (req, res) => {
 						unreadCount,
 						groupRole: currentMember?.role ?? null,
 						isMember,
+						isArchived: Boolean(viewerPreference?.isArchived),
+						archivedAt: viewerPreference?.archivedAt ?? null,
+						mutedUntil: viewerPreference?.mutedUntil ?? null,
 					},
 					loggedInUserId
 				);

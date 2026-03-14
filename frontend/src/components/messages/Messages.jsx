@@ -27,7 +27,7 @@ const buildConversationKey = (conversation) => {
 const Messages = () => {
 	const { messages, loading, loadingOlder, hasOlderMessages, loadOlderMessages, messagesConversationKey } =
 		useGetMessages();
-	const { selectedConversation, isTyping } = useConversation();
+	const { selectedConversation, isRecording, isTyping, setIsRecording } = useConversation();
 	const [contextMenuMessageId, setContextMenuMessageId] = useState(null);
 	const [typingAvatarSrc, setTypingAvatarSrc] = useState(null);
 	const [highlightedMessageId, setHighlightedMessageId] = useState(null);
@@ -57,7 +57,8 @@ const Messages = () => {
 			lastId: null,
 			count: 0,
 		};
-	}, [selectedConversation?._id]);
+		setIsRecording(false);
+	}, [selectedConversation?._id, setIsRecording]);
 
 	const scrollToBottom = useCallback((behavior = "auto") => {
 		lastMessageRef.current?.scrollIntoView({ behavior });
@@ -218,32 +219,65 @@ const Messages = () => {
 		};
 	}, []);
 
-	const handleJumpToMessage = (targetMessageId) => {
+	const handleJumpToMessage = useCallback(async (targetMessageId) => {
 		if (!targetMessageId) return;
 
-		const targetMessageExists = messages.some((message) => message._id === targetMessageId);
-		if (!targetMessageExists) {
-			toast.error("Original message not found");
+		const focusMessage = () => {
+			const targetElement = document.getElementById(`message-${targetMessageId}`);
+			if (!targetElement) return false;
+
+			targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
+			setHighlightedMessageId(targetMessageId);
+
+			if (highlightTimeoutRef.current) {
+				clearTimeout(highlightTimeoutRef.current);
+			}
+
+			highlightTimeoutRef.current = setTimeout(() => {
+				setHighlightedMessageId(null);
+			}, 1800);
+
+			return true;
+		};
+
+		if (messages.some((message) => message._id === targetMessageId)) {
+			if (!focusMessage()) {
+				toast.error("Original message not found");
+			}
 			return;
 		}
 
-		const targetElement = document.getElementById(`message-${targetMessageId}`);
-		if (!targetElement) {
-			toast.error("Original message not found");
-			return;
+		while (true) {
+			const result = await loadOlderMessages();
+			const stateMessages = useConversation.getState().messages;
+
+			if (stateMessages.some((message) => message._id === targetMessageId)) {
+				requestAnimationFrame(() => {
+					if (!focusMessage()) {
+						toast.error("Original message not found");
+					}
+				});
+				return;
+			}
+
+			if (!result?.loaded) {
+				break;
+			}
 		}
 
-		targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
-		setHighlightedMessageId(targetMessageId);
+		toast.error("Original message not found");
+	}, [loadOlderMessages, messages]);
 
-		if (highlightTimeoutRef.current) {
-			clearTimeout(highlightTimeoutRef.current);
-		}
+	useEffect(() => {
+		const handleJumpRequest = (event) => {
+			void handleJumpToMessage(event.detail?.messageId);
+		};
 
-		highlightTimeoutRef.current = setTimeout(() => {
-			setHighlightedMessageId(null);
-		}, 1800);
-	};
+		window.addEventListener("chat:jump-to-message", handleJumpRequest);
+		return () => {
+			window.removeEventListener("chat:jump-to-message", handleJumpRequest);
+		};
+	}, [handleJumpToMessage]);
 
 	return (
 		<div className='min-h-0 flex-1 px-2 sm:px-3 md:px-5 lg:px-6'>
@@ -313,7 +347,7 @@ const Messages = () => {
 							</div>
 						) : null}
 
-						{isTyping ? (
+						{isTyping || isRecording ? (
 							<div className='flex items-center gap-3 px-1 py-1'>
 								<div className='avatar shrink-0'>
 									<div className='w-10 rounded-full ring-1 ring-white/10'>
@@ -325,7 +359,7 @@ const Messages = () => {
 									</div>
 								</div>
 								<div className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-slate-300'>
-									{selectedConversation?.fullName} is typing
+									{selectedConversation?.fullName} {isRecording ? "is recording" : "is typing"}
 									<span className='loading loading-dots loading-xs ml-2'></span>
 								</div>
 							</div>

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { IoArchiveOutline, IoTrashOutline } from "react-icons/io5";
 import formatLastSeen from "../../utils/lastSeen";
 import VerifiedBadge from "../common/VerifiedBadge";
@@ -12,6 +13,141 @@ const permissionShortLabels = {
 	deleteGroups: "Delete groups",
 	deleteMessages: "Delete msgs",
 	deleteReports: "Delete reports",
+};
+
+const permissionPillClassName =
+	"inline-flex min-h-10 min-w-[6.25rem] items-center justify-center whitespace-nowrap rounded-full px-3.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em]";
+
+const PermissionOverflowChip = ({ hiddenPermissionCount, hiddenPermissions }) => {
+	const triggerRef = useRef(null);
+	const popoverRef = useRef(null);
+	const [isOpen, setIsOpen] = useState(false);
+	const [popoverPosition, setPopoverPosition] = useState({
+		top: -9999,
+		left: 16,
+		placement: "bottom",
+	});
+
+	useEffect(() => {
+		if (!isOpen) return undefined;
+
+		const updatePosition = () => {
+			const triggerElement = triggerRef.current;
+			const popoverElement = popoverRef.current;
+			if (!triggerElement || !popoverElement) return;
+
+			const viewportWidth = window.innerWidth;
+			const viewportHeight = window.innerHeight;
+			const viewportPadding = 16;
+			const triggerGap = 10;
+			const triggerRect = triggerElement.getBoundingClientRect();
+			const popoverRect = popoverElement.getBoundingClientRect();
+			const spaceAbove = triggerRect.top - viewportPadding;
+			const spaceBelow = viewportHeight - triggerRect.bottom - viewportPadding;
+			const shouldPlaceAbove =
+				spaceBelow < popoverRect.height + triggerGap && spaceAbove > spaceBelow;
+
+			const top = shouldPlaceAbove
+				? Math.max(viewportPadding, triggerRect.top - popoverRect.height - triggerGap)
+				: Math.min(
+						viewportHeight - viewportPadding - popoverRect.height,
+						triggerRect.bottom + triggerGap
+					);
+			const left = Math.min(
+				Math.max(viewportPadding, triggerRect.left),
+				viewportWidth - viewportPadding - popoverRect.width
+			);
+
+			setPopoverPosition({
+				top,
+				left,
+				placement: shouldPlaceAbove ? "top" : "bottom",
+			});
+		};
+
+		const handlePointerDown = (event) => {
+			if (triggerRef.current?.contains(event.target) || popoverRef.current?.contains(event.target)) {
+				return;
+			}
+
+			setIsOpen(false);
+		};
+
+		const handleEscape = (event) => {
+			if (event.key === "Escape") {
+				setIsOpen(false);
+			}
+		};
+
+		updatePosition();
+		window.addEventListener("resize", updatePosition);
+		window.addEventListener("scroll", updatePosition, true);
+		document.addEventListener("mousedown", handlePointerDown);
+		document.addEventListener("touchstart", handlePointerDown);
+		document.addEventListener("keydown", handleEscape);
+
+		return () => {
+			window.removeEventListener("resize", updatePosition);
+			window.removeEventListener("scroll", updatePosition, true);
+			document.removeEventListener("mousedown", handlePointerDown);
+			document.removeEventListener("touchstart", handlePointerDown);
+			document.removeEventListener("keydown", handleEscape);
+		};
+	}, [isOpen]);
+
+	return (
+		<div
+			className='relative'
+			onMouseEnter={() => setIsOpen(true)}
+			onMouseLeave={() => setIsOpen(false)}
+			onFocus={() => setIsOpen(true)}
+			onBlur={(event) => {
+				if (!event.currentTarget.contains(event.relatedTarget)) {
+					setIsOpen(false);
+				}
+			}}
+		>
+			<button
+				ref={triggerRef}
+				type='button'
+				aria-expanded={isOpen}
+				onClick={() => setIsOpen((current) => !current)}
+				className={`${permissionPillClassName} cursor-pointer border border-white/10 bg-white/[0.04] text-slate-300 outline-none transition hover:border-sky-300/20 hover:bg-sky-500/[0.08] hover:text-sky-100 focus:border-sky-300/20 focus:bg-sky-500/[0.08] focus:text-sky-100`}
+			>
+				+{hiddenPermissionCount} more
+			</button>
+
+			{isOpen ? (
+				<div
+					ref={popoverRef}
+					className={`fixed z-40 w-[20rem] max-w-[calc(100vw-2rem)] rounded-[18px] border border-sky-300/16 bg-[linear-gradient(180deg,rgba(7,13,26,0.98),rgba(11,20,38,0.96))] p-3 shadow-[0_22px_48px_rgba(2,6,23,0.52)] backdrop-blur-xl transition duration-200 ${
+						popoverPosition.placement === "top" ? "origin-bottom" : "origin-top"
+					}`}
+					style={{
+						top: `${popoverPosition.top}px`,
+						left: `${popoverPosition.left}px`,
+					}}
+				>
+					<div className='flex items-center justify-between gap-3'>
+						<p className='text-[10px] font-semibold uppercase tracking-[0.22em] text-sky-200/70'>
+							Additional access
+						</p>
+						<span className='rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-semibold text-slate-200'>
+							{hiddenPermissionCount}
+						</span>
+					</div>
+					<div className='mt-3 space-y-2'>
+						{hiddenPermissions.map((permission) => (
+							<div key={permission.key} className='rounded-[14px] border border-white/8 bg-white/[0.03] px-3 py-2'>
+								<p className='text-xs font-semibold text-white'>{permission.label}</p>
+								<p className='mt-1 text-[11px] leading-5 text-slate-400'>{permission.description}</p>
+							</div>
+						))}
+					</div>
+				</div>
+			) : null}
+		</div>
+	);
 };
 
 const DeveloperUsersPage = ({
@@ -68,14 +204,16 @@ const DeveloperUsersPage = ({
 					const grantedPermissions = developerPermissionDefinitions.filter(
 						(permission) => user.developerPermissions?.[permission.key]
 					);
-					const visiblePermissions = grantedPermissions.some((permission) => permission.key === "fullAccess")
+					const hasFullAccess = grantedPermissions.some((permission) => permission.key === "fullAccess");
+					const visiblePermissions = hasFullAccess
 						? grantedPermissions.filter((permission) => permission.key === "fullAccess")
-						: grantedPermissions.slice(0, 3);
+						: grantedPermissions.slice(0, 1);
+					const hiddenPermissions = hasFullAccess
+						? grantedPermissions.filter((permission) => permission.key !== "fullAccess")
+						: grantedPermissions.slice(visiblePermissions.length);
 					const hiddenPermissionCount = Math.max(
 						0,
-						grantedPermissions.some((permission) => permission.key === "fullAccess")
-							? grantedPermissions.length - 1
-							: grantedPermissions.length - visiblePermissions.length
+						hasFullAccess ? grantedPermissions.length - 1 : grantedPermissions.length - visiblePermissions.length
 					);
 
 					return (
@@ -132,32 +270,6 @@ const DeveloperUsersPage = ({
 										<span>{user.conversationCount} conversations</span>
 										<span>{formatLastSeen(user.lastSeen)}</span>
 									</div>
-									{user.role === "DEVELOPER" && !user.isPrimaryDeveloper ? (
-										<div className='mt-3 flex flex-wrap items-center gap-1.5'>
-											{grantedPermissions.length > 0 ? (
-												<>
-													{visiblePermissions.map((permission) => (
-													<span
-														key={permission.key}
-														className='rounded-full border border-sky-300/18 bg-sky-500/[0.08] px-2.5 py-0.5 text-[9px] font-semibold tracking-[0.14em] text-sky-100'
-														title={permission.label}
-													>
-														{permissionShortLabels[permission.key] || permission.label}
-													</span>
-													))}
-													{hiddenPermissionCount > 0 ? (
-														<span className='rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-300'>
-															+{hiddenPermissionCount} more
-														</span>
-													) : null}
-												</>
-											) : (
-												<span className='rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em] text-slate-400'>
-													No delegated permissions
-												</span>
-											)}
-										</div>
-									) : null}
 									{user.isBanned ? (
 										<p className='mt-3 text-sm text-rose-100'>{user.bannedReason || "No reason provided"}</p>
 									) : null}
@@ -173,12 +285,39 @@ const DeveloperUsersPage = ({
 									) : null}
 								</div>
 
-								<div className='grid w-full grid-cols-1 gap-2 sm:flex sm:w-full sm:flex-wrap sm:items-center lg:justify-end xl:flex-nowrap'>
+								<div className='flex w-full flex-wrap items-center gap-2 lg:justify-end lg:gap-2.5'>
+									{user.role === "DEVELOPER" && !user.isPrimaryDeveloper ? (
+										<div className='flex min-w-0 flex-wrap items-center gap-1.5 lg:mr-auto'>
+											{grantedPermissions.length > 0 ? (
+												<>
+													{visiblePermissions.map((permission) => (
+														<span
+															key={permission.key}
+															className={`${permissionPillClassName} border border-sky-300/18 bg-sky-500/[0.08] text-sky-100`}
+															title={permission.label}
+														>
+															{permissionShortLabels[permission.key] || permission.label}
+														</span>
+													))}
+													{hiddenPermissionCount > 0 ? (
+														<PermissionOverflowChip
+															hiddenPermissionCount={hiddenPermissionCount}
+															hiddenPermissions={hiddenPermissions}
+														/>
+													) : null}
+												</>
+											) : (
+												<span className={`${permissionPillClassName} border border-white/10 bg-white/[0.04] font-medium text-slate-400`}>
+													No delegated permissions
+												</span>
+											)}
+										</div>
+									) : null}
 									<button
 										type='button'
 										disabled={!canEditUserData || isProtectedPrimary || isBusy}
 										onClick={() => openEditUserModal(user)}
-										className='inline-flex w-full items-center justify-center whitespace-nowrap rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto'
+										className='inline-flex items-center justify-center whitespace-nowrap rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-50'
 									>
 										{actionKey === `edit-user-${user._id}` ? "Saving..." : "Edit user"}
 									</button>
@@ -186,7 +325,7 @@ const DeveloperUsersPage = ({
 										type='button'
 										disabled={!canManageUsers || isCurrentUser || isProtectedPrimary || isBusy}
 										onClick={() => handleRoleChange(user, nextRole)}
-										className='inline-flex w-full items-center justify-center whitespace-nowrap rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:border-sky-300/30 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto'
+										className='inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:border-sky-300/30 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50'
 									>
 										{actionKey === `role-${user._id}` ? "Updating..." : roleActionLabel}
 									</button>
@@ -194,7 +333,7 @@ const DeveloperUsersPage = ({
 										type='button'
 										disabled={!canManageUsers || isProtectedPrimary || isBusy}
 										onClick={() => handleVerificationToggle(user, !user.isVerified)}
-										className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-full border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto ${
+										className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
 											user.isVerified
 												? "border-slate-200/15 bg-white/[0.05] text-slate-100 hover:bg-white/[0.08]"
 												: "border-sky-300/20 bg-sky-500/10 text-sky-100 hover:bg-sky-500/16"
@@ -212,7 +351,7 @@ const DeveloperUsersPage = ({
 										type='button'
 										disabled={!canManageUsers || isCurrentUser || isProtectedPrimary || isBusy}
 										onClick={() => openBanModal(user)}
-										className={`inline-flex w-full items-center justify-center whitespace-nowrap rounded-full border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto ${
+										className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
 											user.isBanned
 												? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/16"
 												: "border-amber-300/20 bg-amber-400/10 text-amber-100 hover:bg-amber-400/16"
@@ -230,7 +369,7 @@ const DeveloperUsersPage = ({
 										type='button'
 										disabled={!canManageUsers || isCurrentUser || isProtectedPrimary || isBusy}
 										onClick={() => openArchiveModal(user)}
-										className={`inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto ${
+										className={`inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
 											user.isArchived
 												? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100 hover:bg-emerald-500/16"
 												: "border-rose-400/20 bg-rose-500/10 text-rose-100 hover:bg-rose-500/16"
@@ -250,7 +389,7 @@ const DeveloperUsersPage = ({
 											type='button'
 											disabled={isBusy}
 											onClick={() => openDeveloperPermissionsModal(user)}
-											className='inline-flex w-full items-center justify-center whitespace-nowrap rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto'
+											className='inline-flex items-center justify-center whitespace-nowrap rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-50'
 										>
 											{actionKey === `developer-permissions-${user._id}` ? "Saving..." : "Permissions"}
 										</button>

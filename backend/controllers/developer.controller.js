@@ -18,10 +18,10 @@ import { toConversationMemberDto, toMessageDto, toUserDto } from "../utils/forma
 import { CONVERSATION_MEMBER_ROLES, CONVERSATION_TYPES } from "../utils/conversations.js";
 import { deleteMessageEverywhere } from "../utils/messageModeration.js";
 import { DEVELOPER_ROLE, USER_ROLE } from "../utils/roles.js";
+import { buildUsernameInsensitiveLookup, normalizeUsername, USERNAME_PATTERN } from "../utils/usernames.js";
 
 const VALID_ROLES = new Set([USER_ROLE, DEVELOPER_ROLE]);
 const VALID_GENDERS = new Set(["male", "female"]);
-const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
 const DEVELOPER_GROUP_MESSAGE_LIMIT = 80;
 const GROUP_ROLE_ORDER = {
 	[CONVERSATION_MEMBER_ROLES.OWNER]: 0,
@@ -648,7 +648,7 @@ export const updateDeveloperUserData = async (req, res) => {
 		}
 
 		const nextUsername =
-			typeof req.body?.username === "string" ? req.body.username.trim() : existingUser.username;
+			typeof req.body?.username === "string" ? normalizeUsername(req.body.username) : normalizeUsername(existingUser.username);
 		if (!nextUsername) {
 			return res.status(400).json({ error: "Username is required" });
 		}
@@ -659,8 +659,10 @@ export const updateDeveloperUserData = async (req, res) => {
 		}
 
 		if (nextUsername !== existingUser.username) {
-			const usernameOwner = await prisma.user.findUnique({
-				where: { username: nextUsername },
+			const usernameOwner = await prisma.user.findFirst({
+				where: {
+					username: buildUsernameInsensitiveLookup(nextUsername),
+				},
 				select: { id: true },
 			});
 

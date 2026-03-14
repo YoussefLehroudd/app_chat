@@ -6,7 +6,7 @@ const useLogin = () => {
 	const [errors, setErrors] = useState({});
 	const { setAuthUser } = useAuthContext();
 
-	const login = async (username, password) => {
+	const login = async (username, password, twoFactorCode = "") => {
 		const validationErrors = validateLoginInputs(username, password);
 		if (Object.keys(validationErrors).length > 0) {
 			setErrors(validationErrors);
@@ -19,23 +19,28 @@ const useLogin = () => {
 			const res = await fetch("/api/auth/login", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ username, password }),
+				body: JSON.stringify({ username, password, twoFactorCode }),
 			});
 
 			const data = await res.json();
+			if (data.requiresTwoFactor) {
+				setErrors({});
+				return { ok: false, requiresTwoFactor: true };
+			}
+
 			if (data.error) {
 				setErrors(mapLoginErrorToFields(data.error));
-				return false;
+				return { ok: false, requiresTwoFactor: false };
 			}
 
 			localStorage.setItem("chat-user", JSON.stringify(data));
 			setAuthUser(data);
 			window.dispatchEvent(new Event("chat:conversations-refresh"));
 			setErrors({});
-			return true;
+			return { ok: true, requiresTwoFactor: false };
 		} catch (error) {
 			setErrors({ form: "Something went wrong. Please try again." });
-			return false;
+			return { ok: false, requiresTwoFactor: false };
 		} finally {
 			setLoading(false);
 		}

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import {
+	HiOutlineArchiveBoxXMark,
 	HiMagnifyingGlass,
 	HiOutlineArrowLeftOnRectangle,
+	HiOutlineBellSlash,
 	HiOutlineCamera,
 	HiOutlinePencilSquare,
 	HiOutlineTrash,
@@ -42,6 +44,21 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const [groupMemberLimit, setGroupMemberLimit] = useState("");
 	const [groupPrivate, setGroupPrivate] = useState(false);
 	const [groupImageFile, setGroupImageFile] = useState(null);
+	const [isBlockedUser, setIsBlockedUser] = useState(false);
+	const [isDirectActionLoading, setIsDirectActionLoading] = useState(false);
+	const [toolSearchQuery, setToolSearchQuery] = useState("");
+	const [toolSearchMode, setToolSearchMode] = useState("all");
+	const [toolSearchResults, setToolSearchResults] = useState([]);
+	const [pinnedItems, setPinnedItems] = useState([]);
+	const [galleryItems, setGalleryItems] = useState([]);
+	const [savedItems, setSavedItems] = useState([]);
+	const [toolLoadingState, setToolLoadingState] = useState("");
+	const [toolPanelState, setToolPanelState] = useState({
+		searched: false,
+		pinsLoaded: false,
+		galleryLoaded: false,
+		savedLoaded: false,
+	});
 	const imgRef = useRef(null);
 	const fileInputRef = useRef(null);
 	const previewUrlRef = useRef(null);
@@ -61,6 +78,9 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const mustTransferOwnershipBeforeLeaving = isGroupOwner && currentMemberCount > 1;
 	const hasPendingMemberAction = Boolean(updatingMemberAction);
 	const isMemberActionPending = (action, memberId) => updatingMemberAction === `${action}:${memberId}`;
+	const conversationPreferenceId = user?.conversationId || user?._id || "";
+	const isConversationMuted = Boolean(user?.mutedUntil && new Date(user.mutedUntil).getTime() > Date.now());
+	const canManageDisappearingMessages = !isGroupConversation || canManageGroup;
 
 	const filteredSelectableUsers = useMemo(() => {
 		if (!isGroupConversation) return [];
@@ -135,7 +155,62 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		setShowAddMembers(false);
 		setShowInviteMembers(false);
 		setMemberSearchValue("");
+		setIsBlockedUser(false);
+		setToolSearchQuery("");
+		setToolSearchMode("all");
+		setToolSearchResults([]);
+		setPinnedItems([]);
+		setGalleryItems([]);
+		setSavedItems([]);
+		setToolLoadingState("");
+		setToolPanelState({
+			searched: false,
+			pinsLoaded: false,
+			galleryLoaded: false,
+			savedLoaded: false,
+		});
 	}, [user?._id, user?.fullName, user?.bio, user?.memberLimit, user?.isPrivate]);
+
+	useEffect(() => {
+		if (!open || isGroupConversation || !user?._id) {
+			return undefined;
+		}
+
+		let isCancelled = false;
+
+		const loadBlockedUsers = async () => {
+			try {
+				const response = await fetch("/api/users/blocked");
+				const data = await response.json();
+				if (!response.ok) {
+					throw new Error(data.error || "Failed to load blocked users");
+				}
+
+				if (!isCancelled) {
+					const blockedUsers = Array.isArray(data.blockedUsers) ? data.blockedUsers : [];
+					setIsBlockedUser(blockedUsers.some((blockedUser) => blockedUser._id === user._id));
+				}
+			} catch {
+				if (!isCancelled) {
+					setIsBlockedUser(false);
+				}
+			}
+		};
+
+		loadBlockedUsers();
+
+		return () => {
+			isCancelled = true;
+		};
+	}, [open, isGroupConversation, user?._id]);
+
+	useEffect(() => {
+		setToolSearchResults([]);
+		setToolPanelState((currentState) => ({
+			...currentState,
+			searched: false,
+		}));
+	}, [toolSearchMode]);
 
 	useEffect(() => {
 		if (
@@ -424,6 +499,192 @@ const UserInfoModal = ({ user, open, onClose }) => {
 			toast.error(error.message);
 		} finally {
 			setIsDeletingGroup(false);
+		}
+	};
+
+	const handleDirectPreferenceUpdate = async (payload, successMessage) => {
+		if (!conversationPreferenceId || isDirectActionLoading) return;
+
+		setIsDirectActionLoading(true);
+		try {
+			const response = await fetch(`/api/conversations/${conversationPreferenceId}/preferences`, {
+				method: "PATCH",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(payload),
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to update conversation");
+			}
+
+			applyConversationUpdate(data);
+			if (successMessage) {
+				toast.success(successMessage);
+			}
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setIsDirectActionLoading(false);
+		}
+	};
+
+	const handleDisappearingUpdate = async (seconds) => {
+		if (!conversationPreferenceId || isDirectActionLoading || !canManageDisappearingMessages) return;
+
+		setIsDirectActionLoading(true);
+		try {
+			const response = await fetch(`/api/conversations/${conversationPreferenceId}/disappearing`, {
+				method: "PATCH",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ seconds }),
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to update disappearing messages");
+			}
+
+			applyConversationUpdate(data);
+			toast.success(seconds ? "Disappearing messages updated" : "Disappearing messages disabled");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setIsDirectActionLoading(false);
+		}
+	};
+
+	const handleToggleBlockUser = async () => {
+		if (isGroupConversation || !user?._id || isDirectActionLoading) return;
+
+		setIsDirectActionLoading(true);
+		try {
+			const response = await fetch(`/api/users/block/${user._id}`, {
+				method: isBlockedUser ? "DELETE" : "POST",
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to update block state");
+			}
+
+			setIsBlockedUser(!isBlockedUser);
+			toast.success(isBlockedUser ? "User unblocked" : "User blocked");
+			window.dispatchEvent(new Event("chat:conversations-refresh"));
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setIsDirectActionLoading(false);
+		}
+	};
+
+	const dispatchJumpToMessage = (messageId) => {
+		if (!messageId) return;
+		window.dispatchEvent(
+			new CustomEvent("chat:jump-to-message", {
+				detail: { messageId },
+			})
+		);
+		onClose();
+	};
+
+	const handleSearchConversation = async () => {
+		const trimmedQuery = toolSearchQuery.trim();
+		if ((!trimmedQuery && toolSearchMode === "all") || !user?._id) return;
+
+		setToolLoadingState("search");
+		try {
+			const endpoint = isGroupConversation
+				? `/api/messages/search/group/${user._id}?q=${encodeURIComponent(trimmedQuery)}&mode=${encodeURIComponent(toolSearchMode)}`
+				: `/api/messages/search/${user._id}?q=${encodeURIComponent(trimmedQuery)}&mode=${encodeURIComponent(toolSearchMode)}`;
+			const response = await fetch(endpoint);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to search messages");
+			}
+			setToolSearchResults(Array.isArray(data.results) ? data.results : []);
+			setToolPanelState((currentState) => ({
+				...currentState,
+				searched: true,
+			}));
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setToolLoadingState("");
+		}
+	};
+
+	const handleLoadPinnedMessages = async () => {
+		const conversationId = user?.conversationId || user?._id;
+		if (!conversationId) return;
+
+		setToolLoadingState("pins");
+		try {
+			const response = await fetch(`/api/messages/pins/${conversationId}`);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to load pinned messages");
+			}
+			setPinnedItems(Array.isArray(data.items) ? data.items : []);
+			setToolPanelState((currentState) => ({
+				...currentState,
+				pinsLoaded: true,
+			}));
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setToolLoadingState("");
+		}
+	};
+
+	const handleLoadGallery = async () => {
+		if (!user?._id) return;
+
+		setToolLoadingState("gallery");
+		try {
+			const endpoint = isGroupConversation
+				? `/api/messages/gallery/group/${user._id}`
+				: `/api/messages/gallery/${user._id}`;
+			const response = await fetch(endpoint);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to load gallery");
+			}
+			setGalleryItems(Array.isArray(data.items) ? data.items : []);
+			setToolPanelState((currentState) => ({
+				...currentState,
+				galleryLoaded: true,
+			}));
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setToolLoadingState("");
+		}
+	};
+
+	const handleLoadSavedMessages = async () => {
+		const conversationId = user?.conversationId || user?._id;
+		setToolLoadingState("saved");
+		try {
+			const query = conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : "";
+			const response = await fetch(`/api/messages/saved${query}`);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to load saved messages");
+			}
+			setSavedItems(Array.isArray(data.items) ? data.items : []);
+			setToolPanelState((currentState) => ({
+				...currentState,
+				savedLoaded: true,
+			}));
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setToolLoadingState("");
 		}
 	};
 
@@ -814,6 +1075,75 @@ const UserInfoModal = ({ user, open, onClose }) => {
 									</div>
 								) : null}
 
+								<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+									<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>Conversation controls</p>
+									<div className='mt-3 flex flex-wrap gap-2'>
+										<button
+											type='button'
+											onClick={() =>
+												handleDirectPreferenceUpdate(
+													{ isArchived: !Boolean(user?.isArchived) },
+													user?.isArchived ? "Conversation restored" : "Conversation archived"
+												)
+											}
+											className='inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+											disabled={isDirectActionLoading}
+										>
+											{user?.isArchived ? <HiOutlineArrowLeftOnRectangle className='h-4 w-4' /> : <HiOutlineArchiveBoxXMark className='h-4 w-4' />}
+											{user?.isArchived ? "Unarchive" : "Archive"}
+										</button>
+										<button
+											type='button'
+											onClick={() =>
+												handleDirectPreferenceUpdate(
+													{ mutedForSeconds: isConversationMuted ? 0 : 3600 },
+													isConversationMuted ? "Conversation unmuted" : "Muted for 1 hour"
+												)
+											}
+											className='inline-flex items-center gap-2 rounded-full border border-amber-300/20 bg-amber-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-amber-100 transition hover:border-amber-300/35 hover:bg-amber-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+											disabled={isDirectActionLoading}
+										>
+											<HiOutlineBellSlash className='h-4 w-4' />
+											{isConversationMuted ? "Unmute" : "Mute 1h"}
+										</button>
+									</div>
+
+									<div className='mt-4 rounded-[20px] border border-white/10 bg-slate-950/25 p-3'>
+										<div className='flex items-center justify-between gap-3'>
+											<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400'>Disappearing messages</p>
+											{!canManageDisappearingMessages ? (
+												<span className='text-[10px] font-medium uppercase tracking-[0.16em] text-slate-500'>Admins only</span>
+											) : null}
+										</div>
+										<div className='mt-3 flex flex-wrap gap-2'>
+											{[
+												{ label: "Off", value: null },
+												{ label: "5m", value: 300 },
+												{ label: "1h", value: 3600 },
+												{ label: "1d", value: 86400 },
+												{ label: "7d", value: 604800 },
+											].map((option) => {
+												const isActive = (user?.disappearingMessagesSeconds || null) === option.value;
+												return (
+													<button
+														key={option.label}
+														type='button'
+														onClick={() => handleDisappearingUpdate(option.value)}
+														className={`rounded-full border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
+															isActive
+																? "border-sky-300/35 bg-sky-500/16 text-sky-50"
+																: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
+														}`}
+														disabled={isDirectActionLoading || !canManageDisappearingMessages}
+													>
+														{option.label}
+													</button>
+												);
+											})}
+										</div>
+									</div>
+								</div>
+
 								<div className='rounded-[24px] border border-slate-800 bg-slate-800/80 px-4 py-3.5'>
 									<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>About this group</p>
 									<p className='mt-1 min-h-12 text-sm leading-6 text-slate-200'>
@@ -911,6 +1241,79 @@ const UserInfoModal = ({ user, open, onClose }) => {
 									</div>
 								) : null}
 
+								<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+									<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>Conversation controls</p>
+									<div className='mt-3 flex flex-wrap gap-2'>
+										<button
+											type='button'
+											onClick={() =>
+												handleDirectPreferenceUpdate(
+													{ isArchived: !Boolean(user?.isArchived) },
+													user?.isArchived ? "Conversation restored" : "Conversation archived"
+												)
+											}
+											className='inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+											disabled={isDirectActionLoading}
+										>
+											{user?.isArchived ? <HiOutlineArrowLeftOnRectangle className='h-4 w-4' /> : <HiOutlineArchiveBoxXMark className='h-4 w-4' />}
+											{user?.isArchived ? "Unarchive" : "Archive"}
+										</button>
+										<button
+											type='button'
+											onClick={() =>
+												handleDirectPreferenceUpdate(
+													{ mutedForSeconds: isConversationMuted ? 0 : 3600 },
+													isConversationMuted ? "Conversation unmuted" : "Muted for 1 hour"
+												)
+											}
+											className='inline-flex items-center gap-2 rounded-full border border-amber-300/20 bg-amber-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-amber-100 transition hover:border-amber-300/35 hover:bg-amber-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+											disabled={isDirectActionLoading}
+										>
+											<HiOutlineBellSlash className='h-4 w-4' />
+											{isConversationMuted ? "Unmute" : "Mute 1h"}
+										</button>
+										<button
+											type='button'
+											onClick={handleToggleBlockUser}
+											className='inline-flex items-center gap-2 rounded-full border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:border-rose-300/35 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+											disabled={isDirectActionLoading}
+										>
+											<HiOutlineUserMinus className='h-4 w-4' />
+											{isBlockedUser ? "Unblock" : "Block user"}
+										</button>
+									</div>
+
+									<div className='mt-4 rounded-[20px] border border-white/10 bg-slate-950/25 p-3'>
+										<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400'>Disappearing messages</p>
+										<div className='mt-3 flex flex-wrap gap-2'>
+											{[
+												{ label: "Off", value: null },
+												{ label: "5m", value: 300 },
+												{ label: "1h", value: 3600 },
+												{ label: "1d", value: 86400 },
+												{ label: "7d", value: 604800 },
+											].map((option) => {
+												const isActive = (user?.disappearingMessagesSeconds || null) === option.value;
+												return (
+													<button
+														key={option.label}
+														type='button'
+														onClick={() => handleDisappearingUpdate(option.value)}
+														className={`rounded-full border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
+															isActive
+																? "border-sky-300/35 bg-sky-500/16 text-sky-50"
+																: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
+														}`}
+														disabled={isDirectActionLoading}
+													>
+														{option.label}
+													</button>
+												);
+											})}
+										</div>
+									</div>
+								</div>
+
 								<div className='grid gap-3 sm:grid-cols-2'>
 										<div
 											className='rounded-[24px] border border-slate-800 bg-slate-800/80 px-4 py-3.5'
@@ -933,6 +1336,194 @@ const UserInfoModal = ({ user, open, onClose }) => {
 								</div>
 							</>
 						)}
+
+						<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+							<div className='flex flex-wrap items-center justify-between gap-3'>
+								<div>
+									<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Conversation tools</p>
+									<p className='mt-1 text-sm text-slate-300'>Search messages, open pins, browse gallery files, and inspect saved messages.</p>
+								</div>
+								<div className='flex flex-wrap gap-2'>
+									<button
+										type='button'
+										onClick={handleLoadPinnedMessages}
+										className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-100 transition hover:bg-white/[0.08]'
+									>
+										Pins
+									</button>
+									<button
+										type='button'
+										onClick={handleLoadGallery}
+										className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-100 transition hover:bg-white/[0.08]'
+									>
+										Gallery
+									</button>
+									<button
+										type='button'
+										onClick={handleLoadSavedMessages}
+										className='rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-100 transition hover:bg-white/[0.08]'
+									>
+										Saved
+									</button>
+								</div>
+							</div>
+
+							<div className='mt-4 flex gap-2'>
+								<div className='relative min-w-0 flex-1'>
+									<HiMagnifyingGlass className='pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500' />
+									<input
+										type='text'
+										value={toolSearchQuery}
+										onChange={(event) => setToolSearchQuery(event.target.value)}
+										onKeyDown={(event) => {
+											if (event.key === "Enter") {
+												event.preventDefault();
+												handleSearchConversation();
+											}
+										}}
+										placeholder='Search inside this conversation'
+										className='w-full rounded-2xl border border-white/10 bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+									/>
+								</div>
+								<button
+									type='button'
+									onClick={handleSearchConversation}
+									className='rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:border-sky-300/35 hover:bg-sky-500/16'
+								>
+									Search
+								</button>
+							</div>
+
+							<div className='mt-3 flex flex-wrap gap-2'>
+								{[
+									{ id: "all", label: "Messages" },
+									{ id: "files", label: "Files" },
+									{ id: "links", label: "Links" },
+								].map((option) => {
+									const isActive = toolSearchMode === option.id;
+									return (
+										<button
+											key={option.id}
+											type='button'
+											onClick={() => setToolSearchMode(option.id)}
+											className={`rounded-full border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
+												isActive
+													? "border-sky-300/35 bg-sky-500/16 text-sky-50"
+													: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
+											}`}
+										>
+											{option.label}
+										</button>
+									);
+								})}
+							</div>
+
+							{toolLoadingState ? (
+								<div className='mt-4 rounded-[20px] border border-white/10 bg-slate-950/30 px-4 py-4 text-sm text-slate-400'>
+									Loading {toolLoadingState}...
+								</div>
+							) : null}
+
+							{toolSearchResults.length > 0 ? (
+								<div className='mt-4 space-y-2'>
+									<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500'>Search results</p>
+									{toolSearchResults.map((result) => (
+										<button
+											key={`search-${result._id}`}
+											type='button'
+											onClick={() => dispatchJumpToMessage(result._id)}
+											className='block w-full rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3 text-left transition hover:bg-slate-900/70'
+										>
+											<p className='truncate text-sm font-semibold text-white'>{result.previewText || result.message || "Message"}</p>
+											<p className='mt-1 text-xs text-slate-400'>{new Date(result.createdAt).toLocaleString()}</p>
+										</button>
+									))}
+								</div>
+							) : null}
+
+							{toolPanelState.searched && !toolLoadingState && toolSearchResults.length === 0 ? (
+								<div className='mt-4 rounded-[18px] border border-dashed border-white/10 bg-slate-950/25 px-4 py-4 text-sm text-slate-400'>
+									No {toolSearchMode === "files" ? "file" : toolSearchMode === "links" ? "link" : "message"} matches found in this conversation.
+								</div>
+							) : null}
+
+							{pinnedItems.length > 0 ? (
+								<div className='mt-4 space-y-2'>
+									<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500'>Pinned messages</p>
+									{pinnedItems.map((entry) => (
+										<button
+											key={`pin-${entry.id}`}
+											type='button'
+											onClick={() => dispatchJumpToMessage(entry.message?._id)}
+											className='block w-full rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3 text-left transition hover:bg-slate-900/70'
+										>
+											<p className='truncate text-sm font-semibold text-white'>{entry.message?.previewText || entry.message?.message || "Pinned message"}</p>
+											<p className='mt-1 text-xs text-slate-400'>{new Date(entry.pinnedAt).toLocaleString()}</p>
+										</button>
+									))}
+								</div>
+							) : null}
+
+							{toolPanelState.pinsLoaded && !toolLoadingState && pinnedItems.length === 0 ? (
+								<div className='mt-4 rounded-[18px] border border-dashed border-white/10 bg-slate-950/25 px-4 py-4 text-sm text-slate-400'>
+									No pinned messages in this conversation yet.
+								</div>
+							) : null}
+
+							{galleryItems.length > 0 ? (
+								<div className='mt-4 space-y-2'>
+									<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500'>Media & files</p>
+									<div className='grid gap-2 sm:grid-cols-2'>
+										{galleryItems.slice(0, 8).map((item) => (
+											<button
+												key={`gallery-${item._id}`}
+												type='button'
+												onClick={() => dispatchJumpToMessage(item._id)}
+												className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3 text-left transition hover:bg-slate-900/70'
+											>
+												<p className='truncate text-sm font-semibold text-white'>
+													{item.attachment?.fileName || item.previewText || "Media item"}
+												</p>
+												<p className='mt-1 text-xs text-slate-400'>{item.audio ? "Audio" : item.attachment?.type || "Attachment"}</p>
+											</button>
+										))}
+									</div>
+								</div>
+							) : null}
+
+							{toolPanelState.galleryLoaded && !toolLoadingState && galleryItems.length === 0 ? (
+								<div className='mt-4 rounded-[18px] border border-dashed border-white/10 bg-slate-950/25 px-4 py-4 text-sm text-slate-400'>
+									No media, audio, or files shared here yet.
+								</div>
+							) : null}
+
+							{savedItems.length > 0 ? (
+								<div className='mt-4 space-y-2'>
+									<p className='text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500'>Saved messages in this chat</p>
+									{savedItems.slice(0, 6).map((entry) => (
+										<button
+											key={`saved-${entry.message?._id || entry.savedAt}`}
+											type='button'
+											onClick={() => dispatchJumpToMessage(entry.message?._id)}
+											className='block w-full rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3 text-left transition hover:bg-slate-900/70'
+										>
+											<p className='truncate text-sm font-semibold text-white'>
+												{entry.message?.previewText || entry.message?.message || "Saved message"}
+											</p>
+											<p className='mt-1 text-xs text-slate-400'>
+												{entry.message?.sender?.fullName || "Unknown sender"} · {new Date(entry.savedAt).toLocaleString()}
+											</p>
+										</button>
+									))}
+								</div>
+							) : null}
+
+							{toolPanelState.savedLoaded && !toolLoadingState && savedItems.length === 0 ? (
+								<div className='mt-4 rounded-[18px] border border-dashed border-white/10 bg-slate-950/25 px-4 py-4 text-sm text-slate-400'>
+									You do not have any saved messages in this conversation yet.
+								</div>
+							) : null}
+						</div>
 					</div>
 				</div>
 			</div>

@@ -27,12 +27,19 @@ const Conversation = ({ conversation }) => {
 	const lastMessageTime = conversation?.lastMessageAt ? extractTime(conversation.lastMessageAt) : "";
 	const unreadCount = Number.isFinite(conversation?.unreadCount) ? conversation.unreadCount : 0;
 	const hasUnread = unreadCount > 0;
+	const isArchivedConversation = Boolean(conversation?.isArchived);
+	const isMutedConversation =
+		Boolean(conversation?.mutedUntil) && new Date(conversation.mutedUntil).getTime() > Date.now();
 	const secondaryLine = isGroupConversation
 		? `${conversation.isPrivate ? "Private" : "Public"} group · ${conversation.memberCount || 1} members${
 				conversation.isMember === false ? " · Join available" : ""
 		  }`
 		: `@${conversation.username}${isOnline ? " · online" : ""}`;
-	const nameClassName = isSelected ? "text-white" : "text-slate-100";
+	const nameClassName = isSelected
+		? "text-white"
+		: isArchivedConversation
+			? "text-slate-300"
+			: "text-slate-100";
 	const usernameClassName = isSelected ? "text-sky-100/85" : "text-slate-500";
 	const previewClassName = isSelected
 		? "text-sky-50/90"
@@ -131,6 +138,16 @@ const Conversation = ({ conversation }) => {
 									<VerifiedBadge user={conversation} compact className='shrink-0' />
 								</>
 							)}
+							{isArchivedConversation ? (
+								<span className='shrink-0 rounded-full border border-white/10 bg-white/[0.05] px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.12em] text-slate-300'>
+									Archived
+								</span>
+							) : null}
+							{isMutedConversation ? (
+								<span className='shrink-0 rounded-full border border-amber-300/20 bg-amber-500/10 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-[0.12em] text-amber-100'>
+									Muted
+								</span>
+							) : null}
 						</div>
 						<p className={`mt-0.5 truncate text-[11px] ${usernameClassName}`}>
 							{secondaryLine}

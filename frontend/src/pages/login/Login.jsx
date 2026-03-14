@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import useLogin from "../../hooks/useLogin";
 import AuthShell from "../../components/auth/AuthShell";
 import { FiArrowRight, FiAtSign, FiEye, FiEyeOff, FiLock } from "react-icons/fi";
@@ -6,27 +7,41 @@ import { FiArrowRight, FiAtSign, FiEye, FiEyeOff, FiLock } from "react-icons/fi"
 const Login = () => {
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
+	const [twoFactorCode, setTwoFactorCode] = useState("");
+	const [requiresTwoFactor, setRequiresTwoFactor] = useState(false);
 	const [showPassword, setShowPassword] = useState(false);
 
 	const { loading, login, errors, clearError } = useLogin();
 
 	const handleUsernameChange = (e) => {
 		clearError("username");
+		setRequiresTwoFactor(false);
+		setTwoFactorCode("");
 		setUsername(e.target.value);
 	};
 
 	const handlePasswordChange = (e) => {
 		clearError("password");
+		setRequiresTwoFactor(false);
+		setTwoFactorCode("");
 		setPassword(e.target.value);
+	};
+
+	const handleTwoFactorChange = (e) => {
+		clearError("form");
+		setTwoFactorCode(e.target.value);
 	};
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
-		await login(username, password);
+		const result = await login(username, password, twoFactorCode);
+		if (result?.requiresTwoFactor) {
+			setRequiresTwoFactor(true);
+		}
 	};
 
 	return (
-		<div className='w-full max-w-6xl'>
+		<div className='flex h-full w-full max-w-6xl items-center'>
 			<AuthShell
 				eyebrow='Realtime chat'
 				title='Welcome back'
@@ -80,12 +95,41 @@ const Login = () => {
 						{errors.password ? <p className='auth-error-text'>{errors.password}</p> : null}
 					</div>
 
+					{requiresTwoFactor ? (
+						<div className='space-y-2'>
+							<label className='auth-label'>Authenticator code</label>
+							<div className={`auth-input-wrap ${errors.form ? "auth-input-wrap--error" : ""}`}>
+								<FiLock className='auth-input-icon' />
+								<input
+									type='text'
+									placeholder='Enter 6-digit code'
+									className='auth-input'
+									value={twoFactorCode}
+									onChange={handleTwoFactorChange}
+									autoComplete='one-time-code'
+									inputMode='numeric'
+									maxLength='6'
+								/>
+							</div>
+							<p className='text-xs text-slate-400'>2FA is enabled on this account. Enter the code from your authenticator app.</p>
+						</div>
+					) : null}
+
+					<div className='flex flex-wrap items-center justify-between gap-3 text-sm'>
+						<Link to='/forgot-password' className='auth-inline-link'>
+							Forgot password?
+						</Link>
+						<Link to='/forgot-username' className='auth-inline-link'>
+							Forgot username?
+						</Link>
+					</div>
+
 					<button className='auth-button' disabled={loading}>
 						{loading ? (
 							<span className='loading loading-spinner'></span>
 						) : (
 							<>
-								<span>Login</span>
+								<span>{requiresTwoFactor ? "Verify and login" : "Login"}</span>
 								<FiArrowRight size={18} />
 							</>
 						)}

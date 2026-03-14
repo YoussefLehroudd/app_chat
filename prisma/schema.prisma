@@ -72,69 +72,93 @@ enum StoryMediaType {
 }
 
 model User {
-  id                   String    @id @default(uuid())
-  fullName             String
-  username             String    @unique
-  password             String
-  gender               Gender
-  role                 Role      @default(USER)
-  isPrimaryDeveloper   Boolean   @default(false)
-  developerPermissions Json?
-  isArchived           Boolean   @default(false)
-  archivedAt           DateTime?
-  isBanned             Boolean   @default(false)
-  bannedAt             DateTime?
-  bannedReason         String?
-  isVerified           Boolean   @default(false)
-  verifiedAt           DateTime?
-  profilePic           String    @default("")
-  bio                  String?   @default("")
-  lastSeen             DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  id                              String    @id @default(uuid())
+  fullName                        String
+  username                        String    @unique
+  email                           String?   @unique
+  password                        String
+  passwordResetTokenHash          String?
+  passwordResetTokenExpiresAt     DateTime?
+  emailVerificationTokenHash      String?
+  emailVerificationTokenExpiresAt DateTime?
+  emailVerifiedAt                 DateTime?
+  gender                          Gender
+  role                            Role      @default(USER)
+  isPrimaryDeveloper              Boolean   @default(false)
+  developerPermissions            Json?
+  isArchived                      Boolean   @default(false)
+  archivedAt                      DateTime?
+  isBanned                        Boolean   @default(false)
+  bannedAt                        DateTime?
+  bannedReason                    String?
+  isVerified                      Boolean   @default(false)
+  verifiedAt                      DateTime?
+  twoFactorEnabled                Boolean   @default(false)
+  twoFactorSecret                 String?
+  twoFactorPendingSecret          String?
+  showOnlineStatus                Boolean   @default(true)
+  showLastSeen                    Boolean   @default(true)
+  showReadReceipts                Boolean   @default(true)
+  showTypingStatus                Boolean   @default(true)
+  profilePic                      String    @default("")
+  bio                             String?   @default("")
+  lastSeen                        DateTime?
+  createdAt                       DateTime  @default(now())
+  updatedAt                       DateTime  @updatedAt
 
-  conversationsAsUserOne  Conversation[]       @relation("UserOne")
-  conversationsAsUserTwo  Conversation[]       @relation("UserTwo")
-  createdConversations    Conversation[]       @relation("GroupCreator")
+  conversationsAsUserOne  Conversation[]           @relation("UserOne")
+  conversationsAsUserTwo  Conversation[]           @relation("UserTwo")
+  createdConversations    Conversation[]           @relation("GroupCreator")
   conversationMemberships ConversationMember[]
-  sentMessages            Message[]            @relation("SentMessages")
-  receivedMessages        Message[]            @relation("ReceivedMessages")
-  createdReports          Report[]             @relation("ReportsCreated")
-  reviewedReports         Report[]             @relation("ReportsReviewed")
-  targetedReports         Report[]             @relation("TargetUserReports")
-  auditLogs               AuditLog[]           @relation("UserAuditLogs")
-  createdCallSessions     CallSession[]        @relation("CreatedCallSessions")
-  endedCallSessions       CallSession[]        @relation("EndedCallSessions")
-  callParticipations      CallParticipant[]    @relation("CallParticipants")
-  callInvitationsSent     CallParticipant[]    @relation("CallInvitationsSent")
+  sentMessages            Message[]                @relation("SentMessages")
+  receivedMessages        Message[]                @relation("ReceivedMessages")
+  createdReports          Report[]                 @relation("ReportsCreated")
+  reviewedReports         Report[]                 @relation("ReportsReviewed")
+  targetedReports         Report[]                 @relation("TargetUserReports")
+  auditLogs               AuditLog[]               @relation("UserAuditLogs")
+  createdCallSessions     CallSession[]            @relation("CreatedCallSessions")
+  endedCallSessions       CallSession[]            @relation("EndedCallSessions")
+  callParticipations      CallParticipant[]        @relation("CallParticipants")
+  callInvitationsSent     CallParticipant[]        @relation("CallInvitationsSent")
   stories                 Story[]
-  seenStories             StoryView[]          @relation("StoryViews")
+  seenStories             StoryView[]              @relation("StoryViews")
+  messageReactions        MessageReaction[]
+  pinnedMessagesCreated   PinnedMessage[]          @relation("PinnedMessagesByUser")
+  savedMessages           SavedMessage[]
+  conversationPreferences ConversationPreference[]
+  blockedUsers            UserBlock[]              @relation("BlocksInitiated")
+  blockedByUsers          UserBlock[]              @relation("BlockedBy")
+  sessions                UserSession[]
+  loginChallenges         LoginChallenge[]
 }
 
 model Conversation {
-  id          String           @id @default(uuid())
-  type        ConversationType @default(DIRECT)
-  userOneId   String?
-  userTwoId   String?
-  directStatus DirectConversationStatus @default(ACCEPTED)
-  directInitiatorId String?
-  directRespondedAt DateTime?
-  createdById String?
-  title       String?
-  description String?          @default("")
-  profilePic  String           @default("")
-  isPrivate   Boolean          @default(false)
-  memberLimit Int?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id                          String                   @id @default(uuid())
+  type                        ConversationType         @default(DIRECT)
+  userOneId                   String?
+  userTwoId                   String?
+  directStatus                DirectConversationStatus @default(ACCEPTED)
+  directInitiatorId           String?
+  directRespondedAt           DateTime?
+  createdById                 String?
+  title                       String?
+  description                 String?                  @default("")
+  profilePic                  String                   @default("")
+  isPrivate                   Boolean                  @default(false)
+  memberLimit                 Int?
+  disappearingMessagesSeconds Int?
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
 
-  userOne   User?                @relation("UserOne", fields: [userOneId], references: [id])
-  userTwo   User?                @relation("UserTwo", fields: [userTwoId], references: [id])
-  createdBy User?                @relation("GroupCreator", fields: [createdById], references: [id])
-  members   ConversationMember[]
-  messages  Message[]
-  reports   Report[]             @relation("TargetConversationReports")
-  callSessions CallSession[]
+  userOne        User?                    @relation("UserOne", fields: [userOneId], references: [id])
+  userTwo        User?                    @relation("UserTwo", fields: [userTwoId], references: [id])
+  createdBy      User?                    @relation("GroupCreator", fields: [createdById], references: [id])
+  members        ConversationMember[]
+  messages       Message[]
+  reports        Report[]                 @relation("TargetConversationReports")
+  callSessions   CallSession[]
+  pinnedMessages PinnedMessage[]
+  preferences    ConversationPreference[]
 
   @@unique([userOneId, userTwoId, type])
   @@index([userOneId])
@@ -160,7 +184,7 @@ model ConversationMember {
 }
 
 model Message {
-  id                     String   @id @default(uuid())
+  id                     String    @id @default(uuid())
   conversationId         String
   senderId               String
   receiverId             String?
@@ -174,21 +198,29 @@ model Message {
   attachmentFileSize     Int?
   attachmentResourceType String?
   repliedMessageId       String?
-  isSeen                 Boolean  @default(false)
-  deletedFor             String[] @default([])
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  isSeen                 Boolean   @default(false)
+  deliveredAt            DateTime?
+  editedAt               DateTime?
+  expiresAt              DateTime?
+  deletedFor             String[]  @default([])
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
-  receiver       User?        @relation("ReceivedMessages", fields: [receiverId], references: [id])
-  repliedMessage Message?     @relation("MessageReplies", fields: [repliedMessageId], references: [id], onDelete: SetNull)
-  replies        Message[]    @relation("MessageReplies")
-  reports        Report[]     @relation("TargetMessageReports")
+  conversation   Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User              @relation("SentMessages", fields: [senderId], references: [id])
+  receiver       User?             @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  repliedMessage Message?          @relation("MessageReplies", fields: [repliedMessageId], references: [id], onDelete: SetNull)
+  replies        Message[]         @relation("MessageReplies")
+  reports        Report[]          @relation("TargetMessageReports")
+  reactions      MessageReaction[]
+  pinnedEntries  PinnedMessage[]
+  savedEntries   SavedMessage[]
 
   @@index([conversationId])
   @@index([senderId])
   @@index([receiverId])
+  @@index([deliveredAt])
+  @@index([expiresAt])
 }
 
 model Report {
@@ -244,22 +276,22 @@ model AuditLog {
 }
 
 model CallSession {
-  id            String       @id @default(uuid())
+  id             String        @id @default(uuid())
   conversationId String?
-  createdById   String?
-  endedById     String?
-  mediaType     CallMediaType
-  status        CallStatus   @default(RINGING)
-  callMessageId String?      @unique
-  startedAt     DateTime     @default(now())
-  connectedAt   DateTime?
-  endedAt       DateTime?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdById    String?
+  endedById      String?
+  mediaType      CallMediaType
+  status         CallStatus    @default(RINGING)
+  callMessageId  String?       @unique
+  startedAt      DateTime      @default(now())
+  connectedAt    DateTime?
+  endedAt        DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
-  conversation Conversation?   @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  createdBy    User?           @relation("CreatedCallSessions", fields: [createdById], references: [id], onDelete: SetNull)
-  endedBy      User?           @relation("EndedCallSessions", fields: [endedById], references: [id], onDelete: SetNull)
+  conversation Conversation?     @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  createdBy    User?             @relation("CreatedCallSessions", fields: [createdById], references: [id], onDelete: SetNull)
+  endedBy      User?             @relation("EndedCallSessions", fields: [endedById], references: [id], onDelete: SetNull)
   participants CallParticipant[]
 
   @@index([conversationId])
@@ -319,4 +351,105 @@ model StoryView {
 
   @@id([storyId, viewerId])
   @@index([viewerId, seenAt])
+}
+
+model MessageReaction {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model PinnedMessage {
+  id             String   @id @default(uuid())
+  conversationId String
+  messageId      String
+  pinnedById     String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy     User         @relation("PinnedMessagesByUser", fields: [pinnedById], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, messageId])
+  @@index([conversationId, createdAt])
+  @@index([pinnedById])
+}
+
+model SavedMessage {
+  userId    String
+  messageId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@id([userId, messageId])
+  @@index([messageId])
+  @@index([createdAt])
+}
+
+model ConversationPreference {
+  conversationId String
+  userId         String
+  isArchived     Boolean   @default(false)
+  archivedAt     DateTime?
+  mutedUntil     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId, isArchived])
+}
+
+model UserBlock {
+  blockerId     String
+  blockedUserId String
+  createdAt     DateTime @default(now())
+
+  blocker     User @relation("BlocksInitiated", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedUser User @relation("BlockedBy", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedUserId])
+  @@index([blockedUserId])
+}
+
+model UserSession {
+  id             String    @id @default(uuid())
+  userId         String
+  sessionTokenId String    @unique
+  userAgent      String?
+  ipAddress      String?
+  lastSeenAt     DateTime  @default(now())
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, lastSeenAt])
+}
+
+model LoginChallenge {
+  id             String   @id @default(uuid())
+  userId         String
+  challengeToken String   @unique
+  codeHash       String
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
 }

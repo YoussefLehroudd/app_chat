@@ -1,19 +1,29 @@
 import GenderCheckbox from "./GenderCheckbox";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSignup from "../../hooks/useSignup";
 import AuthShell from "../../components/auth/AuthShell";
-import { FiArrowRight, FiAtSign, FiEye, FiEyeOff, FiLock, FiUser } from "react-icons/fi";
+import { FiArrowRight, FiAtSign, FiEye, FiEyeOff, FiLock, FiMail, FiUser } from "react-icons/fi";
+
+const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+const DEFAULT_USERNAME_STATUS = {
+	state: "idle",
+	message: "",
+	suggestion: "",
+	checkedValue: "",
+};
 
 const SignUp = () => {
 	const [inputs, setInputs] = useState({
 		fullName: "",
 		username: "",
+		email: "",
 		password: "",
 		confirmPassword: "",
 		gender: "",
 	});
 	const [showPassword, setShowPassword] = useState(false);
 	const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+	const [usernameStatus, setUsernameStatus] = useState(DEFAULT_USERNAME_STATUS);
 
 	const { loading, signup, errors, clearError } = useSignup();
 
@@ -23,7 +33,7 @@ const SignUp = () => {
 	};
 
 	const handleChange = (field) => (e) => {
-		const value = e.target.value;
+		const value = field === "username" ? e.target.value.toLowerCase() : e.target.value;
 		clearError(field);
 		if (field === "password" || field === "confirmPassword") {
 			clearError("password");
@@ -38,27 +48,93 @@ const SignUp = () => {
 	};
 
 	const applySuggestedUsername = () => {
-		if (!errors.usernameSuggestion) return;
+		const nextUsername = errors.usernameSuggestion || usernameStatus.suggestion;
+		if (!nextUsername) return;
 		clearError("username");
 		setInputs((currentInputs) => ({
 			...currentInputs,
-			username: errors.usernameSuggestion,
+			username: nextUsername,
 		}));
 	};
 
+	useEffect(() => {
+		const normalizedUsername = typeof inputs.username === "string" ? inputs.username.trim() : "";
+
+		if (!normalizedUsername) {
+			setUsernameStatus(DEFAULT_USERNAME_STATUS);
+			return undefined;
+		}
+
+		if (!USERNAME_PATTERN.test(normalizedUsername)) {
+			setUsernameStatus({
+				state: "invalid",
+				message: "Use 3-20 chars: letters, numbers, or _",
+				suggestion: "",
+				checkedValue: normalizedUsername,
+			});
+			return undefined;
+		}
+
+		const controller = new AbortController();
+		const timeoutId = window.setTimeout(async () => {
+			setUsernameStatus((currentStatus) => ({
+				state: "checking",
+				message:
+					currentStatus.checkedValue === normalizedUsername && currentStatus.state === "checking"
+						? currentStatus.message
+						: "Checking username...",
+				suggestion: "",
+				checkedValue: normalizedUsername,
+			}));
+
+			try {
+				const response = await fetch(`/api/auth/check-username?username=${encodeURIComponent(normalizedUsername)}`, {
+					signal: controller.signal,
+				});
+				const data = await response.json();
+
+				if (!response.ok) {
+					throw new Error(data?.error || "Unable to check username");
+				}
+
+				setUsernameStatus({
+					state: data.available ? "available" : data.valid === false ? "invalid" : "taken",
+					message: data.message || (data.available ? "Username is available" : "Username is already taken"),
+					suggestion: data.suggestion || "",
+					checkedValue: normalizedUsername,
+				});
+			} catch (error) {
+				if (error.name === "AbortError") return;
+				setUsernameStatus({
+					state: "error",
+					message: "Could not verify username right now",
+					suggestion: "",
+					checkedValue: normalizedUsername,
+				});
+			}
+		}, 320);
+
+		return () => {
+			controller.abort();
+			window.clearTimeout(timeoutId);
+		};
+	}, [inputs.username]);
+
 	return (
-		<div className='w-full max-w-6xl'>
+		<div className='flex h-full w-full max-w-6xl items-center'>
 			<AuthShell
 				eyebrow='Create account'
 				title='Join the flow'
 				accent='Start on ChatApp'
-				description='Create your account with a tighter layout that stays fully visible on screen.'
-				footerPrompt='Already have an account?'
+				description='Create your account and start chatting.'
+				footerPrompt='Have an account?'
 				footerLinkLabel='Login'
 				footerTo='/login'
+				shellVariant='compact'
+				shellClassName='auth-shell--signup'
 			>
 				<form onSubmit={handleSubmit} className='auth-form-stack flex flex-col gap-4'>
-					<div className='auth-form-grid grid gap-4 lg:grid-cols-2'>
+					<div className='auth-form-grid grid gap-3 min-[360px]:grid-cols-2 lg:grid-cols-2'>
 						<div className='space-y-2'>
 							<label className='auth-label'>Full Name</label>
 							<div className={`auth-input-wrap ${errors.fullName ? "auth-input-wrap--error" : ""}`}>
@@ -99,11 +175,49 @@ const SignUp = () => {
 										</button>
 									) : null}
 								</div>
+							) : usernameStatus.state !== "idle" ? (
+								<div className='auth-inline-feedback'>
+									<p
+										className={`auth-status-text ${
+											usernameStatus.state === "available"
+												? "auth-status-text--available"
+												: usernameStatus.state === "checking"
+													? "auth-status-text--checking"
+													: usernameStatus.state === "error"
+														? "auth-status-text--error"
+														: "auth-status-text--taken"
+										}`}
+									>
+										{usernameStatus.message}
+									</p>
+									{usernameStatus.suggestion && usernameStatus.state === "taken" ? (
+										<button type='button' className='auth-suggestion-chip' onClick={applySuggestedUsername}>
+											Use `@{usernameStatus.suggestion}`
+										</button>
+									) : null}
+								</div>
 							) : null}
 						</div>
 					</div>
 
-					<div className='auth-form-grid grid gap-4 md:grid-cols-2'>
+					<div className='space-y-2'>
+						<label className='auth-label'>Recovery Email</label>
+						<div className={`auth-input-wrap ${errors.email ? "auth-input-wrap--error" : ""}`}>
+							<FiMail className='auth-input-icon' />
+							<input
+								type='email'
+								placeholder='you@example.com'
+								className='auth-input'
+								value={inputs.email}
+								onChange={handleChange("email")}
+								autoComplete='email'
+								aria-invalid={Boolean(errors.email)}
+							/>
+						</div>
+						{errors.email ? <p className='auth-error-text'>{errors.email}</p> : null}
+					</div>
+
+					<div className='auth-form-grid grid gap-3 min-[360px]:grid-cols-2 md:grid-cols-2'>
 						<div className='space-y-2'>
 							<label className='auth-label'>Password</label>
 							<div className={`auth-input-wrap ${errors.password ? "auth-input-wrap--error" : ""}`}>

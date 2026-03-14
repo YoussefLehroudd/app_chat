@@ -9,6 +9,7 @@ const useUpdateProfile = () => {
 	const updateProfile = async ({
 		fullName,
 		username,
+		email,
 		gender,
 		bio,
 		profilePicFile,
@@ -21,6 +22,7 @@ const useUpdateProfile = () => {
 			const formData = new FormData();
 			if (fullName !== undefined) formData.append("fullName", fullName);
 			if (username !== undefined) formData.append("username", username);
+			if (email !== undefined) formData.append("email", email);
 			if (gender !== undefined) formData.append("gender", gender);
 			if (bio !== undefined) formData.append("bio", bio);
 			if (profilePicFile) formData.append("profilePic", profilePicFile);

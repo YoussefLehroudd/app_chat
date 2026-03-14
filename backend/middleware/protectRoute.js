@@ -1,10 +1,12 @@
 import jwt from "jsonwebtoken";
 import { DATABASE_UNAVAILABLE_MESSAGE, isDatabaseAvailable, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import { toUserDto } from "../utils/formatters.js";
+import { SESSION_COOKIE_NAME } from "../utils/authSecurity.js";
+import { getActiveUserSessionByTokenId, touchUserSession } from "../utils/userSessions.js";
 
 const protectRoute = async (req, res, next) => {
 	try {
-		const token = req.cookies.jwt;
+		const token = req.cookies?.[SESSION_COOKIE_NAME];
 
 		if (!token) {
 			return res.status(401).json({ error: "Unauthorized - No Token Provided" });
@@ -16,8 +18,19 @@ const protectRoute = async (req, res, next) => {
 			return res.status(401).json({ error: "Unauthorized - Invalid Token" });
 		}
 
+		if (!decoded?.sessionId) {
+			res.cookie(SESSION_COOKIE_NAME, "", { maxAge: 0 });
+			return res.status(401).json({ error: "Unauthorized - Session Missing" });
+		}
+
 		if (!isDatabaseAvailable()) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+
+		const session = await getActiveUserSessionByTokenId(decoded.sessionId);
+		if (!session) {
+			res.cookie(SESSION_COOKIE_NAME, "", { maxAge: 0 });
+			return res.status(401).json({ error: "Unauthorized - Session Expired" });
 		}
 
 		const user = await prisma.user.findUnique({
@@ -42,7 +55,12 @@ const protectRoute = async (req, res, next) => {
 			});
 		}
 
-		req.user = toUserDto(user, { includeDeveloperPermissions: true });
+		req.user = toUserDto(user, {
+			includeDeveloperPermissions: true,
+			includeSensitiveFields: true,
+		});
+		req.user.currentSessionId = session.sessionTokenId;
+		void touchUserSession(session.sessionTokenId);
 
 		next();
 	} catch (error) {

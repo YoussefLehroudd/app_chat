@@ -14,6 +14,8 @@ import {
 	respondToGroupInvitation,
 	sendDirectInvitation,
 	sendGroupInvitation,
+	updateConversationDisappearingMessages,
+	updateConversationPreferences,
 	updateGroupMemberRole,
 	updateGroupConversation,
 } from "../controllers/conversation.controller.js";
@@ -24,6 +26,8 @@ router.get("/", protectRoute, getSidebarConversations);
 router.get("/direct-invitations", protectRoute, getDirectInvitations);
 router.post("/direct-invitations", protectRoute, sendDirectInvitation);
 router.post("/direct-invitations/:id/respond", protectRoute, respondToDirectInvitation);
+router.patch("/:id/preferences", protectRoute, updateConversationPreferences);
+router.patch("/:id/disappearing", protectRoute, updateConversationDisappearingMessages);
 router.post("/groups", protectRoute, avatarUpload.single("profilePic"), createGroupConversation);
 router.patch("/groups/:id", protectRoute, avatarUpload.single("profilePic"), updateGroupConversation);
 router.post("/groups/:id/join", protectRoute, joinPublicGroupConversation);

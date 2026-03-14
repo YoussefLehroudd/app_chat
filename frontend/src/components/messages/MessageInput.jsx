@@ -319,6 +319,11 @@ const MessageInput = () => {
 		}, 2000);
 	};
 
+	const emitRecordingState = (eventName, conversation = selectedConversationRef.current) => {
+		if (!conversation || conversation.type !== "DIRECT") return;
+		socket?.emit(eventName, conversation._id);
+	};
+
 	const insertEmojiAtCursor = (emoji) => {
 		const textarea = textareaRef.current;
 		if (!textarea) {
@@ -466,6 +471,7 @@ const MessageInput = () => {
 				const recordedDurationSeconds = finalRecordingDurationSecondsRef.current;
 
 				mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+				emitRecordingState("recording:stop");
 				setIsPaused(false);
 				setIsRecording(false);
 				setAudioLevels(new Array(20).fill(0));
@@ -495,6 +501,7 @@ const MessageInput = () => {
 			resetRecordingTracking();
 			recordingStartedAtRef.current = Date.now();
 			mediaRecorderRef.current.start(250);
+			emitRecordingState("recording:start");
 			setIsRecording(true);
 			setIsPaused(false);
 			recordingIntervalRef.current = setInterval(syncRecordingTime, 250);
@@ -510,6 +517,7 @@ const MessageInput = () => {
 		accumulatedRecordingMsRef.current = getElapsedRecordingMs();
 		recordingStartedAtRef.current = null;
 		syncRecordingTime();
+		emitRecordingState("recording:stop");
 		setIsPaused(true);
 		clearInterval(recordingIntervalRef.current);
 		if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
@@ -520,6 +528,7 @@ const MessageInput = () => {
 
 		mediaRecorderRef.current.resume();
 		recordingStartedAtRef.current = Date.now();
+		emitRecordingState("recording:start");
 		setIsPaused(false);
 		recordingIntervalRef.current = setInterval(syncRecordingTime, 250);
 		updateAudioLevels();
@@ -531,6 +540,7 @@ const MessageInput = () => {
 		finalRecordingDurationSecondsRef.current = getFinalRecordingDurationSeconds();
 		accumulatedRecordingMsRef.current = getElapsedRecordingMs();
 		recordingStartedAtRef.current = null;
+		emitRecordingState("recording:stop");
 		mediaRecorderRef.current.stop();
 		clearInterval(recordingIntervalRef.current);
 		if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
@@ -547,6 +557,7 @@ const MessageInput = () => {
 		try {
 			finalRecordingDurationSecondsRef.current = 0;
 			mediaRecorderRef.current.shouldSendAudio = false;
+			emitRecordingState("recording:stop");
 			if (mediaRecorderRef.current.state !== "inactive") {
 				mediaRecorderRef.current.stop();
 			}

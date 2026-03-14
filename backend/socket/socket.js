@@ -38,9 +38,15 @@ export const getUserSocketIds = (userId) => {
 };
 
 const userSocketMap = new Map(); // Map<userId, Set<socketId>>
+const userPresenceSettingsMap = new Map(); // Map<userId, { showOnlineStatus, showLastSeen, showTypingStatus }>
 
 const emitOnlineUsers = () => {
-	io.emit("getOnlineUsers", Array.from(userSocketMap.keys()));
+	io.emit(
+		"getOnlineUsers",
+		Array.from(userSocketMap.keys()).filter(
+			(userId) => userPresenceSettingsMap.get(userId)?.showOnlineStatus !== false
+		)
+	);
 };
 
 const emitToUserSockets = (targetUserId, eventName, payload) => {
@@ -253,7 +259,14 @@ io.on("connection", async (socket) => {
 		try {
 			const user = await prisma.user.findUnique({
 				where: { id: userId },
-				select: { id: true, isArchived: true, isBanned: true },
+				select: {
+					id: true,
+					isArchived: true,
+					isBanned: true,
+					showOnlineStatus: true,
+					showLastSeen: true,
+					showTypingStatus: true,
+				},
 			});
 
 			if (!user) {
@@ -276,6 +289,11 @@ io.on("connection", async (socket) => {
 			const existing = userSocketMap.get(userId) || new Set();
 			existing.add(socket.id);
 			userSocketMap.set(userId, existing);
+			userPresenceSettingsMap.set(userId, {
+				showOnlineStatus: user.showOnlineStatus !== false,
+				showLastSeen: user.showLastSeen !== false,
+				showTypingStatus: user.showTypingStatus !== false,
+			});
 		} catch (error) {
 			if (isPrismaConnectionError(error)) {
 				console.warn("Socket user verification failed because the database is temporarily unavailable.");
@@ -297,6 +315,9 @@ io.on("connection", async (socket) => {
 
 	// Listen for typing events
 	socket.on("typing", (receiverId) => {
+		if (userPresenceSettingsMap.get(userId)?.showTypingStatus === false) {
+			return;
+		}
 		const receiverSocketId = getReceiverSocketId(receiverId);
 		if (receiverSocketId) {
 			io.to(receiverSocketId).emit("userTyping", userId);
@@ -305,9 +326,32 @@ io.on("connection", async (socket) => {
 
 	// Listen for stop typing events
 	socket.on("stopTyping", (receiverId) => {
+		if (userPresenceSettingsMap.get(userId)?.showTypingStatus === false) {
+			return;
+		}
 		const receiverSocketId = getReceiverSocketId(receiverId);
 		if (receiverSocketId) {
 			io.to(receiverSocketId).emit("userStopTyping", userId);
+		}
+	});
+
+	socket.on("recording:start", (receiverId) => {
+		if (userPresenceSettingsMap.get(userId)?.showTypingStatus === false) {
+			return;
+		}
+		const receiverSocketId = getReceiverSocketId(receiverId);
+		if (receiverSocketId) {
+			io.to(receiverSocketId).emit("userRecordingStart", userId);
+		}
+	});
+
+	socket.on("recording:stop", (receiverId) => {
+		if (userPresenceSettingsMap.get(userId)?.showTypingStatus === false) {
+			return;
+		}
+		const receiverSocketId = getReceiverSocketId(receiverId);
+		if (receiverSocketId) {
+			io.to(receiverSocketId).emit("userRecordingStop", userId);
 		}
 	});
 
@@ -587,10 +631,12 @@ io.on("connection", async (socket) => {
 		console.log("user disconnected", socket.id);
 		if (userId && userId !== "undefined") {
 			const existing = userSocketMap.get(userId);
+			const presenceSettings = userPresenceSettingsMap.get(userId);
 			if (existing) {
 				existing.delete(socket.id);
 				if (existing.size === 0) {
 					userSocketMap.delete(userId);
+					userPresenceSettingsMap.delete(userId);
 					removeUserFromGroupCalls(userId);
 					cleanupDisconnectedUserCalls(userId).catch((error) => {
 						if (isPrismaConnectionError(error)) {
@@ -603,7 +649,9 @@ io.on("connection", async (socket) => {
 					prisma.user
 						.update({ where: { id: userId }, data: { lastSeen } })
 						.then(() => {
-							io.emit("userLastSeen", { userId, lastSeen: lastSeen.toISOString() });
+							if (presenceSettings?.showLastSeen !== false) {
+								io.emit("userLastSeen", { userId, lastSeen: lastSeen.toISOString() });
+							}
 						})
 						.catch((error) => {
 							if (error?.code === "P2025") {

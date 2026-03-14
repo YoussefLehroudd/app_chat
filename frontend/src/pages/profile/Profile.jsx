@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import toast from "react-hot-toast";
 import {
 	IoArrowBack,
 	IoCameraOutline,
 	IoCheckmarkCircle,
 	IoCloudUploadOutline,
+	IoDesktopOutline,
 	IoLockClosedOutline,
+	IoMailOutline,
 	IoMaleFemaleOutline,
 	IoPersonOutline,
+	IoShieldCheckmarkOutline,
 	IoSparklesOutline,
+	IoTimeOutline,
 } from "react-icons/io5";
 import { useAuthContext } from "../../context/AuthContext";
 import useUpdateProfile from "../../hooks/useUpdateProfile";
@@ -43,7 +48,7 @@ const formatJoinDate = (dateValue) => {
 };
 
 const Profile = () => {
-	const { authUser } = useAuthContext();
+	const { authUser, setAuthUser } = useAuthContext();
 	const { loading, updateProfile } = useUpdateProfile();
 
 	const fileInputRef = useRef(null);
@@ -53,6 +58,7 @@ const Profile = () => {
 
 	const [fullName, setFullName] = useState(authUser?.fullName || "");
 	const [username, setUsername] = useState(authUser?.username || "");
+	const [email, setEmail] = useState(authUser?.email || "");
 	const [gender, setGender] = useState(authUser?.gender || "male");
 	const [bio, setBio] = useState(authUser?.bio || "");
 	const [profilePicFile, setProfilePicFile] = useState(null);
@@ -60,14 +66,32 @@ const Profile = () => {
 	const [currentPassword, setCurrentPassword] = useState("");
 	const [newPassword, setNewPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
+	const [privacySettings, setPrivacySettings] = useState({
+		showOnlineStatus: authUser?.showOnlineStatus ?? true,
+		showLastSeen: authUser?.showLastSeen ?? true,
+		showReadReceipts: authUser?.showReadReceipts ?? true,
+		showTypingStatus: authUser?.showTypingStatus ?? true,
+	});
+	const [sessions, setSessions] = useState([]);
+	const [sessionsLoading, setSessionsLoading] = useState(false);
+	const [securityActionLoading, setSecurityActionLoading] = useState(false);
+	const [twoFactorSetup, setTwoFactorSetup] = useState(null);
+	const [twoFactorCode, setTwoFactorCode] = useState("");
 
 	useEffect(() => {
 		setFullName(authUser?.fullName || "");
 		setUsername(authUser?.username || "");
+		setEmail(authUser?.email || "");
 		setGender(authUser?.gender || "male");
 		setBio(authUser?.bio || "");
 		setProfilePreview(getAvatarUrl(authUser?.profilePic, 256) || "");
 		setProfilePicFile(null);
+		setPrivacySettings({
+			showOnlineStatus: authUser?.showOnlineStatus ?? true,
+			showLastSeen: authUser?.showLastSeen ?? true,
+			showReadReceipts: authUser?.showReadReceipts ?? true,
+			showTypingStatus: authUser?.showTypingStatus ?? true,
+		});
 	}, [authUser]);
 
 	useEffect(() => {
@@ -89,6 +113,209 @@ const Profile = () => {
 	);
 	const bioCharacters = bio.trim().length;
 	const hasPasswordDraft = Boolean(currentPassword || newPassword || confirmPassword);
+
+	const syncAuthUser = (nextUser) => {
+		if (!nextUser) return;
+		localStorage.setItem("chat-user", JSON.stringify(nextUser));
+		setAuthUser(nextUser);
+	};
+
+	const loadSessions = async () => {
+		if (!authUser?._id) return;
+
+		setSessionsLoading(true);
+		try {
+			const response = await fetch("/api/users/sessions");
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to load sessions");
+			}
+
+			setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSessionsLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		void loadSessions();
+	}, [authUser?._id]);
+
+	const handlePrivacyToggle = (field) => {
+		setPrivacySettings((currentSettings) => ({
+			...currentSettings,
+			[field]: !currentSettings[field],
+		}));
+	};
+
+	const handleSavePrivacy = async () => {
+		setSecurityActionLoading(true);
+		try {
+			const response = await fetch("/api/users/privacy", {
+				method: "PATCH",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(privacySettings),
+			});
+			const data = await response.json();
+
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to update privacy settings");
+			}
+
+			syncAuthUser({ ...authUser, ...data });
+			toast.success("Privacy settings updated");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSecurityActionLoading(false);
+		}
+	};
+
+	const handleSendVerificationEmail = async () => {
+		setSecurityActionLoading(true);
+		try {
+			const response = await fetch("/api/auth/send-verification-email", {
+				method: "POST",
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to send verification email");
+			}
+			toast.success(data.message || "Verification email sent");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSecurityActionLoading(false);
+		}
+	};
+
+	const handleStartTwoFactorSetup = async () => {
+		setSecurityActionLoading(true);
+		try {
+			const response = await fetch("/api/auth/2fa/setup", {
+				method: "POST",
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to start 2FA setup");
+			}
+			setTwoFactorSetup(data);
+			setTwoFactorCode("");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSecurityActionLoading(false);
+		}
+	};
+
+	const handleVerifyTwoFactorSetup = async () => {
+		if (!twoFactorCode.trim()) {
+			toast.error("Enter the 6-digit code from your authenticator app");
+			return;
+		}
+
+		setSecurityActionLoading(true);
+		try {
+			const response = await fetch("/api/auth/2fa/verify", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ code: twoFactorCode.trim() }),
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to enable 2FA");
+			}
+			setTwoFactorSetup(null);
+			setTwoFactorCode("");
+			syncAuthUser({ ...authUser, twoFactorEnabled: true });
+			toast.success(data.message || "2FA enabled");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSecurityActionLoading(false);
+		}
+	};
+
+	const handleDisableTwoFactor = async () => {
+		if (!twoFactorCode.trim()) {
+			toast.error("Enter your current authenticator code to disable 2FA");
+			return;
+		}
+
+		setSecurityActionLoading(true);
+		try {
+			const response = await fetch("/api/auth/2fa", {
+				method: "DELETE",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ code: twoFactorCode.trim() }),
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to disable 2FA");
+			}
+			setTwoFactorSetup(null);
+			setTwoFactorCode("");
+			syncAuthUser({ ...authUser, twoFactorEnabled: false });
+			toast.success(data.message || "2FA disabled");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSecurityActionLoading(false);
+		}
+	};
+
+	const handleRevokeSession = async (sessionTokenId) => {
+		setSecurityActionLoading(true);
+		try {
+			const response = await fetch(`/api/users/sessions/${sessionTokenId}`, {
+				method: "DELETE",
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to revoke session");
+			}
+
+			if (data.loggedOut) {
+				localStorage.removeItem("chat-user");
+				setAuthUser(null);
+				return;
+			}
+
+			await loadSessions();
+			toast.success(data.message || "Session removed");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSecurityActionLoading(false);
+		}
+	};
+
+	const handleRevokeOtherSessions = async () => {
+		setSecurityActionLoading(true);
+		try {
+			const response = await fetch("/api/users/sessions/others", {
+				method: "DELETE",
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Failed to revoke other sessions");
+			}
+			await loadSessions();
+			toast.success(data.message || "Other sessions signed out");
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setSecurityActionLoading(false);
+		}
+	};
 
 	const handleFileChange = (event) => {
 		const file = event.target.files?.[0];
@@ -124,6 +351,7 @@ const Profile = () => {
 		const updatedUser = await updateProfile({
 			fullName,
 			username,
+			email,
 			gender,
 			bio,
 			profilePicFile,
@@ -339,6 +567,24 @@ const Profile = () => {
 														: "Only developer accounts can change username."}
 												</p>
 											</div>
+
+											<div className='md:col-span-2'>
+												<label className='mb-2 flex items-center gap-2 text-sm font-medium text-slate-200'>
+													<IoMailOutline className='h-4 w-4 text-sky-200/80' />
+													Recovery email
+												</label>
+												<input
+													type='email'
+													className={fieldClassName}
+													value={email}
+													onChange={(event) => setEmail(event.target.value)}
+													placeholder='you@example.com'
+													autoComplete='email'
+												/>
+												<p className='mt-2 text-xs text-slate-500'>
+													Used for password resets and username reminder emails.
+												</p>
+											</div>
 										</div>
 
 										<div className='mt-5'>
@@ -491,6 +737,218 @@ const Profile = () => {
 											onChange={(event) => setConfirmPassword(event.target.value)}
 										/>
 									</div>
+								</div>
+							</div>
+
+							<div className={panelClassName}>
+								<div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]'>
+									<section className='rounded-[28px] border border-white/8 bg-slate-950/28 p-4 sm:p-5'>
+										<p className={labelClassName}>
+											<IoShieldCheckmarkOutline className='h-4 w-4' />
+											Privacy & Verification
+										</p>
+
+										<div className='grid gap-3 md:grid-cols-2'>
+											{[
+												{
+													key: "showOnlineStatus",
+													title: "Show online status",
+													description: "Let people see when you are online right now.",
+												},
+												{
+													key: "showLastSeen",
+													title: "Show last seen",
+													description: "Share your last active time when you disconnect.",
+												},
+												{
+													key: "showReadReceipts",
+													title: "Show read receipts",
+													description: "Allow others to know when you have seen their messages.",
+												},
+												{
+													key: "showTypingStatus",
+													title: "Show typing indicators",
+													description: "Broadcast typing and recording activity in chats.",
+												},
+											].map((item) => (
+												<button
+													key={item.key}
+													type='button'
+													onClick={() => handlePrivacyToggle(item.key)}
+													className={`rounded-[24px] border px-4 py-4 text-left transition ${
+														privacySettings[item.key]
+															? "border-sky-300/30 bg-[linear-gradient(135deg,rgba(14,165,233,0.14),rgba(6,182,212,0.08))]"
+															: "border-white/8 bg-white/[0.025]"
+													}`}
+												>
+													<div className='flex items-center justify-between gap-3'>
+														<div>
+															<p className='text-sm font-semibold text-white'>{item.title}</p>
+															<p className='mt-2 text-sm leading-6 text-slate-400'>{item.description}</p>
+														</div>
+														<div
+															className={`inline-flex h-8 w-14 items-center rounded-full p-1 transition ${
+																privacySettings[item.key] ? "bg-sky-500" : "bg-slate-700"
+															}`}
+														>
+															<span
+																className={`h-6 w-6 rounded-full bg-white transition ${
+																	privacySettings[item.key] ? "translate-x-6" : "translate-x-0"
+																}`}
+															></span>
+														</div>
+													</div>
+												</button>
+											))}
+										</div>
+
+										<div className='mt-5 rounded-[24px] border border-white/8 bg-white/[0.03] p-4'>
+											<div className='flex flex-wrap items-center justify-between gap-3'>
+												<div>
+													<p className='text-sm font-semibold text-white'>Email verification</p>
+													<p className='mt-1 text-sm leading-6 text-slate-400'>
+														{authUser?.isEmailVerified
+															? "Your recovery email is verified."
+															: "Verify your email to unlock safer recovery and 2FA setup."}
+													</p>
+												</div>
+												<button
+													type='button'
+													onClick={handleSendVerificationEmail}
+													disabled={securityActionLoading || authUser?.isEmailVerified || !email}
+													className='rounded-full border border-sky-300/20 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:border-sky-300/35 hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+												>
+													{authUser?.isEmailVerified ? "Verified" : "Send verification"}
+												</button>
+											</div>
+										</div>
+
+										<div className='mt-5 flex justify-end'>
+											<button
+												type='button'
+												onClick={handleSavePrivacy}
+												disabled={securityActionLoading}
+												className='inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_18px_38px_rgba(14,165,233,0.28)] transition hover:from-sky-400 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-70'
+											>
+												Save privacy settings
+											</button>
+										</div>
+									</section>
+
+									<section className='rounded-[28px] border border-white/8 bg-slate-950/28 p-4 sm:p-5'>
+										<p className={labelClassName}>
+											<IoTimeOutline className='h-4 w-4' />
+											2FA & Sessions
+										</p>
+
+										<div className='rounded-[24px] border border-white/8 bg-white/[0.03] p-4'>
+											<div className='flex flex-wrap items-center justify-between gap-3'>
+												<div>
+													<p className='text-sm font-semibold text-white'>Authenticator app</p>
+													<p className='mt-1 text-sm leading-6 text-slate-400'>
+														{authUser?.twoFactorEnabled
+															? "2FA is active. Enter a code below if you want to disable it."
+															: "Protect your account with a 6-digit authenticator code."}
+													</p>
+												</div>
+												<button
+													type='button'
+													onClick={authUser?.twoFactorEnabled ? handleDisableTwoFactor : handleStartTwoFactorSetup}
+													disabled={securityActionLoading}
+													className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60'
+												>
+													{authUser?.twoFactorEnabled ? "Disable 2FA" : "Start setup"}
+												</button>
+											</div>
+
+											<div className='mt-4 space-y-3'>
+												<input
+													type='text'
+													value={twoFactorCode}
+													onChange={(event) => setTwoFactorCode(event.target.value)}
+													className={fieldClassName}
+													placeholder='Enter 6-digit authenticator code'
+													maxLength='6'
+												/>
+												{twoFactorSetup ? (
+													<div className='rounded-[22px] border border-white/10 bg-slate-950/30 p-4'>
+														<img
+															src={twoFactorSetup.qrCodeDataUrl}
+															alt='2FA QR code'
+															className='mx-auto h-40 w-40 rounded-[18px] bg-white p-2'
+														/>
+														<p className='mt-3 text-xs leading-6 text-slate-400'>
+															Secret: <span className='font-semibold text-slate-200'>{twoFactorSetup.secret}</span>
+														</p>
+														<button
+															type='button'
+															onClick={handleVerifyTwoFactorSetup}
+															disabled={securityActionLoading}
+															className='mt-4 w-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 px-4 py-2.5 text-sm font-semibold text-white'
+														>
+															Finish 2FA setup
+														</button>
+													</div>
+												) : null}
+											</div>
+										</div>
+
+										<div className='mt-5 rounded-[24px] border border-white/8 bg-white/[0.03] p-4'>
+											<div className='flex flex-wrap items-center justify-between gap-3'>
+												<div>
+													<p className='text-sm font-semibold text-white'>Active sessions</p>
+													<p className='mt-1 text-sm leading-6 text-slate-400'>
+														Review where your account is signed in and revoke anything unfamiliar.
+													</p>
+												</div>
+												<button
+													type='button'
+													onClick={handleRevokeOtherSessions}
+													disabled={securityActionLoading || sessions.length <= 1}
+													className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60'
+												>
+													Sign out others
+												</button>
+											</div>
+
+											<div className='mt-4 space-y-2'>
+												{sessionsLoading ? (
+													<div className='rounded-[20px] border border-white/10 bg-slate-950/30 px-4 py-6 text-center text-sm text-slate-400'>
+														Loading sessions...
+													</div>
+												) : sessions.length === 0 ? (
+													<div className='rounded-[20px] border border-white/10 bg-slate-950/30 px-4 py-6 text-center text-sm text-slate-400'>
+														No active sessions found.
+													</div>
+												) : (
+													sessions.map((session) => (
+														<div
+															key={session.sessionTokenId}
+															className='flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-white/10 bg-slate-950/30 px-4 py-3'
+														>
+															<div className='min-w-0'>
+																<p className='flex items-center gap-2 text-sm font-semibold text-white'>
+																	<IoDesktopOutline className='h-4 w-4 text-sky-200/80' />
+																	{session.isCurrent ? "Current session" : "Signed-in device"}
+																</p>
+																<p className='mt-1 truncate text-xs text-slate-400'>
+																	{session.userAgent || "Unknown device"} · {session.ipAddress || "Unknown IP"}
+																</p>
+															</div>
+															<button
+																type='button'
+																onClick={() => handleRevokeSession(session.sessionTokenId)}
+																disabled={securityActionLoading}
+																className='rounded-full border border-rose-300/20 bg-rose-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:border-rose-300/35 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+															>
+																{session.isCurrent ? "Sign out" : "Revoke"}
+															</button>
+														</div>
+													))
+												)}
+											</div>
+										</div>
+									</section>
 								</div>
 							</div>
 

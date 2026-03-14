@@ -19,18 +19,41 @@ const clampPercent = (value) => {
 };
 
 const DonutChart = ({ title, subtitle, segments, centerLabel, centerValue }) => {
-	const size = 132;
-	const strokeWidth = 14;
-	const radius = (size - strokeWidth) / 2;
-	const circumference = 2 * Math.PI * radius;
-	const normalizedSegments = segments.map((segment) => ({
-		...segment,
-		normalizedPercent: clampPercent(segment.percent),
-	}));
+	const normalizedSegments = (() => {
+		const sanitizedSegments = segments.map((segment) => ({
+			...segment,
+			safePercent: clampPercent(segment.percent),
+		}));
+		const totalPercent = sanitizedSegments.reduce((sum, segment) => sum + segment.safePercent, 0);
+
+		if (totalPercent <= 0) {
+			return sanitizedSegments.map(({ safePercent, ...segment }) => ({
+				...segment,
+				normalizedPercent: 0,
+			}));
+		}
+
+		return sanitizedSegments.map(({ safePercent, ...segment }) => ({
+			...segment,
+			normalizedPercent: (safePercent / totalPercent) * 100,
+		}));
+	})();
 	const visibleSegments = normalizedSegments.filter((segment) => segment.normalizedPercent > 0.001);
-	const hasSingleFullSegment =
-		visibleSegments.length === 1 && visibleSegments[0].normalizedPercent >= 99.999;
-	let offsetCursor = 0;
+	let gradientCursor = 0;
+	const gradientStops = visibleSegments.map((segment, index) => {
+		const start = gradientCursor;
+		const end = Math.min(100, start + segment.normalizedPercent);
+		gradientCursor = end;
+		return `${segment.color || ringPalette[index % ringPalette.length]} ${start}% ${end}%`;
+	});
+	const ringBackground = visibleSegments.length
+		? `conic-gradient(from -90deg, ${[
+				...gradientStops,
+				gradientCursor < 100 ? `rgba(148,163,184,0.14) ${gradientCursor}% 100%` : null,
+			]
+				.filter(Boolean)
+				.join(", ")})`
+		: "conic-gradient(from -90deg, rgba(148,163,184,0.14) 0% 100%)";
 
 	return (
 		<div className='rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,15,30,0.78),rgba(13,24,42,0.56))] p-4 shadow-[0_24px_60px_rgba(2,6,23,0.28)] sm:rounded-[30px] sm:p-5'>
@@ -39,47 +62,11 @@ const DonutChart = ({ title, subtitle, segments, centerLabel, centerValue }) => 
 
 			<div className='mt-5 flex flex-col items-center gap-5 sm:flex-row sm:items-center'>
 				<div className='relative h-[112px] w-[112px] shrink-0 sm:h-[132px] sm:w-[132px]'>
-					<svg viewBox={`0 0 ${size} ${size}`} className='h-full w-full -rotate-90'>
-						<circle
-							cx={size / 2}
-							cy={size / 2}
-							r={radius}
-							fill='none'
-							stroke='rgba(148,163,184,0.14)'
-							strokeWidth={strokeWidth}
-						/>
-						{hasSingleFullSegment ? (
-							<circle
-								cx={size / 2}
-								cy={size / 2}
-								r={radius}
-								fill='none'
-								stroke={visibleSegments[0].color || ringPalette[0]}
-								strokeWidth={strokeWidth}
-							/>
-						) : (
-							visibleSegments.map((segment, index) => {
-								const segmentLength = (circumference * segment.normalizedPercent) / 100;
-								const dashOffset = circumference - offsetCursor;
-								offsetCursor += segmentLength;
-
-								return (
-									<circle
-										key={segment.label}
-										cx={size / 2}
-										cy={size / 2}
-										r={radius}
-										fill='none'
-										stroke={segment.color || ringPalette[index % ringPalette.length]}
-										strokeWidth={strokeWidth}
-										strokeLinecap='round'
-										strokeDasharray={`${segmentLength} ${circumference}`}
-										strokeDashoffset={dashOffset}
-									/>
-								);
-							})
-						)}
-					</svg>
+					<div
+						className='absolute inset-0 rounded-full'
+						style={{ background: ringBackground }}
+					></div>
+					<div className='absolute inset-[14px] rounded-full border border-white/5 bg-[radial-gradient(circle_at_top,rgba(15,23,42,0.88),rgba(2,6,23,0.96))] shadow-[inset_0_1px_10px_rgba(148,163,184,0.05)] sm:inset-[16px]'></div>
 
 					<div className='absolute inset-0 flex flex-col items-center justify-center text-center'>
 						<p className='text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500'>{centerLabel}</p>

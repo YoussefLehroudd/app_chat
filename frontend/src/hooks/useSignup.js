@@ -2,14 +2,23 @@ import { useState } from "react";
 import { useAuthContext } from "../context/AuthContext";
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_]{3,20}$/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const useSignup = () => {
 	const [loading, setLoading] = useState(false);
 	const [errors, setErrors] = useState({});
 	const { setAuthUser } = useAuthContext();
 
-	const signup = async ({ fullName, username, password, confirmPassword, gender }) => {
-		const validationErrors = validateSignupInputs({ fullName, username, password, confirmPassword, gender });
+	const signup = async ({ fullName, username, email, password, confirmPassword, gender }) => {
+		const normalizedUsername = typeof username === "string" ? username.trim().toLowerCase() : "";
+		const validationErrors = validateSignupInputs({
+			fullName,
+			username: normalizedUsername,
+			email,
+			password,
+			confirmPassword,
+			gender,
+		});
 		if (Object.keys(validationErrors).length > 0) {
 			setErrors(validationErrors);
 			return false;
@@ -21,7 +30,7 @@ const useSignup = () => {
 			const res = await fetch("/api/auth/signup", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ fullName, username, password, confirmPassword, gender }),
+				body: JSON.stringify({ fullName, username: normalizedUsername, email, password, confirmPassword, gender }),
 			});
 
 			const data = await res.json();
@@ -30,7 +39,7 @@ const useSignup = () => {
 				return false;
 			}
 
-			const sessionUser = await establishSignupSession({ username, password }, data);
+			const sessionUser = await establishSignupSession({ username: normalizedUsername, password }, data);
 			localStorage.setItem("chat-user", JSON.stringify(sessionUser));
 			setAuthUser(sessionUser);
 			window.dispatchEvent(new Event("chat:conversations-refresh"));
@@ -82,13 +91,15 @@ async function establishSignupSession({ username, password }, fallbackUser) {
 	return fallbackUser;
 }
 
-function validateSignupInputs({ fullName, username, password, confirmPassword, gender }) {
+function validateSignupInputs({ fullName, username, email, password, confirmPassword, gender }) {
 	const errors = {};
-	const normalizedUsername = typeof username === "string" ? username.trim() : "";
+	const normalizedUsername = typeof username === "string" ? username.trim().toLowerCase() : "";
+	const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
 
-	if (!fullName || !username || !password || !confirmPassword || !gender) {
+	if (!fullName || !username || !email || !password || !confirmPassword || !gender) {
 		if (!fullName) errors.fullName = "Full name is required";
 		if (!username) errors.username = "Username is required";
+		if (!email) errors.email = "Email is required";
 		if (!password) errors.password = "Password is required";
 		if (!confirmPassword) errors.confirmPassword = "Please confirm your password";
 		if (!gender) errors.gender = "Please choose a gender";
@@ -104,6 +115,10 @@ function validateSignupInputs({ fullName, username, password, confirmPassword, g
 
 	if (normalizedUsername && !USERNAME_PATTERN.test(normalizedUsername)) {
 		errors.username = "Use 3-20 chars: letters, numbers, or _";
+	}
+
+	if (normalizedEmail && !EMAIL_PATTERN.test(normalizedEmail)) {
+		errors.email = "Please enter a valid email address";
 	}
 
 	return errors;
@@ -122,6 +137,14 @@ function mapSignupErrorToFields(response) {
 
 	if (normalizedMessage.includes("letters, numbers, or _")) {
 		return { username: "Use 3-20 chars: letters, numbers, or _" };
+	}
+
+	if (normalizedMessage.includes("email already exists")) {
+		return { email: "Email already exists" };
+	}
+
+	if (normalizedMessage.includes("valid email")) {
+		return { email: "Please enter a valid email address" };
 	}
 
 	if (normalizedMessage.includes("password") && normalizedMessage.includes("match")) {
