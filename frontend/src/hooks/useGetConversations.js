@@ -359,7 +359,7 @@ const useGetConversations = () => {
 						? {
 								...conversation,
 								lastMessage: newMessage.isSystem
-									? newMessage.systemText || newMessage.message || "Group update"
+									? newMessage.previewText || newMessage.systemText || newMessage.message || "Group update"
 									: newMessage.isCallMessage
 										? newMessage.callInfo?.previewText || newMessage.previewText || "Call"
 									: newMessage.isStoryInteraction

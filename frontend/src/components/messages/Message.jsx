@@ -3,7 +3,17 @@ import { createPortal } from "react-dom";
 import toast from "react-hot-toast";
 import { BsBookmark, BsCopy, BsPencil, BsPinAngle, BsReply, BsTrash } from "react-icons/bs";
 import { HiOutlinePhone, HiOutlineVideoCamera } from "react-icons/hi2";
-import { IoAttachOutline, IoDocumentOutline, IoDownloadOutline, IoImageOutline, IoVideocamOutline } from "react-icons/io5";
+import {
+	IoAttachOutline,
+	IoCalendarClearOutline,
+	IoDocumentOutline,
+	IoDownloadOutline,
+	IoImageOutline,
+	IoLocationOutline,
+	IoMegaphoneOutline,
+	IoStatsChartOutline,
+	IoVideocamOutline,
+} from "react-icons/io5";
 import { useAuthContext } from "../../context/AuthContext";
 import { useCallContext } from "../../context/CallContext";
 import { extractTime } from "../../utils/extractTime";
@@ -61,6 +71,48 @@ const formatCallDuration = (totalSeconds = 0) => {
 	return `${minutes}:${String(seconds).padStart(2, "0")}`;
 };
 
+const formatLongDateTime = (value) => {
+	if (!value) return "Date not set";
+	const parsedDate = new Date(value);
+	if (!Number.isFinite(parsedDate.getTime())) return "Date not set";
+	return new Intl.DateTimeFormat(undefined, {
+		dateStyle: "full",
+		timeStyle: "short",
+	}).format(parsedDate);
+};
+
+const formatDateChip = (value) => {
+	const parsedDate = new Date(value);
+	if (!Number.isFinite(parsedDate.getTime())) {
+		return {
+			month: "TBD",
+			day: "--",
+		};
+	}
+
+	return {
+		month: new Intl.DateTimeFormat(undefined, { month: "short" }).format(parsedDate).toUpperCase(),
+		day: new Intl.DateTimeFormat(undefined, { day: "2-digit" }).format(parsedDate),
+	};
+};
+
+const mapWorkspacePollToSystemData = (poll) => ({
+	actorName: poll?.createdBy?.fullName || "Admin",
+	pollId: poll?.id || null,
+	question: poll?.question || "",
+	allowsMultiple: poll?.allowsMultiple === true,
+	closesAt: poll?.closesAt || null,
+	totalVotes: Number.isFinite(poll?.totalVotes) ? poll.totalVotes : 0,
+	options: Array.isArray(poll?.options)
+		? poll.options.map((option) => ({
+				id: option.id,
+				label: option.label,
+				voteCount: option.voteCount || 0,
+				selectedByMe: option.selectedByMe === true,
+		  }))
+		: [],
+});
+
 const getReceiptLabel = (message) => {
 	if (message?.isSeen) {
 		return <span className='text-blue-200'>✓✓</span>;
@@ -88,7 +140,7 @@ const Message = ({
 	const MENU_GAP = 12;
 	const { authUser } = useAuthContext();
 	const { callState, joinExistingCall, isCallClosedForUi, getClosedCallInfo } = useCallContext();
-	const { selectedConversation } = useConversation();
+	const { selectedConversation, updateMessage } = useConversation();
 	const fromMe = message.senderId === authUser._id;
 	const formattedTime = extractTime(message.createdAt);
 	const chatClassName = fromMe ? "chat-end" : "chat-start";
@@ -105,6 +157,7 @@ const Message = ({
 	const [deleteType, setDeleteType] = useState("me");
 	const [isDeleting, setIsDeleting] = useState(false);
 	const [isHandlingInvite, setIsHandlingInvite] = useState(false);
+	const [isVotingSystemPoll, setIsVotingSystemPoll] = useState(false);
 	const [isEditing, setIsEditing] = useState(false);
 	const [editDraft, setEditDraft] = useState(message.message || "");
 	const [isMutatingMessage, setIsMutatingMessage] = useState(false);
@@ -520,6 +573,50 @@ const Message = ({
 		}
 	};
 
+	const handleSystemPollVote = async (optionId) => {
+		if (
+			!selectedConversation?._id ||
+			selectedConversation.type !== "GROUP" ||
+			!message.systemData?.pollId ||
+			!optionId ||
+			isVotingSystemPoll
+		) {
+			return;
+		}
+
+		setIsVotingSystemPoll(true);
+		try {
+			const response = await fetch(
+				`/api/conversations/groups/${selectedConversation._id}/polls/${message.systemData.pollId}/votes`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ optionId }),
+				}
+			);
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data.error || "Unable to vote in poll");
+			}
+
+			const nextPoll = Array.isArray(data?.polls)
+				? data.polls.find((poll) => poll.id === message.systemData.pollId)
+				: null;
+			if (nextPoll) {
+				updateMessage(message._id, (currentMessage) => ({
+					...currentMessage,
+					systemData: mapWorkspacePollToSystemData(nextPoll),
+				}));
+			}
+		} catch (error) {
+			toast.error(error.message);
+		} finally {
+			setIsVotingSystemPoll(false);
+		}
+	};
+
 	const openStoryFromMessage = () => {
 		const interaction = message?.storyInteraction;
 		if (!interaction?.storyId || !interaction?.storyOwnerId) {
@@ -891,6 +988,196 @@ const Message = ({
 	}
 
 	if (message.isSystem) {
+		const systemData = message.systemData || null;
+		const isAnnouncementCard = message.systemType === "GROUP_ANNOUNCEMENT" && systemData?.content;
+		const isEventCard = message.systemType === "GROUP_EVENT_CREATED" && systemData?.title;
+		const isPollCard = message.systemType === "GROUP_POLL_CREATED" && systemData?.pollId;
+
+		if (isAnnouncementCard) {
+			return (
+				<div
+					id={`message-${message._id}`}
+					data-message-id={message._id}
+					ref={messageRef}
+					className='scroll-mt-24 px-2 py-2'
+				>
+					<div className='mx-auto max-w-2xl overflow-hidden rounded-[28px] border border-cyan-300/16 bg-[linear-gradient(135deg,rgba(7,89,133,0.18),rgba(15,23,42,0.94))] shadow-[0_24px_54px_rgba(2,6,23,0.24)]'>
+						<div className='flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-4 sm:px-5'>
+							<div className='flex items-center gap-3'>
+								<div className='inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-300/18 bg-cyan-500/12 text-cyan-100'>
+									<IoMegaphoneOutline className='h-6 w-6' />
+								</div>
+								<div>
+									<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200/80'>Announcement</p>
+									<p className='mt-1 text-sm font-semibold text-white'>{systemData.actorName || "Admin team"}</p>
+								</div>
+							</div>
+							<span className='rounded-full border border-cyan-300/18 bg-cyan-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100'>
+								Team note
+							</span>
+						</div>
+						<div className='px-4 py-4 sm:px-5 sm:py-5'>
+							<p className='text-[15px] leading-7 text-slate-50'>
+								<FlagText text={systemData.content} />
+							</p>
+							<div className='mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400'>
+								<span>Visible to everyone in this group</span>
+								<span>{formattedTime}</span>
+							</div>
+						</div>
+					</div>
+				</div>
+			);
+		}
+
+		if (isEventCard) {
+			const eventDateChip = formatDateChip(systemData.startsAt);
+			return (
+				<div
+					id={`message-${message._id}`}
+					data-message-id={message._id}
+					ref={messageRef}
+					className='scroll-mt-24 px-2 py-2'
+				>
+					<div className='mx-auto max-w-2xl overflow-hidden rounded-[28px] border border-violet-300/16 bg-[linear-gradient(135deg,rgba(76,29,149,0.18),rgba(15,23,42,0.94))] shadow-[0_24px_54px_rgba(15,23,42,0.28)]'>
+						<div className='flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-4 sm:px-5'>
+							<div className='flex items-center gap-3'>
+								<div className='inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-300/18 bg-violet-500/12 text-violet-100'>
+									<IoCalendarClearOutline className='h-6 w-6' />
+								</div>
+								<div>
+									<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-violet-200/80'>Scheduled event</p>
+									<p className='mt-1 text-sm font-semibold text-white'>{systemData.actorName || "Admin team"}</p>
+								</div>
+							</div>
+							<span className='rounded-full border border-violet-300/18 bg-violet-500/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-100'>
+								Calendar
+							</span>
+						</div>
+						<div className='grid gap-4 px-4 py-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:px-5 sm:py-5'>
+							<div className='flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-[24px] border border-violet-300/18 bg-white/[0.04] text-center'>
+								<span className='text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/80'>{eventDateChip.month}</span>
+								<span className='mt-1 text-3xl font-bold text-white'>{eventDateChip.day}</span>
+							</div>
+							<div className='min-w-0'>
+								<h3 className='text-lg font-semibold text-white'>{systemData.title}</h3>
+								<p className='mt-2 text-sm leading-6 text-slate-300'>{formatLongDateTime(systemData.startsAt)}</p>
+								{systemData.description ? (
+									<p className='mt-3 text-sm leading-6 text-slate-200'>
+										<FlagText text={systemData.description} />
+									</p>
+								) : null}
+								{systemData.location ? (
+									<div className='mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-200'>
+										<IoLocationOutline className='h-4 w-4 text-violet-200' />
+										<span>{systemData.location}</span>
+									</div>
+								) : null}
+								<div className='mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400'>
+									<span>Event published in the group calendar</span>
+									<span>{formattedTime}</span>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			);
+		}
+
+		if (isPollCard) {
+			const totalVotes = Number.isFinite(systemData.totalVotes)
+				? systemData.totalVotes
+				: (systemData.options || []).reduce((sum, option) => sum + (option.voteCount || 0), 0);
+			const closesAtTimestamp = systemData.closesAt ? new Date(systemData.closesAt).getTime() : null;
+			const isPollClosed = Number.isFinite(closesAtTimestamp) ? closesAtTimestamp < Date.now() : false;
+
+			return (
+				<div
+					id={`message-${message._id}`}
+					data-message-id={message._id}
+					ref={messageRef}
+					className='scroll-mt-24 px-2 py-2'
+				>
+					<div className='mx-auto max-w-2xl overflow-hidden rounded-[28px] border border-amber-300/16 bg-[linear-gradient(135deg,rgba(120,53,15,0.18),rgba(15,23,42,0.95))] shadow-[0_24px_54px_rgba(15,23,42,0.3)]'>
+						<div className='flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-4 sm:px-5'>
+							<div className='flex items-center gap-3'>
+								<div className='inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-300/18 bg-amber-500/12 text-amber-100'>
+									<IoStatsChartOutline className='h-6 w-6' />
+								</div>
+								<div>
+									<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-200/80'>Quick poll</p>
+									<p className='mt-1 text-sm font-semibold text-white'>{systemData.actorName || "Admin team"}</p>
+								</div>
+							</div>
+							<span
+								className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+									isPollClosed
+										? "border-rose-300/20 bg-rose-500/10 text-rose-100"
+										: "border-amber-300/18 bg-amber-500/10 text-amber-100"
+								}`}
+							>
+								{isPollClosed ? "Closed" : systemData.allowsMultiple ? "Multi choice" : "Single choice"}
+							</span>
+						</div>
+						<div className='px-4 py-4 sm:px-5 sm:py-5'>
+							<h3 className='text-lg font-semibold text-white'>{systemData.question}</h3>
+							<p className='mt-2 text-sm text-slate-300'>
+								{totalVotes} vote{totalVotes === 1 ? "" : "s"}
+								{systemData.closesAt ? ` · closes ${formatLongDateTime(systemData.closesAt)}` : ""}
+							</p>
+							<div className='mt-4 space-y-2.5'>
+								{(systemData.options || []).map((option) => {
+									const voteCount = option.voteCount || 0;
+									const percentage = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
+									const isSelected = option.selectedByMe === true;
+									return (
+										<button
+											key={option.id}
+											type='button'
+											onClick={() => handleSystemPollVote(option.id)}
+											disabled={isVotingSystemPoll || isPollClosed}
+											className={`relative w-full overflow-hidden rounded-[22px] border px-4 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-70 ${
+												isSelected
+													? "border-cyan-300/28 bg-cyan-500/10 text-white"
+													: "border-white/10 bg-white/[0.04] text-slate-100 hover:border-white/18 hover:bg-white/[0.07]"
+											}`}
+										>
+											<div
+												className={`absolute inset-y-0 left-0 rounded-[22px] ${
+													isSelected ? "bg-cyan-400/16" : "bg-white/[0.05]"
+												}`}
+												style={{ width: `${Math.max(percentage, isSelected ? 12 : 0)}%` }}
+											></div>
+											<div className='relative flex items-center justify-between gap-3'>
+												<div className='min-w-0'>
+													<p className='truncate text-sm font-semibold'>{option.label}</p>
+													<p className='mt-1 text-xs text-slate-300/80'>
+														{voteCount} vote{voteCount === 1 ? "" : "s"}
+														{isSelected ? " · Your choice" : ""}
+													</p>
+												</div>
+												<span
+													className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${
+														isSelected ? "bg-cyan-300/18 text-cyan-50" : "bg-white/10 text-slate-200"
+													}`}
+												>
+													{percentage}%
+												</span>
+											</div>
+										</button>
+									);
+								})}
+							</div>
+							<div className='mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400'>
+								<span>{isPollClosed ? "Voting is closed for this poll" : "Tap an option to vote directly from chat"}</span>
+								<span>{isVotingSystemPoll ? "Saving..." : formattedTime}</span>
+							</div>
+						</div>
+					</div>
+				</div>
+			);
+		}
+
 		return (
 			<div
 				id={`message-${message._id}`}

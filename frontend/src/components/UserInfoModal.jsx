@@ -12,6 +12,7 @@ import {
 	HiOutlineUserPlus,
 } from "react-icons/hi2";
 import { useAuthContext } from "../context/AuthContext";
+import { useSocketContext } from "../context/SocketContext";
 import useModalBodyScrollLock from "../hooks/useModalBodyScrollLock";
 import useConversation from "../zustand/useConversation";
 import getConversationFallbackAvatar from "../utils/conversationAvatar";
@@ -19,9 +20,29 @@ import { getAvatarUrl } from "../utils/avatar";
 import { matchesUserSearchQuery } from "../utils/search";
 import DeveloperBadge from "./common/DeveloperBadge";
 import VerifiedBadge from "./common/VerifiedBadge";
+import DeveloperSelect from "./developer/DeveloperSelect";
+
+const INVITE_LINK_DURATION_OPTIONS = [
+	{ value: "1", label: "1 day" },
+	{ value: "7", label: "7 days" },
+	{ value: "14", label: "14 days" },
+	{ value: "30", label: "30 days" },
+];
+
+const formatDateTimeInputValue = (value) => {
+	if (!value) return "";
+	const parsedDate = new Date(value);
+	if (!Number.isFinite(parsedDate.getTime())) {
+		return "";
+	}
+
+	const localDate = new Date(parsedDate.getTime() - parsedDate.getTimezoneOffset() * 60 * 1000);
+	return localDate.toISOString().slice(0, 16);
+};
 
 const UserInfoModal = ({ user, open, onClose }) => {
 	const { authUser } = useAuthContext();
+	const { socket } = useSocketContext();
 	const { setSelectedConversation, setMessages, setShowSidebar } = useConversation();
 	const isGroupConversation = user?.type === "GROUP";
 	const fallbackAvatar = getConversationFallbackAvatar(user);
@@ -50,6 +71,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const [newRule, setNewRule] = useState("");
 	const [newAnnouncement, setNewAnnouncement] = useState("");
 	const [inviteLinkDays, setInviteLinkDays] = useState("7");
+	const [groupWorkspaceRefreshTick, setGroupWorkspaceRefreshTick] = useState(0);
 	const [eventDraft, setEventDraft] = useState({
 		title: "",
 		description: "",
@@ -62,6 +84,25 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		allowsMultiple: false,
 		closesAt: "",
 	});
+	const [announcementEditor, setAnnouncementEditor] = useState({
+		id: "",
+		content: "",
+	});
+	const [eventEditor, setEventEditor] = useState({
+		id: "",
+		title: "",
+		description: "",
+		location: "",
+		startsAt: "",
+	});
+	const [pollEditor, setPollEditor] = useState({
+		id: "",
+		question: "",
+		options: ["", ""],
+		allowsMultiple: false,
+		closesAt: "",
+	});
+	const [confirmDialog, setConfirmDialog] = useState(null);
 	const [isBlockedUser, setIsBlockedUser] = useState(false);
 	const [isDirectActionLoading, setIsDirectActionLoading] = useState(false);
 	const [toolSearchQuery, setToolSearchQuery] = useState("");
@@ -81,19 +122,26 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const fileInputRef = useRef(null);
 	const previewUrlRef = useRef(null);
 	useModalBodyScrollLock(open);
+	const visibleGroupMembers = useMemo(
+		() =>
+			Array.isArray(groupWorkspace?.members) && groupWorkspace.members.length > 0
+				? groupWorkspace.members
+				: Array.isArray(user?.members)
+					? user.members
+					: [],
+		[groupWorkspace?.members, user?.members]
+	);
 
 	const currentGroupMember = useMemo(
-		() => user?.members?.find((member) => member._id === authUser?._id) || null,
-		[user?.members, authUser?._id]
+		() => visibleGroupMembers.find((member) => member._id === authUser?._id) || null,
+		[visibleGroupMembers, authUser?._id]
 	);
 	const isGroupMember = isGroupConversation && Boolean(currentGroupMember);
 	const isGroupOwner = isGroupConversation && currentGroupMember?.memberRole === "OWNER";
 	const isGroupAdmin = isGroupConversation && currentGroupMember?.memberRole === "ADMIN";
-	const isGroupModerator = isGroupConversation && currentGroupMember?.memberRole === "MODERATOR";
 	const canManageGroup = isGroupOwner || isGroupAdmin;
-	const canModerateGroup = isGroupOwner || isGroupAdmin || isGroupModerator;
 	const canInviteToGroup = isGroupMember;
-	const currentMemberCount = user?.memberCount || user?.members?.length || 0;
+	const currentMemberCount = groupWorkspace?.group?.memberCount || user?.memberCount || visibleGroupMembers.length || 0;
 	const limitReached = Boolean(user?.memberLimit && currentMemberCount >= user.memberLimit);
 	const mustTransferOwnershipBeforeLeaving = isGroupOwner && currentMemberCount > 1;
 	const hasPendingMemberAction = Boolean(updatingMemberAction);
@@ -105,13 +153,13 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const filteredSelectableUsers = useMemo(() => {
 		if (!isGroupConversation) return [];
 
-		const existingMemberIds = new Set((user?.members || []).map((member) => member._id));
+		const existingMemberIds = new Set(visibleGroupMembers.map((member) => member._id));
 
 		return selectableUsers.filter((member) => {
 			if (existingMemberIds.has(member._id)) return false;
 			return matchesUserSearchQuery(memberSearchValue, [member.fullName, member.username, member.bio]);
 		});
-	}, [isGroupConversation, memberSearchValue, selectableUsers, user?.members]);
+	}, [isGroupConversation, memberSearchValue, selectableUsers, visibleGroupMembers]);
 
 	const getRoleActionOptions = (memberRole) => {
 		switch (memberRole) {
@@ -190,13 +238,18 @@ const UserInfoModal = ({ user, open, onClose }) => {
 
 		const handleKeyDown = (event) => {
 			if (event.key === "Escape") {
+				if (confirmDialog) {
+					setConfirmDialog(null);
+					return;
+				}
+
 				onClose();
 			}
 		};
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [open, onClose]);
+	}, [open, onClose, confirmDialog]);
 
 	useEffect(() => {
 		setAvatarSrc(resolvedProfilePic || fallbackAvatar);
@@ -224,6 +277,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		setGroupImageFile(null);
 		setGroupWorkspace(null);
 		setGroupWorkspaceAction("");
+		setGroupWorkspaceRefreshTick(0);
 		setNewRule("");
 		setNewAnnouncement("");
 		setInviteLinkDays("7");
@@ -239,6 +293,25 @@ const UserInfoModal = ({ user, open, onClose }) => {
 			allowsMultiple: false,
 			closesAt: "",
 		});
+		setAnnouncementEditor({
+			id: "",
+			content: "",
+		});
+		setEventEditor({
+			id: "",
+			title: "",
+			description: "",
+			location: "",
+			startsAt: "",
+		});
+		setPollEditor({
+			id: "",
+			question: "",
+			options: ["", ""],
+			allowsMultiple: false,
+			closesAt: "",
+		});
+		setConfirmDialog(null);
 		setIsEditMode(false);
 		setShowAddMembers(false);
 		setShowInviteMembers(false);
@@ -327,7 +400,24 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		return () => {
 			isCancelled = true;
 		};
-	}, [open, isGroupConversation, isGroupMember, user?._id]);
+	}, [open, isGroupConversation, isGroupMember, user?._id, groupWorkspaceRefreshTick]);
+
+	useEffect(() => {
+		if (!socket || !open || !isGroupConversation || !isGroupMember || !user?._id) {
+			return undefined;
+		}
+
+		const handleGroupWorkspaceUpdated = ({ conversationId } = {}) => {
+			if (conversationId !== user._id) return;
+			setGroupWorkspaceRefreshTick((currentTick) => currentTick + 1);
+		};
+
+		socket.on("groupWorkspaceUpdated", handleGroupWorkspaceUpdated);
+
+		return () => {
+			socket.off("groupWorkspaceUpdated", handleGroupWorkspaceUpdated);
+		};
+	}, [socket, open, isGroupConversation, isGroupMember, user?._id]);
 
 	useEffect(() => {
 		setToolSearchResults([]);
@@ -389,6 +479,10 @@ const UserInfoModal = ({ user, open, onClose }) => {
 
 	if (!open || !user) return null;
 
+	const modalPanelClassName = isGroupConversation
+		? "flex h-[min(92vh,940px)] w-full max-w-[1320px] flex-col overflow-hidden rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(2,6,23,0.97),rgba(10,18,36,0.96))] text-white shadow-[0_32px_80px_rgba(2,6,23,0.55)]"
+		: "flex h-[min(90vh,860px)] w-full max-w-xl flex-col overflow-hidden rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(2,6,23,0.97),rgba(10,18,36,0.96))] text-white shadow-[0_32px_80px_rgba(2,6,23,0.55)]";
+
 	const handleGroupImageChange = (event) => {
 		const file = event.target.files?.[0];
 		if (!file) return;
@@ -402,6 +496,32 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		setGroupImageFile(file);
 		setAvatarSrc(nextPreviewUrl);
 		setAvatarLoaded(true);
+	};
+
+	const openConfirmDialog = ({ title, description, confirmLabel = "Confirm", tone = "danger", onConfirm }) => {
+		setConfirmDialog({
+			title,
+			description,
+			confirmLabel,
+			tone,
+			onConfirm,
+		});
+	};
+
+	const closeConfirmDialog = () => {
+		setConfirmDialog(null);
+	};
+
+	const handleConfirmDialog = async () => {
+		if (!confirmDialog?.onConfirm) {
+			closeConfirmDialog();
+			return;
+		}
+
+		const shouldClose = await confirmDialog.onConfirm();
+		if (shouldClose !== false) {
+			closeConfirmDialog();
+		}
 	};
 
 	const handleSaveGroup = async (event) => {
@@ -605,9 +725,6 @@ const UserInfoModal = ({ user, open, onClose }) => {
 	const handleDeleteGroup = async () => {
 		if (!isGroupOwner || isDeletingGroup) return;
 
-		const shouldDelete = window.confirm("Delete this group for everyone? This action cannot be undone.");
-		if (!shouldDelete) return;
-
 		setIsDeletingGroup(true);
 		try {
 			const response = await fetch(`/api/conversations/groups/${user._id}`, {
@@ -622,11 +739,25 @@ const UserInfoModal = ({ user, open, onClose }) => {
 			removeConversationLocally(user._id);
 			onClose();
 			toast.success("Group deleted");
+			return true;
 		} catch (error) {
 			toast.error(error.message);
+			return false;
 		} finally {
 			setIsDeletingGroup(false);
 		}
+	};
+
+	const requestDeleteGroup = () => {
+		if (!isGroupOwner || isDeletingGroup) return;
+
+		openConfirmDialog({
+			title: "Delete group?",
+			description: "This will permanently remove the group for everyone. This action cannot be undone.",
+			confirmLabel: isDeletingGroup ? "Deleting..." : "Delete group",
+			tone: "danger",
+			onConfirm: handleDeleteGroup,
+		});
 	};
 
 	const handleDirectPreferenceUpdate = async (payload, successMessage) => {
@@ -905,6 +1036,69 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		}
 	};
 
+	const startEditingAnnouncement = (announcement) => {
+		setAnnouncementEditor({
+			id: announcement?.id || "",
+			content: announcement?.content || "",
+		});
+	};
+
+	const cancelEditingAnnouncement = () => {
+		setAnnouncementEditor({
+			id: "",
+			content: "",
+		});
+	};
+
+	const handleUpdateAnnouncement = async () => {
+		const content = announcementEditor.content.trim();
+		if (!announcementEditor.id || !content) {
+			toast.error("Announcement content is required");
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/announcements/${announcementEditor.id}`,
+			method: "PATCH",
+			body: { content },
+			successMessage: "Announcement updated",
+		});
+
+		if (result) {
+			cancelEditingAnnouncement();
+		}
+	};
+
+	const handleDeleteAnnouncement = async (announcementId) => {
+		if (!announcementId) {
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/announcements/${announcementId}`,
+			method: "DELETE",
+			successMessage: "Announcement removed",
+		});
+
+		if (result && announcementEditor.id === announcementId) {
+			cancelEditingAnnouncement();
+		}
+
+		return Boolean(result);
+	};
+
+	const requestDeleteAnnouncement = (announcementId) => {
+		if (!announcementId) return;
+
+		openConfirmDialog({
+			title: "Remove announcement?",
+			description: "This will remove the announcement from the group workspace and the chat.",
+			confirmLabel: "Remove",
+			tone: "danger",
+			onConfirm: () => handleDeleteAnnouncement(announcementId),
+		});
+	};
+
 	const handleCreateEvent = async () => {
 		if (!eventDraft.title.trim() || !eventDraft.startsAt) {
 			toast.error("Event title and date are required");
@@ -932,6 +1126,79 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		}
 	};
 
+	const startEditingEvent = (eventItem) => {
+		setEventEditor({
+			id: eventItem?.id || "",
+			title: eventItem?.title || "",
+			description: eventItem?.description || "",
+			location: eventItem?.location || "",
+			startsAt: formatDateTimeInputValue(eventItem?.startsAt),
+		});
+	};
+
+	const cancelEditingEvent = () => {
+		setEventEditor({
+			id: "",
+			title: "",
+			description: "",
+			location: "",
+			startsAt: "",
+		});
+	};
+
+	const handleUpdateEvent = async () => {
+		if (!eventEditor.id || !eventEditor.title.trim() || !eventEditor.startsAt) {
+			toast.error("Event title and date are required");
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/events/${eventEditor.id}`,
+			method: "PATCH",
+			body: {
+				title: eventEditor.title.trim(),
+				description: eventEditor.description.trim(),
+				location: eventEditor.location.trim(),
+				startsAt: eventEditor.startsAt,
+			},
+			successMessage: "Event updated",
+		});
+
+		if (result) {
+			cancelEditingEvent();
+		}
+	};
+
+	const handleDeleteEvent = async (eventId) => {
+		if (!eventId) {
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/events/${eventId}`,
+			method: "DELETE",
+			successMessage: "Event removed",
+		});
+
+		if (result && eventEditor.id === eventId) {
+			cancelEditingEvent();
+		}
+
+		return Boolean(result);
+	};
+
+	const requestDeleteEvent = (eventId) => {
+		if (!eventId) return;
+
+		openConfirmDialog({
+			title: "Remove event?",
+			description: "This will remove the event from the group workspace and the chat.",
+			confirmLabel: "Remove",
+			tone: "danger",
+			onConfirm: () => handleDeleteEvent(eventId),
+		});
+	};
+
 	const handlePollOptionChange = (index, value) => {
 		setPollDraft((currentDraft) => ({
 			...currentDraft,
@@ -945,6 +1212,29 @@ const UserInfoModal = ({ user, open, onClose }) => {
 		setPollDraft((currentDraft) => ({
 			...currentDraft,
 			options: [...currentDraft.options, ""].slice(0, 8),
+		}));
+	};
+
+	const handlePollEditorOptionChange = (index, value) => {
+		setPollEditor((currentDraft) => ({
+			...currentDraft,
+			options: currentDraft.options.map((option, optionIndex) =>
+				optionIndex === index ? value : option
+			),
+		}));
+	};
+
+	const handleAddPollEditorOption = () => {
+		setPollEditor((currentDraft) => ({
+			...currentDraft,
+			options: [...currentDraft.options, ""].slice(0, 8),
+		}));
+	};
+
+	const handleRemovePollEditorOption = (index) => {
+		setPollEditor((currentDraft) => ({
+			...currentDraft,
+			options: currentDraft.options.filter((_, optionIndex) => optionIndex !== index).slice(0, 8),
 		}));
 	};
 
@@ -974,6 +1264,80 @@ const UserInfoModal = ({ user, open, onClose }) => {
 				closesAt: "",
 			});
 		}
+	};
+
+	const startEditingPoll = (poll) => {
+		setPollEditor({
+			id: poll?.id || "",
+			question: poll?.question || "",
+			options: Array.isArray(poll?.options) && poll.options.length >= 2 ? poll.options.map((option) => option.label) : ["", ""],
+			allowsMultiple: poll?.allowsMultiple === true,
+			closesAt: formatDateTimeInputValue(poll?.closesAt),
+		});
+	};
+
+	const cancelEditingPoll = () => {
+		setPollEditor({
+			id: "",
+			question: "",
+			options: ["", ""],
+			allowsMultiple: false,
+			closesAt: "",
+		});
+	};
+
+	const handleUpdatePoll = async () => {
+		const normalizedOptions = pollEditor.options.map((option) => option.trim()).filter(Boolean);
+		if (!pollEditor.id || !pollEditor.question.trim() || normalizedOptions.length < 2) {
+			toast.error("Poll question and two options are required");
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/polls/${pollEditor.id}`,
+			method: "PATCH",
+			body: {
+				question: pollEditor.question.trim(),
+				options: normalizedOptions,
+				allowsMultiple: pollEditor.allowsMultiple,
+				closesAt: pollEditor.closesAt || null,
+			},
+			successMessage: "Poll updated",
+		});
+
+		if (result) {
+			cancelEditingPoll();
+		}
+	};
+
+	const handleDeletePoll = async (pollId) => {
+		if (!pollId) {
+			return;
+		}
+
+		const result = await runGroupWorkspaceAction({
+			endpoint: `/api/conversations/groups/${user._id}/polls/${pollId}`,
+			method: "DELETE",
+			successMessage: "Poll removed",
+		});
+
+		if (result && pollEditor.id === pollId) {
+			cancelEditingPoll();
+		}
+
+		return Boolean(result);
+	};
+
+	const requestDeletePoll = (pollId) => {
+		if (!pollId) return;
+
+		openConfirmDialog({
+			title: "Remove poll?",
+			description: "This will remove the poll from the group workspace and the chat.",
+			confirmLabel: "Remove",
+			tone: "danger",
+			onConfirm: () => handleDeletePoll(pollId),
+		});
 	};
 
 	const handleVotePoll = async (pollId, optionId) => {
@@ -1021,11 +1385,11 @@ const UserInfoModal = ({ user, open, onClose }) => {
 
 	return (
 		<div
-			className='fixed inset-0 z-50 flex items-center justify-center bg-slate-950/78 p-3 sm:p-5'
+			className='fixed inset-0 z-50 flex items-center justify-center bg-slate-950/78 p-2 sm:p-4 lg:p-6'
 			onClick={onClose}
 		>
 			<div
-				className='flex h-[min(90vh,860px)] w-full max-w-xl flex-col overflow-hidden rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(2,6,23,0.97),rgba(10,18,36,0.96))] text-white shadow-[0_32px_80px_rgba(2,6,23,0.55)]'
+				className={modalPanelClassName}
 				onClick={(event) => event.stopPropagation()}
 			>
 				<div className='shrink-0 border-b border-white/10 px-5 py-5 sm:px-6 sm:py-6'>
@@ -1060,8 +1424,8 @@ const UserInfoModal = ({ user, open, onClose }) => {
 					</div>
 				</div>
 
-				<div className='custom-scrollbar modal-scroll-region min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6'>
-					<div className='space-y-4'>
+				<div className='custom-scrollbar modal-scroll-region min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6 lg:px-8 xl:px-9'>
+					<div className='space-y-6'>
 						<div className='flex justify-center'>
 							<div className='relative h-28 w-28 overflow-hidden rounded-full border-4 border-sky-400/30 bg-slate-800 shadow-[0_20px_40px_rgba(14,165,233,0.14)]'>
 								<div
@@ -1143,7 +1507,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 										{isGroupOwner ? (
 											<button
 												type='button'
-												onClick={handleDeleteGroup}
+												onClick={requestDeleteGroup}
 												className='inline-flex items-center gap-2 rounded-full border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:border-rose-300/35 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60'
 												disabled={isDeletingGroup}
 											>
@@ -1482,8 +1846,8 @@ const UserInfoModal = ({ user, open, onClose }) => {
 										</div>
 									) : groupWorkspace ? (
 										<>
-											<div className='grid gap-4 lg:grid-cols-2'>
-												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+											<div className='grid gap-5 min-[1450px]:grid-cols-2'>
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-5'>
 													<div className='flex items-center justify-between gap-3'>
 														<div>
 															<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Pinned rules</p>
@@ -1513,7 +1877,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 																			? "border-sky-300/35 bg-sky-500/16 text-sky-50"
 																			: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
 																	}`}
-																	disabled={!canModerateGroup || Boolean(groupWorkspaceAction)}
+																	disabled={!canManageGroup || Boolean(groupWorkspaceAction)}
 																>
 																	{option.label}
 																</button>
@@ -1529,7 +1893,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 																	className='flex items-start justify-between gap-3 rounded-[18px] border border-white/10 bg-slate-950/30 px-3 py-3'
 																>
 																	<p className='text-sm leading-6 text-slate-100'>{rule}</p>
-																	{canModerateGroup ? (
+																	{canManageGroup ? (
 																		<button
 																			type='button'
 																			onClick={() => handleRemovePinnedRule(index)}
@@ -1548,7 +1912,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 														)}
 													</div>
 
-													{canModerateGroup ? (
+													{canManageGroup ? (
 														<div className='mt-4 flex gap-2'>
 															<input
 																type='text'
@@ -1569,7 +1933,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 													) : null}
 												</div>
 
-												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-5'>
 													<div className='flex items-center justify-between gap-3'>
 														<div>
 															<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Member activity</p>
@@ -1601,7 +1965,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 												</div>
 											</div>
 
-											<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+											<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-5'>
 												<div className='flex items-center justify-between gap-3'>
 													<div>
 														<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Announcements</p>
@@ -1609,19 +1973,19 @@ const UserInfoModal = ({ user, open, onClose }) => {
 													</div>
 												</div>
 
-												{canModerateGroup ? (
-													<div className='mt-4 flex flex-col gap-3 sm:flex-row'>
+												{canManageGroup ? (
+													<div className='mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start'>
 														<textarea
-															rows='2'
+															rows='3'
 															value={newAnnouncement}
 															onChange={(event) => setNewAnnouncement(event.target.value)}
 															placeholder='Post a group announcement'
-															className='custom-scrollbar w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
+															className='custom-scrollbar min-h-[112px] w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-sky-300/30 focus:bg-white/[0.06]'
 														/>
 														<button
 															type='button'
 															onClick={handleCreateAnnouncement}
-															className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+															className='w-full rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100 lg:min-w-[9rem] lg:self-center'
 															disabled={!newAnnouncement.trim() || Boolean(groupWorkspaceAction)}
 														>
 															Post
@@ -1632,12 +1996,83 @@ const UserInfoModal = ({ user, open, onClose }) => {
 												<div className='mt-4 space-y-2'>
 													{(groupWorkspace.announcements || []).length ? (
 														groupWorkspace.announcements.map((announcement) => (
-															<div key={announcement.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
-																<p className='text-sm leading-6 text-slate-100'>{announcement.content}</p>
-																<p className='mt-2 text-xs text-slate-400'>
-																	{announcement.createdBy?.fullName || "Unknown"} · {new Date(announcement.createdAt).toLocaleString()}
-																</p>
-															</div>
+															announcementEditor.id === announcement.id ? (
+																<div key={announcement.id} className='rounded-[18px] border border-cyan-300/18 bg-cyan-500/[0.06] px-4 py-4'>
+																	<textarea
+																		rows='4'
+																		value={announcementEditor.content}
+																		onChange={(event) =>
+																			setAnnouncementEditor((currentEditor) => ({
+																				...currentEditor,
+																				content: event.target.value,
+																			}))
+																		}
+																		className='custom-scrollbar min-h-[120px] w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/30'
+																	/>
+																	<div className='mt-3 flex flex-wrap justify-end gap-2'>
+																		<button
+																			type='button'
+																			onClick={cancelEditingAnnouncement}
+																			className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-200'
+																		>
+																			Cancel
+																		</button>
+																		<button
+																			type='button'
+																			onClick={() => requestDeleteAnnouncement(announcement.id)}
+																			className='rounded-full border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-rose-100'
+																			disabled={Boolean(groupWorkspaceAction)}
+																		>
+																			Remove
+																		</button>
+																		<button
+																			type='button'
+																			onClick={handleUpdateAnnouncement}
+																			className='rounded-full border border-cyan-300/20 bg-cyan-500/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-100'
+																			disabled={!announcementEditor.content.trim() || Boolean(groupWorkspaceAction)}
+																		>
+																			Save
+																		</button>
+																	</div>
+																</div>
+															) : (
+																<div key={announcement.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																	<div className='flex items-start justify-between gap-3'>
+																		<p className='text-sm leading-6 text-slate-100'>{announcement.content}</p>
+																		{canManageGroup ? (
+																			<div className='flex shrink-0 items-center gap-2'>
+																				<button
+																					type='button'
+																					onClick={() => startEditingAnnouncement(announcement)}
+																					className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-200 transition hover:bg-white/[0.08]'
+																					title='Edit announcement'
+																				>
+																					<HiOutlinePencilSquare className='h-4 w-4' />
+																				</button>
+																				<button
+																					type='button'
+																					onClick={() => requestDeleteAnnouncement(announcement.id)}
+																					className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-300/20 bg-rose-500/10 text-rose-100 transition hover:bg-rose-500/16'
+																					title='Remove announcement'
+																					disabled={Boolean(groupWorkspaceAction)}
+																				>
+																					<HiOutlineTrash className='h-4 w-4' />
+																				</button>
+																			</div>
+																		) : null}
+																	</div>
+																	<p className='mt-2 text-xs text-slate-400'>
+																		{announcement.createdBy?.fullName || announcement.createdBy?.username || "Unknown"}
+																		{announcement.createdBy?.username ? ` · @${announcement.createdBy.username}` : ""}
+																		{" · "}
+																		{new Date(announcement.createdAt).toLocaleString()}
+																		{announcement.updatedAt &&
+																		new Date(announcement.updatedAt).getTime() > new Date(announcement.createdAt).getTime()
+																			? " · edited"
+																			: ""}
+																	</p>
+																</div>
+															)
 														))
 													) : (
 														<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
@@ -1647,14 +2082,14 @@ const UserInfoModal = ({ user, open, onClose }) => {
 												</div>
 											</div>
 
-											<div className='grid gap-4 xl:grid-cols-2'>
-												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+											<div className='grid gap-5 min-[1450px]:grid-cols-2'>
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-5'>
 													<div>
 														<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Polls</p>
 														<p className='mt-1 text-sm text-slate-300'>Run quick decisions inside the group.</p>
 													</div>
 
-													{canModerateGroup ? (
+													{canManageGroup ? (
 														<div className='mt-4 space-y-3'>
 															<input
 																type='text'
@@ -1706,7 +2141,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 															<button
 																type='button'
 																onClick={handleCreatePoll}
-																className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+																className='w-full rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100 sm:w-auto'
 																disabled={Boolean(groupWorkspaceAction)}
 															>
 																Create poll
@@ -1717,34 +2152,164 @@ const UserInfoModal = ({ user, open, onClose }) => {
 													<div className='mt-4 space-y-3'>
 														{(groupWorkspace.polls || []).length ? (
 															groupWorkspace.polls.map((poll) => (
-																<div key={poll.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
-																	<div className='flex items-start justify-between gap-3'>
-																		<div>
-																			<p className='text-sm font-semibold text-slate-100'>{poll.question}</p>
-																			<p className='mt-1 text-xs text-slate-400'>
-																				{poll.totalVotes} votes · {poll.allowsMultiple ? "Multiple choice" : "Single choice"}
-																				{poll.closesAt ? ` · closes ${new Date(poll.closesAt).toLocaleString()}` : ""}
-																			</p>
+																pollEditor.id === poll.id ? (
+																	<div key={poll.id} className='rounded-[18px] border border-amber-300/18 bg-amber-500/[0.06] px-4 py-4'>
+																		<div className='space-y-3'>
+																			<input
+																				type='text'
+																				value={pollEditor.question}
+																				onChange={(event) =>
+																					setPollEditor((currentDraft) => ({
+																						...currentDraft,
+																						question: event.target.value,
+																					}))
+																				}
+																				placeholder='Poll question'
+																				className='w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-amber-300/30'
+																			/>
+																			{pollEditor.options.map((option, index) => (
+																				<div key={`poll-editor-option-${poll.id}-${index}`} className='flex items-center gap-2'>
+																					<input
+																						type='text'
+																						value={option}
+																						onChange={(event) => handlePollEditorOptionChange(index, event.target.value)}
+																						placeholder={`Option ${index + 1}`}
+																						className='w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-amber-300/30'
+																					/>
+																					<button
+																						type='button'
+																						onClick={() => handleRemovePollEditorOption(index)}
+																						className='inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-rose-300/20 bg-rose-500/10 text-rose-100 transition hover:bg-rose-500/16 disabled:opacity-50'
+																						disabled={pollEditor.options.length <= 2}
+																						title='Remove option'
+																					>
+																						<HiOutlineTrash className='h-4 w-4' />
+																					</button>
+																				</div>
+																			))}
+																			<div className='flex flex-wrap items-center gap-3'>
+																				<button
+																					type='button'
+																					onClick={handleAddPollEditorOption}
+																					className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-100'
+																					disabled={pollEditor.options.length >= 8}
+																				>
+																					Add option
+																				</button>
+																				<label className='flex items-center gap-2 text-sm text-slate-300'>
+																					<input
+																						type='checkbox'
+																						checked={pollEditor.allowsMultiple}
+																						onChange={(event) =>
+																							setPollEditor((currentDraft) => ({
+																								...currentDraft,
+																								allowsMultiple: event.target.checked,
+																							}))
+																						}
+																						className='checkbox checkbox-sm checkbox-info'
+																					/>
+																					Allow multiple votes
+																				</label>
+																			</div>
+																			<input
+																				type='datetime-local'
+																				value={pollEditor.closesAt}
+																				onChange={(event) =>
+																					setPollEditor((currentDraft) => ({
+																						...currentDraft,
+																						closesAt: event.target.value,
+																					}))
+																				}
+																				className='w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-amber-300/30'
+																			/>
 																		</div>
-																	</div>
-																	<div className='mt-3 flex flex-wrap gap-2'>
-																		{poll.options.map((option) => (
+																		<div className='mt-3 flex flex-wrap justify-end gap-2'>
 																			<button
-																				key={option.id}
 																				type='button'
-																				onClick={() => handleVotePoll(poll.id, option.id)}
-																				className={`rounded-full border px-3 py-2 text-[11px] font-semibold transition ${
-																					option.selectedByMe
-																						? "border-cyan-300/35 bg-cyan-500/16 text-cyan-50"
-																						: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
-																				}`}
+																				onClick={cancelEditingPoll}
+																				className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-200'
+																			>
+																				Cancel
+																			</button>
+																			<button
+																				type='button'
+																				onClick={() => requestDeletePoll(poll.id)}
+																				className='rounded-full border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-rose-100'
 																				disabled={Boolean(groupWorkspaceAction)}
 																			>
-																				{option.label} · {option.voteCount}
+																				Remove
 																			</button>
-																		))}
+																			<button
+																				type='button'
+																				onClick={handleUpdatePoll}
+																				className='rounded-full border border-amber-300/20 bg-amber-500/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-100'
+																				disabled={Boolean(groupWorkspaceAction)}
+																			>
+																				Save
+																			</button>
+																		</div>
 																	</div>
-																</div>
+																) : (
+																	<div key={poll.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																		<div className='flex items-start justify-between gap-3'>
+																			<div>
+																				<p className='text-sm font-semibold text-slate-100'>{poll.question}</p>
+																				<p className='mt-1 text-xs text-slate-400'>
+																					By {poll.createdBy?.fullName || poll.createdBy?.username || "Unknown"}
+																					{poll.createdBy?.username ? ` · @${poll.createdBy.username}` : ""}
+																					{" · "}
+																					{new Date(poll.createdAt).toLocaleString()}
+																					{poll.updatedAt &&
+																					new Date(poll.updatedAt).getTime() > new Date(poll.createdAt).getTime()
+																						? " · edited"
+																						: ""}
+																				</p>
+																				<p className='mt-1 text-xs text-slate-400'>
+																					{poll.totalVotes} votes · {poll.allowsMultiple ? "Multiple choice" : "Single choice"}
+																					{poll.closesAt ? ` · closes ${new Date(poll.closesAt).toLocaleString()}` : ""}
+																				</p>
+																			</div>
+																			{canManageGroup ? (
+																				<div className='flex shrink-0 items-center gap-2'>
+																					<button
+																						type='button'
+																						onClick={() => startEditingPoll(poll)}
+																						className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-200 transition hover:bg-white/[0.08]'
+																						title='Edit poll'
+																					>
+																						<HiOutlinePencilSquare className='h-4 w-4' />
+																					</button>
+																					<button
+																						type='button'
+																						onClick={() => requestDeletePoll(poll.id)}
+																						className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-300/20 bg-rose-500/10 text-rose-100 transition hover:bg-rose-500/16'
+																						title='Remove poll'
+																						disabled={Boolean(groupWorkspaceAction)}
+																					>
+																						<HiOutlineTrash className='h-4 w-4' />
+																					</button>
+																				</div>
+																			) : null}
+																		</div>
+																		<div className='mt-3 flex flex-wrap gap-2'>
+																			{poll.options.map((option) => (
+																				<button
+																					key={option.id}
+																					type='button'
+																					onClick={() => handleVotePoll(poll.id, option.id)}
+																					className={`rounded-full border px-3 py-2 text-[11px] font-semibold transition ${
+																						option.selectedByMe
+																							? "border-cyan-300/35 bg-cyan-500/16 text-cyan-50"
+																							: "border-white/10 bg-white/[0.04] text-slate-200 hover:bg-white/[0.07]"
+																					}`}
+																					disabled={Boolean(groupWorkspaceAction)}
+																				>
+																					{option.label} · {option.voteCount}
+																				</button>
+																			))}
+																		</div>
+																	</div>
+																)
 															))
 														) : (
 															<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
@@ -1754,13 +2319,13 @@ const UserInfoModal = ({ user, open, onClose }) => {
 													</div>
 												</div>
 
-												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+												<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-5'>
 													<div>
 														<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Events</p>
 														<p className='mt-1 text-sm text-slate-300'>Schedule launches, calls, and group moments.</p>
 													</div>
 
-													{canModerateGroup ? (
+													{canManageGroup ? (
 														<div className='mt-4 space-y-3'>
 															<input
 																type='text'
@@ -1792,7 +2357,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 															<button
 																type='button'
 																onClick={handleCreateEvent}
-																className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+																className='w-full rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100 sm:w-auto'
 																disabled={Boolean(groupWorkspaceAction)}
 															>
 																Create event
@@ -1803,12 +2368,126 @@ const UserInfoModal = ({ user, open, onClose }) => {
 													<div className='mt-4 space-y-3'>
 														{(groupWorkspace.events || []).length ? (
 															groupWorkspace.events.map((event) => (
-																<div key={event.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
-																	<p className='text-sm font-semibold text-slate-100'>{event.title}</p>
-																	<p className='mt-1 text-xs text-slate-400'>{new Date(event.startsAt).toLocaleString()}</p>
-																	{event.location ? <p className='mt-2 text-xs text-slate-300'>Location: {event.location}</p> : null}
-																	{event.description ? <p className='mt-2 text-sm leading-6 text-slate-200'>{event.description}</p> : null}
-																</div>
+																eventEditor.id === event.id ? (
+																	<div key={event.id} className='rounded-[18px] border border-violet-300/18 bg-violet-500/[0.06] px-4 py-4'>
+																		<div className='space-y-3'>
+																			<input
+																				type='text'
+																				value={eventEditor.title}
+																				onChange={(eventValue) =>
+																					setEventEditor((currentDraft) => ({
+																						...currentDraft,
+																						title: eventValue.target.value,
+																					}))
+																				}
+																				placeholder='Event title'
+																				className='w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-violet-300/30'
+																			/>
+																			<textarea
+																				rows='3'
+																				value={eventEditor.description}
+																				onChange={(eventValue) =>
+																					setEventEditor((currentDraft) => ({
+																						...currentDraft,
+																						description: eventValue.target.value,
+																					}))
+																				}
+																				placeholder='Description'
+																				className='custom-scrollbar w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-violet-300/30'
+																			/>
+																			<input
+																				type='text'
+																				value={eventEditor.location}
+																				onChange={(eventValue) =>
+																					setEventEditor((currentDraft) => ({
+																						...currentDraft,
+																						location: eventValue.target.value,
+																					}))
+																				}
+																				placeholder='Location or room'
+																				className='w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-violet-300/30'
+																			/>
+																			<input
+																				type='datetime-local'
+																				value={eventEditor.startsAt}
+																				onChange={(eventValue) =>
+																					setEventEditor((currentDraft) => ({
+																						...currentDraft,
+																						startsAt: eventValue.target.value,
+																					}))
+																				}
+																				className='w-full rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100 outline-none transition focus:border-violet-300/30'
+																			/>
+																		</div>
+																		<div className='mt-3 flex flex-wrap justify-end gap-2'>
+																			<button
+																				type='button'
+																				onClick={cancelEditingEvent}
+																				className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-200'
+																			>
+																				Cancel
+																			</button>
+																			<button
+																				type='button'
+																				onClick={() => requestDeleteEvent(event.id)}
+																				className='rounded-full border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-rose-100'
+																				disabled={Boolean(groupWorkspaceAction)}
+																			>
+																				Remove
+																			</button>
+																			<button
+																				type='button'
+																				onClick={handleUpdateEvent}
+																				className='rounded-full border border-violet-300/20 bg-violet-500/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-100'
+																				disabled={!eventEditor.title.trim() || !eventEditor.startsAt || Boolean(groupWorkspaceAction)}
+																			>
+																				Save
+																			</button>
+																		</div>
+																	</div>
+																) : (
+																	<div key={event.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
+																		<div className='flex items-start justify-between gap-3'>
+																			<div>
+																				<p className='text-sm font-semibold text-slate-100'>{event.title}</p>
+																				<p className='mt-1 text-xs text-slate-400'>
+																					By {event.createdBy?.fullName || event.createdBy?.username || "Unknown"}
+																					{event.createdBy?.username ? ` · @${event.createdBy.username}` : ""}
+																					{" · "}
+																					{new Date(event.createdAt).toLocaleString()}
+																					{event.updatedAt &&
+																					new Date(event.updatedAt).getTime() > new Date(event.createdAt).getTime()
+																						? " · edited"
+																						: ""}
+																				</p>
+																			</div>
+																			{canManageGroup ? (
+																				<div className='flex shrink-0 items-center gap-2'>
+																					<button
+																						type='button'
+																						onClick={() => startEditingEvent(event)}
+																						className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-slate-200 transition hover:bg-white/[0.08]'
+																						title='Edit event'
+																					>
+																						<HiOutlinePencilSquare className='h-4 w-4' />
+																					</button>
+																					<button
+																						type='button'
+																						onClick={() => requestDeleteEvent(event.id)}
+																						className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-300/20 bg-rose-500/10 text-rose-100 transition hover:bg-rose-500/16'
+																						title='Remove event'
+																						disabled={Boolean(groupWorkspaceAction)}
+																					>
+																						<HiOutlineTrash className='h-4 w-4' />
+																					</button>
+																				</div>
+																			) : null}
+																		</div>
+																		<p className='mt-2 text-xs font-medium text-sky-100/80'>Starts {new Date(event.startsAt).toLocaleString()}</p>
+																		{event.location ? <p className='mt-2 text-xs text-slate-300'>Location: {event.location}</p> : null}
+																		{event.description ? <p className='mt-2 text-sm leading-6 text-slate-200'>{event.description}</p> : null}
+																	</div>
+																)
 															))
 														) : (
 															<div className='rounded-[18px] border border-dashed border-white/10 bg-slate-950/20 px-4 py-4 text-sm text-slate-400'>
@@ -1819,9 +2498,9 @@ const UserInfoModal = ({ user, open, onClose }) => {
 												</div>
 											</div>
 
-											{canModerateGroup ? (
-												<div className='grid gap-4 xl:grid-cols-2'>
-													<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+											{canManageGroup ? (
+												<div className='grid gap-5 min-[1450px]:grid-cols-2'>
+													<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-5'>
 														<div className='flex items-center justify-between gap-3'>
 															<div>
 																<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Invite links</p>
@@ -1829,21 +2508,20 @@ const UserInfoModal = ({ user, open, onClose }) => {
 															</div>
 														</div>
 
-														<div className='mt-4 flex flex-wrap items-center gap-3'>
-															<select
+														<div className='mt-4 grid gap-3 sm:grid-cols-[minmax(0,220px)_auto] sm:items-center'>
+															<DeveloperSelect
 																value={inviteLinkDays}
-																onChange={(event) => setInviteLinkDays(event.target.value)}
-																className='rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-100 outline-none'
-															>
-																<option value='1'>1 day</option>
-																<option value='7'>7 days</option>
-																<option value='14'>14 days</option>
-																<option value='30'>30 days</option>
-															</select>
+																onChange={(value) => setInviteLinkDays(String(value))}
+																options={INVITE_LINK_DURATION_OPTIONS}
+																ariaLabel='Invite link duration'
+																size='sm'
+																className='sm:max-w-[220px]'
+																menuClassName='z-[280]'
+															/>
 															<button
 																type='button'
 																onClick={handleCreateInviteLink}
-																className='rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100'
+																className='w-full rounded-full border border-sky-300/20 bg-sky-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-sky-100 sm:w-auto'
 																disabled={Boolean(groupWorkspaceAction)}
 															>
 																Create link
@@ -1855,6 +2533,12 @@ const UserInfoModal = ({ user, open, onClose }) => {
 																groupWorkspace.inviteLinks.map((inviteLink) => (
 																	<div key={inviteLink.id} className='rounded-[18px] border border-white/10 bg-slate-950/30 px-4 py-3'>
 																		<p className='truncate text-sm font-semibold text-slate-100'>{`${window.location.origin}/?groupInvite=${inviteLink.code}`}</p>
+																		<p className='mt-1 text-xs text-slate-400'>
+																			Created by {inviteLink.createdBy?.fullName || inviteLink.createdBy?.username || "Unknown"}
+																			{inviteLink.createdBy?.username ? ` · @${inviteLink.createdBy.username}` : ""}
+																			{" · "}
+																			{new Date(inviteLink.createdAt).toLocaleString()}
+																		</p>
 																		<p className='mt-1 text-xs text-slate-400'>
 																			Expires {inviteLink.expiresAt ? new Date(inviteLink.expiresAt).toLocaleString() : "never"}
 																		</p>
@@ -1885,7 +2569,7 @@ const UserInfoModal = ({ user, open, onClose }) => {
 														</div>
 													</div>
 
-													<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-4'>
+													<div className='rounded-[24px] border border-white/10 bg-white/[0.03] p-5'>
 														<div>
 															<p className='text-xs font-semibold uppercase tracking-[0.22em] text-slate-400'>Join requests</p>
 															<p className='mt-1 text-sm text-slate-300'>Approve or decline people waiting to get in.</p>
@@ -1942,65 +2626,81 @@ const UserInfoModal = ({ user, open, onClose }) => {
 									</p>
 								</div>
 
-								{user.members?.length ? (
+								{visibleGroupMembers.length ? (
 									<div className='rounded-[24px] border border-slate-800 bg-slate-800/80 px-4 py-3.5'>
 										<p className='text-xs font-semibold uppercase tracking-[0.24em] text-slate-400'>Participants</p>
-										<div className='mt-3 space-y-2'>
-											{user.members.map((member) => (
-												<div key={member._id} className='flex items-center gap-3 rounded-[18px] bg-slate-900/60 px-3 py-3'>
-														<div
-															className='min-w-0 flex-1'
-															data-copy-user={member.username || undefined}
-															title={member.username ? "Click to copy username" : undefined}
-														>
-															<p className='truncate text-sm font-medium text-slate-100'>
-																{member.fullName}
-																{member._id === authUser?._id ? " (You)" : ""}
-															</p>
-															<p className='truncate text-xs text-slate-400'>@{member.username}</p>
+										<div className='mt-3 space-y-3'>
+											{visibleGroupMembers.map((member) => (
+												<div key={member._id} className='rounded-[20px] border border-white/10 bg-slate-950/35 p-4'>
+													<div className='flex flex-col gap-4 min-[1450px]:flex-row min-[1450px]:items-start min-[1450px]:justify-between'>
+														<div className='flex min-w-0 items-center gap-3'>
+															<div className='h-12 w-12 shrink-0 overflow-hidden rounded-full ring-1 ring-white/10'>
+																<img
+																	src={getAvatarUrl(member.profilePic, 72) || getConversationFallbackAvatar(member)}
+																	alt={member.fullName || member.username || "Member"}
+																	className='h-full w-full object-cover'
+																/>
+															</div>
+															<div
+																className='min-w-0 flex-1'
+																data-copy-user={member.username || undefined}
+																title={member.username ? "Click to copy username" : undefined}
+															>
+																<div className='flex flex-wrap items-center gap-2'>
+																	<p className='truncate text-base font-semibold text-slate-50'>
+																	{member.fullName || member.username || "Unknown member"}
+																	{member._id === authUser?._id ? " (You)" : ""}
+																	</p>
+																	<span className='shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-300'>
+																		{member.memberRole || "Member"}
+																	</span>
+																</div>
+																<p className='truncate text-sm text-slate-400'>
+																	{member.username ? `@${member.username}` : "No username set"}
+																</p>
+																<p className='mt-1 text-xs text-slate-500'>
+																	Joined {member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : "recently"}
+																</p>
+															</div>
+														</div>
 													</div>
-													<div className='flex items-center gap-2'>
-														<span className='shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-300'>
-															{member.memberRole || "Member"}
-														</span>
-														{canManageGroup &&
-														member._id !== authUser?._id &&
-														member.memberRole !== "OWNER" ? (
-															<>
-																{isGroupOwner ? (
-																	<button
-																		type='button'
-																		onClick={() => handleUpdateMemberRole(member._id, "OWNER")}
-																		className='rounded-full border border-sky-300/20 bg-sky-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-100 transition hover:border-sky-300/35 hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-60'
-																		disabled={hasPendingMemberAction}
-																	>
-																		{isMemberActionPending("role", member._id) ? "Saving..." : "Make owner"}
-																	</button>
-																) : null}
-																{getRoleActionOptions(member.memberRole || "MEMBER").map((roleAction) => (
-																	<button
-																		key={`${member._id}-${roleAction.role}`}
-																		type='button'
-																		onClick={() => handleUpdateMemberRole(member._id, roleAction.role)}
-																		className={roleAction.className}
-																		disabled={hasPendingMemberAction}
-																	>
-																		{isMemberActionPending("role", member._id) ? "Saving..." : roleAction.label}
-																	</button>
-																))}
+													{canManageGroup &&
+													member._id !== authUser?._id &&
+													member.memberRole !== "OWNER" ? (
+														<div className='mt-4 flex flex-wrap gap-2 min-[1450px]:justify-end'>
+															{isGroupOwner ? (
 																<button
 																	type='button'
-																	onClick={() => handleRemoveMember(member._id)}
-																	className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-300/20 bg-rose-500/10 text-rose-100 transition hover:border-rose-300/35 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+																	onClick={() => handleUpdateMemberRole(member._id, "OWNER")}
+																	className='rounded-full border border-sky-300/20 bg-sky-500/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-sky-100 transition hover:border-sky-300/35 hover:bg-sky-500/16 disabled:cursor-not-allowed disabled:opacity-60'
 																	disabled={hasPendingMemberAction}
-																	title='Remove member'
 																>
-																	<HiOutlineUserMinus className='h-4 w-4' />
+																	{isMemberActionPending("role", member._id) ? "Saving..." : "Make owner"}
 																</button>
-															</>
-														) : null}
+															) : null}
+															{getRoleActionOptions(member.memberRole || "MEMBER").map((roleAction) => (
+																<button
+																	key={`${member._id}-${roleAction.role}`}
+																	type='button'
+																	onClick={() => handleUpdateMemberRole(member._id, roleAction.role)}
+																	className={roleAction.className}
+																	disabled={hasPendingMemberAction}
+																>
+																	{isMemberActionPending("role", member._id) ? "Saving..." : roleAction.label}
+																</button>
+															))}
+															<button
+																type='button'
+																onClick={() => handleRemoveMember(member._id)}
+																className='inline-flex h-9 w-9 items-center justify-center rounded-full border border-rose-300/20 bg-rose-500/10 text-rose-100 transition hover:border-rose-300/35 hover:bg-rose-500/16 disabled:cursor-not-allowed disabled:opacity-60'
+																disabled={hasPendingMemberAction}
+																title='Remove member'
+															>
+																<HiOutlineUserMinus className='h-4 w-4' />
+															</button>
+														</div>
+													) : null}
 													</div>
-												</div>
 											))}
 										</div>
 									</div>
@@ -2312,6 +3012,50 @@ const UserInfoModal = ({ user, open, onClose }) => {
 					</div>
 				</div>
 			</div>
+
+			{confirmDialog ? (
+				<div
+					className='fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-sm'
+					onClick={(event) => {
+						event.stopPropagation();
+						closeConfirmDialog();
+					}}
+				>
+					<div
+						className='w-full max-w-md rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(2,6,23,0.98),rgba(10,18,36,0.96))] p-6 shadow-[0_32px_80px_rgba(2,6,23,0.55)]'
+						onClick={(event) => event.stopPropagation()}
+					>
+						<p className='text-[11px] font-semibold uppercase tracking-[0.24em] text-rose-200/70'>
+							Confirm action
+						</p>
+						<h3 className='mt-2 text-xl font-semibold text-white'>{confirmDialog.title}</h3>
+						<p className='mt-3 text-sm leading-6 text-slate-300'>{confirmDialog.description}</p>
+
+						<div className='mt-6 flex flex-wrap justify-end gap-3'>
+							<button
+								type='button'
+								onClick={closeConfirmDialog}
+								className='rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/[0.08]'
+								disabled={isDeletingGroup || Boolean(groupWorkspaceAction)}
+							>
+								Cancel
+							</button>
+							<button
+								type='button'
+								onClick={handleConfirmDialog}
+								className={`rounded-full border px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+									confirmDialog.tone === "danger"
+										? "border-rose-300/20 bg-rose-500/10 text-rose-100 hover:bg-rose-500/16"
+										: "border-amber-300/20 bg-amber-500/10 text-amber-100 hover:bg-amber-500/16"
+								}`}
+								disabled={isDeletingGroup || Boolean(groupWorkspaceAction)}
+							>
+								{isDeletingGroup || Boolean(groupWorkspaceAction) ? "Processing..." : confirmDialog.confirmLabel}
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
 		</div>
 	);
 };

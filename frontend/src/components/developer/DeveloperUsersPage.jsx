@@ -164,9 +164,11 @@ const DeveloperUsersPage = ({
 	openEditUserModal,
 	openUserInsightsModal,
 	openDeveloperPermissionsModal,
+	openDeleteUserPopup,
 	canManageUsers,
 	canEditUserData,
 	canManageDeveloperPermissions,
+	canDeleteUsers,
 }) => {
 	return (
 		<div className='w-full min-w-0 rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,15,30,0.88),rgba(13,24,42,0.68))] p-4 shadow-[0_24px_70px_rgba(2,6,23,0.36)] backdrop-blur-2xl sm:rounded-[30px] sm:p-6 lg:p-7'>
@@ -201,7 +203,8 @@ const DeveloperUsersPage = ({
 						actionKey === `ban-${user._id}` ||
 						actionKey === `archive-user-${user._id}` ||
 						actionKey === `edit-user-${user._id}` ||
-						actionKey === `developer-permissions-${user._id}`;
+						actionKey === `developer-permissions-${user._id}` ||
+						actionKey === `delete-user-${user._id}`;
 					const grantedPermissions = developerPermissionDefinitions.filter(
 						(permission) => user.developerPermissions?.[permission.key]
 					);
@@ -392,6 +395,17 @@ const DeveloperUsersPage = ({
 												? "Restore user"
 												: "Archive user"}
 									</button>
+									{canDeleteUsers && user.role !== "DEVELOPER" && (user.isArchived || user.isBanned) ? (
+										<button
+											type='button'
+											disabled={isCurrentUser || isProtectedPrimary || isBusy}
+											onClick={() => openDeleteUserPopup(user)}
+											className='inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full border border-rose-300/22 bg-rose-500/12 px-4 py-2.5 text-sm font-semibold text-rose-100 transition hover:bg-rose-500/18 disabled:cursor-not-allowed disabled:opacity-50'
+										>
+											<IoTrashOutline className='h-4 w-4' />
+											{actionKey === `delete-user-${user._id}` ? "Deleting..." : "Delete forever"}
+										</button>
+									) : null}
 									{user.role === "DEVELOPER" && !user.isPrimaryDeveloper && canManageDeveloperPermissions ? (
 										<button
 											type='button'

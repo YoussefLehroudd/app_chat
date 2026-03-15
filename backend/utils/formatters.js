@@ -115,16 +115,55 @@ const getAttachmentPreviewText = (attachment) => {
 	return attachment.fileName || "File";
 };
 
-const getMessagePresentation = (value, attachment = null) => {
+const getMessagePresentation = (value, attachment = null, viewerId = null) => {
 	const parsedSystemMessage = parseSystemMessageContent(value);
 
 	if (parsedSystemMessage) {
+		const systemData =
+			parsedSystemMessage.type === "GROUP_ANNOUNCEMENT"
+				? {
+						actorName: parsedSystemMessage.actorName || "Admin",
+						announcementId: parsedSystemMessage.announcementId || null,
+						content: parsedSystemMessage.content || parsedSystemMessage.text,
+				  }
+				: parsedSystemMessage.type === "GROUP_EVENT_CREATED"
+					? {
+							actorName: parsedSystemMessage.actorName || "Admin",
+							eventId: parsedSystemMessage.eventId || null,
+							title: parsedSystemMessage.title || parsedSystemMessage.text,
+							description: parsedSystemMessage.description || "",
+							startsAt: parsedSystemMessage.startsAt || null,
+							location: parsedSystemMessage.location || "",
+					  }
+					: parsedSystemMessage.type === "GROUP_POLL_CREATED"
+						? {
+								actorName: parsedSystemMessage.actorName || "Admin",
+								pollId: parsedSystemMessage.pollId || null,
+								question: parsedSystemMessage.question || parsedSystemMessage.text,
+								allowsMultiple: parsedSystemMessage.allowsMultiple === true,
+								closesAt: parsedSystemMessage.closesAt || null,
+								totalVotes: Number.isFinite(parsedSystemMessage.totalVotes)
+									? parsedSystemMessage.totalVotes
+									: (parsedSystemMessage.options || []).reduce(
+											(sum, option) => sum + (option.voterIds?.length || 0),
+											0
+									  ),
+								options: (parsedSystemMessage.options || []).map((option) => ({
+									id: option.id,
+									label: option.label,
+									voteCount: option.voterIds?.length || 0,
+									selectedByMe: Boolean(viewerId) && option.voterIds?.includes(viewerId),
+								})),
+						  }
+						: null;
+
 		return {
 			message: parsedSystemMessage.text,
-			previewText: parsedSystemMessage.text,
+			previewText: parsedSystemMessage.previewText || parsedSystemMessage.text,
 			isSystem: true,
 			systemText: parsedSystemMessage.text,
 			systemType: parsedSystemMessage.type,
+			systemData,
 			isCallMessage: false,
 			callInfo: null,
 			isGroupInvite: false,
@@ -142,6 +181,7 @@ const getMessagePresentation = (value, attachment = null) => {
 			isSystem: false,
 			systemText: null,
 			systemType: null,
+			systemData: null,
 			isCallMessage: true,
 			callInfo: parsedCallMessage,
 			isGroupInvite: false,
@@ -159,6 +199,7 @@ const getMessagePresentation = (value, attachment = null) => {
 			isSystem: false,
 			systemText: null,
 			systemType: null,
+			systemData: null,
 			isCallMessage: false,
 			callInfo: null,
 			isGroupInvite: true,
@@ -184,6 +225,7 @@ const getMessagePresentation = (value, attachment = null) => {
 			isSystem: false,
 			systemText: null,
 			systemType: null,
+			systemData: null,
 			isCallMessage: false,
 			callInfo: null,
 			isGroupInvite: false,
@@ -200,6 +242,7 @@ const getMessagePresentation = (value, attachment = null) => {
 		isSystem: false,
 		systemText: null,
 		systemType: null,
+		systemData: null,
 		isCallMessage: false,
 		callInfo: null,
 		isGroupInvite: false,
@@ -297,7 +340,7 @@ const toMessagePreviewDto = (message, options = {}) => {
 	if (!message) return null;
 	const viewerId = options.viewerId || null;
 	const attachment = buildMessageAttachmentDto(message);
-	const presentation = getMessagePresentation(message.message, attachment);
+	const presentation = getMessagePresentation(message.message, attachment, viewerId);
 	return {
 		_id: message.id,
 		conversationId: message.conversationId,
@@ -324,6 +367,7 @@ const toMessagePreviewDto = (message, options = {}) => {
 		isSystem: presentation.isSystem,
 		systemText: presentation.systemText,
 		systemType: presentation.systemType,
+		systemData: presentation.systemData,
 		isCallMessage: presentation.isCallMessage,
 		callInfo: presentation.callInfo,
 		isGroupInvite: presentation.isGroupInvite,
@@ -340,7 +384,7 @@ const toMessageDto = (message, options = {}) => {
 	if (!message) return null;
 	const viewerId = options.viewerId || null;
 	const attachment = buildMessageAttachmentDto(message);
-	const presentation = getMessagePresentation(message.message, attachment);
+	const presentation = getMessagePresentation(message.message, attachment, viewerId);
 	return {
 		_id: message.id,
 		conversationId: message.conversationId,
@@ -368,6 +412,7 @@ const toMessageDto = (message, options = {}) => {
 		isSystem: presentation.isSystem,
 		systemText: presentation.systemText,
 		systemType: presentation.systemType,
+		systemData: presentation.systemData,
 		isCallMessage: presentation.isCallMessage,
 		callInfo: presentation.callInfo,
 		isGroupInvite: presentation.isGroupInvite,

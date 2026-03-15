@@ -134,7 +134,7 @@ const getLatestMessagePreview = (latestMessage) => {
 
 	const parsedSystemMessage = parseSystemMessageContent(latestMessage.message);
 	if (parsedSystemMessage) {
-		return parsedSystemMessage.text;
+		return parsedSystemMessage.previewText || parsedSystemMessage.text;
 	}
 
 	const parsedGroupInvite = parseGroupInviteMessageContent(latestMessage.message);
@@ -604,6 +604,18 @@ export const getSidebarConversations = async (req, res) => {
 					type: CONVERSATION_TYPES.DIRECT,
 					directStatus: DIRECT_CONVERSATION_STATUSES.ACCEPTED,
 					OR: [{ userOneId: loggedInUserId }, { userTwoId: loggedInUserId }],
+					userOne: {
+						is: {
+							isArchived: false,
+							isBanned: false,
+						},
+					},
+					userTwo: {
+						is: {
+							isArchived: false,
+							isBanned: false,
+						},
+					},
 				},
 				include: {
 					userOne: { select: userSelect },
@@ -734,6 +746,18 @@ export const getDirectInvitations = async (req, res) => {
 				type: CONVERSATION_TYPES.DIRECT,
 				directStatus: DIRECT_CONVERSATION_STATUSES.PENDING,
 				OR: [{ userOneId: userId }, { userTwoId: userId }],
+				userOne: {
+					is: {
+						isArchived: false,
+						isBanned: false,
+					},
+				},
+				userTwo: {
+					is: {
+						isArchived: false,
+						isBanned: false,
+					},
+				},
 			},
 			include: {
 				userOne: { select: userSelect },
@@ -864,6 +888,18 @@ export const respondToDirectInvitation = async (req, res) => {
 				type: CONVERSATION_TYPES.DIRECT,
 				directStatus: DIRECT_CONVERSATION_STATUSES.PENDING,
 				OR: [{ userOneId: userId }, { userTwoId: userId }],
+				userOne: {
+					is: {
+						isArchived: false,
+						isBanned: false,
+					},
+				},
+				userTwo: {
+					is: {
+						isArchived: false,
+						isBanned: false,
+					},
+				},
 			},
 			include: {
 				userOne: { select: userSelect },

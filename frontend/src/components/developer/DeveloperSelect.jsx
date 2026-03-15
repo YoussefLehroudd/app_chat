@@ -56,20 +56,25 @@ const DeveloperSelect = ({
 			const rootRect = rootElement.getBoundingClientRect();
 			const viewportHeight = window.innerHeight;
 			const viewportWidth = window.innerWidth;
-			const gap = 10;
+			const menuHeight = menuRef.current?.offsetHeight || 0;
+			const gap = 8;
 			const spaceBelow = viewportHeight - rootRect.bottom - 16;
 			const spaceAbove = rootRect.top - 16;
 			const shouldOpenUpward = spaceBelow < 220 && spaceAbove > spaceBelow;
 			const nextMaxHeight = Math.max(Math.min((shouldOpenUpward ? spaceAbove : spaceBelow) - 12, 320), 176);
 			const nextWidth = Math.min(rootRect.width, viewportWidth - 24);
 			const nextLeft = Math.min(Math.max(rootRect.left, 12), viewportWidth - nextWidth - 12);
+			const cappedMenuHeight = Math.min(menuHeight || nextMaxHeight, nextMaxHeight);
+			const nextTop = shouldOpenUpward
+				? Math.max(rootRect.top - cappedMenuHeight - gap, 12)
+				: Math.min(rootRect.bottom + gap, viewportHeight - cappedMenuHeight - 12);
 
 			setMenuPlacement(shouldOpenUpward ? "top" : "bottom");
 			setMenuMaxHeight(nextMaxHeight);
 			setMenuLayout({
 				left: nextLeft,
-				top: shouldOpenUpward ? "auto" : Math.min(rootRect.bottom + gap, viewportHeight - nextMaxHeight - 16),
-				bottom: shouldOpenUpward ? Math.max(viewportHeight - rootRect.top + gap, 16) : "auto",
+				top: nextTop,
+				bottom: "auto",
 				width: nextWidth,
 			});
 		};
@@ -89,6 +94,7 @@ const DeveloperSelect = ({
 		};
 
 		updateMenuLayout();
+		requestAnimationFrame(updateMenuLayout);
 		document.addEventListener("mousedown", handlePointerDown);
 		window.addEventListener("keydown", handleEscape);
 		window.addEventListener("resize", updateMenuLayout);

@@ -341,7 +341,7 @@ const getLatestMessagePreview = (latestMessage) => {
 
 	const parsedSystemMessage = parseSystemMessageContent(latestMessage.message);
 	if (parsedSystemMessage) {
-		return parsedSystemMessage.text;
+		return parsedSystemMessage.previewText || parsedSystemMessage.text;
 	}
 
 	const parsedGroupInvite = parseGroupInviteMessageContent(latestMessage.message);

@@ -16,6 +16,7 @@ const DEFAULT_POOL_TIMEOUT_SECONDS = "15";
 const QUERY_RECONNECT_WARNING_COOLDOWN_MS = 10000;
 const RETRYABLE_PRISMA_CODES = new Set(["P1001", "P1002", "P1017", "P2024"]);
 const DATABASE_UNAVAILABLE_MESSAGE = "Database temporarily unavailable. Please retry in a moment.";
+const shouldDisableNeonAdapter = process.env.PRISMA_DISABLE_NEON_ADAPTER === "true";
 let databaseAvailable = false;
 let lastQueryReconnectWarningAt = 0;
 
@@ -54,7 +55,7 @@ const resolveDatabaseUrl = (databaseUrl) => {
 };
 
 const runtimeDatabaseUrl = resolveDatabaseUrl(process.env.DATABASE_URL);
-const useNeonServerlessAdapter = isNeonDatabaseUrl(runtimeDatabaseUrl);
+const useNeonServerlessAdapter = isNeonDatabaseUrl(runtimeDatabaseUrl) && !shouldDisableNeonAdapter;
 
 if (useNeonServerlessAdapter) {
 	neonConfig.webSocketConstructor = ws;
@@ -92,9 +93,19 @@ const isPrismaConnectionError = (error) => {
 	const message = error?.message || "";
 	return (
 		RETRYABLE_PRISMA_CODES.has(error?.code) ||
+		error?.code === "ENOTFOUND" ||
+		error?.code === "EAI_AGAIN" ||
+		error?.code === "ENETUNREACH" ||
+		error?.code === "ECONNRESET" ||
+		error?.code === "ECONNREFUSED" ||
 		message.includes("Timed out fetching a new connection from the connection pool") ||
 		message.includes("Can't reach database server") ||
-		message.includes("Server has closed the connection")
+		message.includes("Server has closed the connection") ||
+		message.includes("getaddrinfo ENOTFOUND") ||
+		message.includes("getaddrinfo EAI_AGAIN") ||
+		message.includes("ENETUNREACH") ||
+		message.includes("ECONNRESET") ||
+		message.includes("ECONNREFUSED")
 	);
 };
 
@@ -154,6 +165,8 @@ const connectToDatabase = async ({ logError = true } = {}) => {
 		databaseAvailable = true;
 		if (useNeonServerlessAdapter) {
 			console.log("Using Neon serverless WebSocket adapter");
+		} else if (isNeonDatabaseUrl(runtimeDatabaseUrl) && shouldDisableNeonAdapter) {
+			console.log("Using Prisma native PostgreSQL connection for Neon");
 		} else if (runtimeDatabaseUrl && runtimeDatabaseUrl !== process.env.DATABASE_URL) {
 			console.log("Using Neon pooled runtime connection with extended timeouts");
 		}

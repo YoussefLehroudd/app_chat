@@ -1010,14 +1010,14 @@ export const getSessionUser = async (req, res) => {
 			return res.status(200).json(null);
 		}
 
+		if (!isDatabaseAvailable()) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+
 		const session = await getActiveUserSessionByTokenId(decoded.sessionId);
 		if (!session) {
 			res.cookie(SESSION_COOKIE_NAME, "", { maxAge: 0 });
 			return res.status(200).json(null);
-		}
-
-		if (!isDatabaseAvailable()) {
-			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
 
 		const user = await prisma.user.findUnique({

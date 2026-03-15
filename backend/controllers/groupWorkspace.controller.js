@@ -1,18 +1,22 @@
 import crypto from "crypto";
 import { DATABASE_UNAVAILABLE_MESSAGE, isPrismaConnectionError, prisma } from "../db/prisma.js";
 import { getUserSocketIds, io } from "../socket/socket.js";
-import { toConversationItemDto, toUserDto } from "../utils/formatters.js";
+import { toConversationItemDto, toMessageDto, toUserDto } from "../utils/formatters.js";
 import {
 	CONVERSATION_MEMBER_ROLES,
 	CONVERSATION_TYPES,
 	getGroupConversationForMember,
 } from "../utils/conversations.js";
 import {
+	buildGroupAnnouncementSystemMessage,
+	buildGroupEventCreatedSystemMessage,
+	buildGroupPollCreatedSystemMessage,
 	parseCallMessageContent,
 	parseGroupInviteMessageContent,
 	parseStoryInteractionMessageContent,
 	parseSystemMessageContent,
 } from "../utils/systemMessages.js";
+import { deleteMessageEverywhere } from "../utils/messageModeration.js";
 
 const userSelect = {
 	id: true,
@@ -75,6 +79,17 @@ const groupConversationInclude = (viewerId) => ({
 	...buildConversationPreferenceInclude(viewerId),
 });
 
+const groupSystemMessageInclude = {
+	sender: {
+		select: userSelect,
+	},
+	conversation: {
+		select: {
+			type: true,
+		},
+	},
+};
+
 const emitToUsers = (userIds, eventName, payload) => {
 	[...new Set((userIds || []).filter(Boolean))].forEach((userId) => {
 		getUserSocketIds(userId).forEach((socketId) => {
@@ -85,6 +100,259 @@ const emitToUsers = (userIds, eventName, payload) => {
 
 const emitPublicGroupsChanged = () => {
 	io.emit("publicGroupsChanged");
+};
+
+const emitGroupWorkspaceUpdated = (conversation, section = "workspace") => {
+	if (!conversation?.id) return;
+
+	emitToUsers(
+		(conversation.members || []).map((member) => member.userId),
+		"groupWorkspaceUpdated",
+		{
+			conversationId: conversation.id,
+			section,
+			updatedAt: new Date().toISOString(),
+		}
+	);
+};
+
+const emitPersonalizedWorkspaceMessageEvent = (userIds, eventName, messageRecord) => {
+	[...new Set((userIds || []).filter(Boolean))].forEach((targetUserId) => {
+		const payload = toMessageDto(messageRecord, { viewerId: targetUserId });
+		getUserSocketIds(targetUserId).forEach((socketId) => {
+			io.to(socketId).emit(eventName, payload);
+		});
+	});
+};
+
+const emitGroupWorkspaceSystemMessage = async ({ conversationId, senderId, rawMessage, audienceUserIds }) => {
+	const uniqueUserIds = [...new Set((audienceUserIds || []).filter(Boolean))];
+	if (!conversationId || !senderId || !rawMessage || uniqueUserIds.length === 0) {
+		return null;
+	}
+
+	const message = await prisma.message.create({
+		data: {
+			conversationId,
+			senderId,
+			receiverId: null,
+			message: rawMessage,
+		},
+		include: groupSystemMessageInclude,
+	});
+
+	emitPersonalizedWorkspaceMessageEvent(uniqueUserIds, "newMessage", message);
+	return message;
+};
+
+const getSystemMessageTypeLookupPattern = (type) => `"type":"${type}"`;
+const getAnnouncementSystemMessageLookupPattern = (announcementId) => `"announcementId":"${announcementId}"`;
+const getPollSystemMessageLookupPattern = (pollId) => `"pollId":"${pollId}"`;
+const getEventSystemMessageLookupPattern = (eventId) => `"eventId":"${eventId}"`;
+
+const findWorkspaceSystemMessageByMatcher = async ({
+	conversationId,
+	type,
+	directLookupPattern = null,
+	matcher,
+}) => {
+	if (!conversationId || !type || typeof matcher !== "function") {
+		return null;
+	}
+
+	if (directLookupPattern) {
+		const directMatch = await prisma.message.findFirst({
+			where: {
+				conversationId,
+				message: {
+					contains: directLookupPattern,
+				},
+			},
+			orderBy: { createdAt: "desc" },
+			include: groupSystemMessageInclude,
+		});
+
+		if (directMatch) {
+			return directMatch;
+		}
+	}
+
+	const candidateMessages = await prisma.message.findMany({
+		where: {
+			conversationId,
+			message: {
+				contains: getSystemMessageTypeLookupPattern(type),
+			},
+		},
+		orderBy: { createdAt: "desc" },
+		take: 24,
+		include: groupSystemMessageInclude,
+	});
+
+	return (
+		candidateMessages.find((candidateMessage) => {
+			const parsedMessage = parseSystemMessageContent(candidateMessage.message);
+			return parsedMessage?.type === type && matcher(parsedMessage, candidateMessage);
+		}) || null
+	);
+};
+
+const findAnnouncementSystemMessage = (conversationId, announcement) =>
+	findWorkspaceSystemMessageByMatcher({
+		conversationId,
+		type: "GROUP_ANNOUNCEMENT",
+		directLookupPattern: announcement?.id ? getAnnouncementSystemMessageLookupPattern(announcement.id) : null,
+		matcher: (parsedMessage, candidateMessage) => {
+			if (announcement?.id && parsedMessage.announcementId === announcement.id) {
+				return true;
+			}
+
+			return (
+				!parsedMessage.announcementId &&
+				parsedMessage.content === announcement?.content &&
+				candidateMessage.senderId === announcement?.createdById
+			);
+		},
+	});
+
+const findEventSystemMessage = (conversationId, event) =>
+	findWorkspaceSystemMessageByMatcher({
+		conversationId,
+		type: "GROUP_EVENT_CREATED",
+		directLookupPattern: event?.id ? getEventSystemMessageLookupPattern(event.id) : null,
+		matcher: (parsedMessage, candidateMessage) =>
+			(event?.id && parsedMessage.eventId === event.id) ||
+			(!parsedMessage.eventId &&
+				parsedMessage.title === event?.title &&
+				candidateMessage.senderId === event?.createdById),
+	});
+
+const findPollSystemMessage = (conversationId, poll) =>
+	findWorkspaceSystemMessageByMatcher({
+		conversationId,
+		type: "GROUP_POLL_CREATED",
+		directLookupPattern: poll?.id ? getPollSystemMessageLookupPattern(poll.id) : null,
+		matcher: (parsedMessage, candidateMessage) =>
+			(poll?.id && parsedMessage.pollId === poll.id) ||
+			(!parsedMessage.pollId &&
+				parsedMessage.question === poll?.question &&
+				candidateMessage.senderId === poll?.createdById),
+	});
+
+const toPollSystemMessageOptions = (poll) =>
+	(poll?.options || [])
+		.slice()
+		.sort((leftOption, rightOption) => leftOption.position - rightOption.position)
+		.map((option) => ({
+			id: option.id,
+			label: option.label,
+			position: option.position,
+			voterIds: (option.votes || []).map((vote) => vote.userId).filter(Boolean),
+		}));
+
+const updateGroupPollSystemMessage = async ({ conversation, poll }) => {
+	if (!conversation?.id || !poll?.id) {
+		return null;
+	}
+
+	const existingPollMessage = await findPollSystemMessage(conversation.id, poll);
+
+	if (!existingPollMessage) {
+		return null;
+	}
+
+	const refreshedMessage = await prisma.message.update({
+		where: { id: existingPollMessage.id },
+		data: {
+			message: buildGroupPollCreatedSystemMessage({
+				actorName: poll.createdBy?.fullName,
+				pollId: poll.id,
+				question: poll.question,
+				allowsMultiple: poll.allowsMultiple,
+				closesAt: poll.closesAt,
+				options: toPollSystemMessageOptions(poll),
+			}),
+		},
+		include: groupSystemMessageInclude,
+	});
+
+	emitPersonalizedWorkspaceMessageEvent(
+		conversation.members.map((member) => member.userId),
+		"messageUpdated",
+		refreshedMessage
+	);
+
+	return refreshedMessage;
+};
+
+const updateGroupAnnouncementSystemMessage = async ({ conversation, announcement, existingMessageId = null }) => {
+	if (!conversation?.id || !announcement?.id) {
+		return null;
+	}
+
+	const existingAnnouncementMessage = existingMessageId
+		? await prisma.message.findUnique({
+				where: { id: existingMessageId },
+				include: groupSystemMessageInclude,
+		  })
+		: await findAnnouncementSystemMessage(conversation.id, announcement);
+	if (!existingAnnouncementMessage) {
+		return null;
+	}
+
+	const refreshedMessage = await prisma.message.update({
+		where: { id: existingAnnouncementMessage.id },
+		data: {
+			message: buildGroupAnnouncementSystemMessage({
+				actorName: announcement.createdBy?.fullName,
+				announcementId: announcement.id,
+				content: announcement.content,
+			}),
+		},
+		include: groupSystemMessageInclude,
+	});
+
+	emitPersonalizedWorkspaceMessageEvent(
+		conversation.members.map((member) => member.userId),
+		"messageUpdated",
+		refreshedMessage
+	);
+
+	return refreshedMessage;
+};
+
+const updateGroupEventSystemMessage = async ({ conversation, event }) => {
+	if (!conversation?.id || !event?.id) {
+		return null;
+	}
+
+	const existingEventMessage = await findEventSystemMessage(conversation.id, event);
+	if (!existingEventMessage) {
+		return null;
+	}
+
+	const refreshedMessage = await prisma.message.update({
+		where: { id: existingEventMessage.id },
+		data: {
+			message: buildGroupEventCreatedSystemMessage({
+				actorName: event.createdBy?.fullName,
+				eventId: event.id,
+				title: event.title,
+				description: event.description,
+				startsAt: event.startsAt,
+				location: event.location,
+			}),
+		},
+		include: groupSystemMessageInclude,
+	});
+
+	emitPersonalizedWorkspaceMessageEvent(
+		conversation.members.map((member) => member.userId),
+		"messageUpdated",
+		refreshedMessage
+	);
+
+	return refreshedMessage;
 };
 
 const getViewerPreference = (conversation) =>
@@ -110,7 +378,7 @@ const getLatestMessagePreview = (latestMessage) => {
 
 	const parsedSystemMessage = parseSystemMessageContent(latestMessage.message);
 	if (parsedSystemMessage) {
-		return parsedSystemMessage.text;
+		return parsedSystemMessage.previewText || parsedSystemMessage.text;
 	}
 
 	const parsedGroupInvite = parseGroupInviteMessageContent(latestMessage.message);
@@ -334,6 +602,7 @@ const formatAnnouncements = (announcements) =>
 		id: announcement.id,
 		content: announcement.content,
 		createdAt: announcement.createdAt,
+		updatedAt: announcement.updatedAt,
 		createdBy: announcement.createdBy ? toUserDto(announcement.createdBy) : null,
 	}));
 
@@ -346,6 +615,7 @@ const formatEvents = (events) =>
 		endsAt: event.endsAt ?? null,
 		location: event.location || "",
 		createdAt: event.createdAt,
+		updatedAt: event.updatedAt,
 		createdBy: event.createdBy ? toUserDto(event.createdBy) : null,
 	}));
 
@@ -356,6 +626,7 @@ const formatPolls = (polls, viewerId) =>
 		allowsMultiple: Boolean(poll.allowsMultiple),
 		closesAt: poll.closesAt ?? null,
 		createdAt: poll.createdAt,
+		updatedAt: poll.updatedAt,
 		createdBy: poll.createdBy ? toUserDto(poll.createdBy) : null,
 		totalVotes: (poll.options || []).reduce((sum, option) => sum + (option.votes?.length || 0), 0),
 		options: (poll.options || [])
@@ -412,7 +683,7 @@ const buildMemberActivity = async (conversation) => {
 
 const buildGroupWorkspacePayload = async (conversation, viewerId) => {
 	const viewerMembership = conversation.members.find((member) => member.userId === viewerId);
-	const canManageWorkspace = isGroupModeratorRole(viewerMembership?.role);
+	const canManageWorkspace = isGroupManagerRole(viewerMembership?.role);
 	const [inviteLinks, joinRequests, announcements, events, polls, memberActivity] = await Promise.all([
 		canManageWorkspace
 			? prisma.groupInviteLink.findMany({
@@ -511,6 +782,12 @@ const buildGroupWorkspacePayload = async (conversation, viewerId) => {
 			viewerRole: viewerMembership?.role ?? CONVERSATION_MEMBER_ROLES.MEMBER,
 			canManageWorkspace,
 		},
+		members: conversation.members.map((member) => ({
+			...(member.user ? toUserDto(member.user) : { _id: member.userId }),
+			memberRole: member.role,
+			joinedAt: member.joinedAt,
+			lastReadAt: member.lastReadAt ?? null,
+		})),
 		inviteLinks: formatInviteLinks(inviteLinks),
 		joinRequests: formatJoinRequests(joinRequests),
 		announcements: formatAnnouncements(announcements),
@@ -547,9 +824,9 @@ export const updateGroupWorkspaceSettings = async (req, res) => {
 		const userId = req.user._id;
 		const { id: conversationId } = req.params;
 		const conversation = await getAccessibleGroupConversation(conversationId, userId);
-		const moderationCheck = requireGroupModerator(conversation, userId);
-		if (!moderationCheck.ok) {
-			return res.status(moderationCheck.status).json({ error: moderationCheck.error });
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
 		}
 
 		const data = {};
@@ -576,6 +853,7 @@ export const updateGroupWorkspaceSettings = async (req, res) => {
 
 		const refreshedConversation = await getAccessibleGroupConversation(conversation.id, userId);
 		const workspace = await buildGroupWorkspacePayload(refreshedConversation, userId);
+		emitGroupWorkspaceUpdated(refreshedConversation, "settings");
 		return res.status(200).json(workspace);
 	} catch (error) {
 		console.error("Error in updateGroupWorkspaceSettings:", error.message);
@@ -596,23 +874,157 @@ export const createGroupAnnouncement = async (req, res) => {
 		}
 
 		const conversation = await getAccessibleGroupConversation(conversationId, userId);
-		const moderationCheck = requireGroupModerator(conversation, userId);
-		if (!moderationCheck.ok) {
-			return res.status(moderationCheck.status).json({ error: moderationCheck.error });
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
 		}
 
-		await prisma.groupAnnouncement.create({
+		const createdAnnouncement = await prisma.groupAnnouncement.create({
 			data: {
 				conversationId: conversation.id,
 				content,
 				createdById: userId,
 			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		await emitGroupWorkspaceSystemMessage({
+			conversationId: conversation.id,
+			senderId: userId,
+			rawMessage: buildGroupAnnouncementSystemMessage({
+				actorName: createdAnnouncement.createdBy?.fullName || managerCheck.currentMember.user?.fullName,
+				announcementId: createdAnnouncement.id,
+				content: createdAnnouncement.content,
+			}),
+			audienceUserIds: conversation.members.map((member) => member.userId),
 		});
 
 		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "announcements");
 		return res.status(201).json(workspace);
 	} catch (error) {
 		console.error("Error in createGroupAnnouncement:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const updateGroupAnnouncement = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const { id: conversationId, announcementId } = req.params;
+		const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
+		if (!content) {
+			return res.status(400).json({ error: "Announcement content is required" });
+		}
+
+		const conversation = await getAccessibleGroupConversation(conversationId, userId);
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
+		}
+
+		const existingAnnouncement = await prisma.groupAnnouncement.findFirst({
+			where: {
+				id: announcementId,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		if (!existingAnnouncement) {
+			return res.status(404).json({ error: "Announcement not found" });
+		}
+
+		const existingAnnouncementMessage = await findAnnouncementSystemMessage(conversation.id, existingAnnouncement);
+
+		const updatedAnnouncement = await prisma.groupAnnouncement.update({
+			where: { id: existingAnnouncement.id },
+			data: { content },
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		await updateGroupAnnouncementSystemMessage({
+			conversation,
+			announcement: updatedAnnouncement,
+			existingMessageId: existingAnnouncementMessage?.id || null,
+		});
+		await emitGroupConversationUpsert(
+			conversation.id,
+			conversation.members.map((member) => member.userId)
+		);
+
+		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "announcements");
+		return res.status(200).json(workspace);
+	} catch (error) {
+		console.error("Error in updateGroupAnnouncement:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const deleteGroupAnnouncement = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const { id: conversationId, announcementId } = req.params;
+		const conversation = await getAccessibleGroupConversation(conversationId, userId);
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
+		}
+
+		const existingAnnouncement = await prisma.groupAnnouncement.findFirst({
+			where: {
+				id: announcementId,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		if (!existingAnnouncement) {
+			return res.status(404).json({ error: "Announcement not found" });
+		}
+
+		const existingAnnouncementMessage = await findAnnouncementSystemMessage(conversation.id, existingAnnouncement);
+		await prisma.groupAnnouncement.delete({
+			where: { id: existingAnnouncement.id },
+		});
+
+		if (existingAnnouncementMessage) {
+			await deleteMessageEverywhere(existingAnnouncementMessage);
+		}
+
+		await emitGroupConversationUpsert(
+			conversation.id,
+			conversation.members.map((member) => member.userId)
+		);
+
+		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "announcements");
+		return res.status(200).json(workspace);
+	} catch (error) {
+		console.error("Error in deleteGroupAnnouncement:", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
@@ -639,12 +1051,12 @@ export const createGroupEvent = async (req, res) => {
 		}
 
 		const conversation = await getAccessibleGroupConversation(conversationId, userId);
-		const moderationCheck = requireGroupModerator(conversation, userId);
-		if (!moderationCheck.ok) {
-			return res.status(moderationCheck.status).json({ error: moderationCheck.error });
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
 		}
 
-		await prisma.groupEvent.create({
+		const createdEvent = await prisma.groupEvent.create({
 			data: {
 				conversationId: conversation.id,
 				title,
@@ -654,12 +1066,161 @@ export const createGroupEvent = async (req, res) => {
 				endsAt: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
 				createdById: userId,
 			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		await emitGroupWorkspaceSystemMessage({
+			conversationId: conversation.id,
+			senderId: userId,
+			rawMessage: buildGroupEventCreatedSystemMessage({
+				actorName: createdEvent.createdBy?.fullName || managerCheck.currentMember.user?.fullName,
+				eventId: createdEvent.id,
+				title: createdEvent.title,
+				description: createdEvent.description,
+				startsAt: createdEvent.startsAt,
+				location: createdEvent.location,
+			}),
+			audienceUserIds: conversation.members.map((member) => member.userId),
 		});
 
 		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "events");
 		return res.status(201).json(workspace);
 	} catch (error) {
 		console.error("Error in createGroupEvent:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const updateGroupEvent = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const { id: conversationId, eventId } = req.params;
+		const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+		const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+		const location = typeof req.body?.location === "string" ? req.body.location.trim() : "";
+		const startsAt = req.body?.startsAt ? new Date(req.body.startsAt) : null;
+		const endsAt = req.body?.endsAt ? new Date(req.body.endsAt) : null;
+
+		if (!title || !startsAt || Number.isNaN(startsAt.getTime())) {
+			return res.status(400).json({ error: "Title and valid start date are required" });
+		}
+
+		if (endsAt && Number.isNaN(endsAt.getTime())) {
+			return res.status(400).json({ error: "Invalid end date" });
+		}
+
+		const conversation = await getAccessibleGroupConversation(conversationId, userId);
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
+		}
+
+		const existingEvent = await prisma.groupEvent.findFirst({
+			where: {
+				id: eventId,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		if (!existingEvent) {
+			return res.status(404).json({ error: "Event not found" });
+		}
+
+		const updatedEvent = await prisma.groupEvent.update({
+			where: { id: existingEvent.id },
+			data: {
+				title,
+				description,
+				location,
+				startsAt,
+				endsAt: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		await updateGroupEventSystemMessage({
+			conversation,
+			event: updatedEvent,
+		});
+		await emitGroupConversationUpsert(
+			conversation.id,
+			conversation.members.map((member) => member.userId)
+		);
+
+		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "events");
+		return res.status(200).json(workspace);
+	} catch (error) {
+		console.error("Error in updateGroupEvent:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const deleteGroupEvent = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const { id: conversationId, eventId } = req.params;
+		const conversation = await getAccessibleGroupConversation(conversationId, userId);
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
+		}
+
+		const existingEvent = await prisma.groupEvent.findFirst({
+			where: {
+				id: eventId,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+			},
+		});
+
+		if (!existingEvent) {
+			return res.status(404).json({ error: "Event not found" });
+		}
+
+		const existingEventMessage = await findEventSystemMessage(conversation.id, existingEvent);
+		await prisma.groupEvent.delete({
+			where: { id: existingEvent.id },
+		});
+
+		if (existingEventMessage) {
+			await deleteMessageEverywhere(existingEventMessage);
+		}
+
+		await emitGroupConversationUpsert(
+			conversation.id,
+			conversation.members.map((member) => member.userId)
+		);
+
+		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "events");
+		return res.status(200).json(workspace);
+	} catch (error) {
+		console.error("Error in deleteGroupEvent:", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
@@ -687,12 +1248,12 @@ export const createGroupPoll = async (req, res) => {
 		}
 
 		const conversation = await getAccessibleGroupConversation(conversationId, userId);
-		const moderationCheck = requireGroupModerator(conversation, userId);
-		if (!moderationCheck.ok) {
-			return res.status(moderationCheck.status).json({ error: moderationCheck.error });
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
 		}
 
-		await prisma.groupPoll.create({
+		const createdPoll = await prisma.groupPoll.create({
 			data: {
 				conversationId: conversation.id,
 				question,
@@ -706,9 +1267,38 @@ export const createGroupPoll = async (req, res) => {
 					})),
 				},
 			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+				options: {
+					include: {
+						votes: {
+							select: {
+								userId: true,
+							},
+						},
+					},
+				},
+			},
+		});
+
+		await emitGroupWorkspaceSystemMessage({
+			conversationId: conversation.id,
+			senderId: userId,
+			rawMessage: buildGroupPollCreatedSystemMessage({
+				actorName: createdPoll.createdBy?.fullName || managerCheck.currentMember.user?.fullName,
+				pollId: createdPoll.id,
+				question: createdPoll.question,
+				allowsMultiple: createdPoll.allowsMultiple,
+				closesAt: createdPoll.closesAt,
+				options: toPollSystemMessageOptions(createdPoll),
+			}),
+			audienceUserIds: conversation.members.map((member) => member.userId),
 		});
 
 		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "polls");
 		return res.status(201).json(workspace);
 	} catch (error) {
 		console.error("Error in createGroupPoll:", error.message);
@@ -798,10 +1388,250 @@ export const voteGroupPoll = async (req, res) => {
 			});
 		}
 
+		const updatedPoll = await prisma.groupPoll.findFirst({
+			where: {
+				id: poll.id,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+				options: {
+					include: {
+						votes: {
+							select: {
+								userId: true,
+							},
+						},
+					},
+				},
+			},
+		});
+
+		if (updatedPoll) {
+			await updateGroupPollSystemMessage({
+				conversation,
+				poll: updatedPoll,
+			});
+		}
+
 		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "polls");
 		return res.status(200).json(workspace);
 	} catch (error) {
 		console.error("Error in voteGroupPoll:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const updateGroupPoll = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const { id: conversationId, pollId } = req.params;
+		const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
+		const allowsMultiple = req.body?.allowsMultiple === true;
+		const closesAt = req.body?.closesAt ? new Date(req.body.closesAt) : null;
+		const options = Array.isArray(req.body?.options)
+			? req.body.options.map((option) => String(option).trim()).filter(Boolean)
+			: [];
+
+		if (!question || options.length < 2) {
+			return res.status(400).json({ error: "Question and at least two options are required" });
+		}
+
+		if (closesAt && Number.isNaN(closesAt.getTime())) {
+			return res.status(400).json({ error: "Invalid poll close date" });
+		}
+
+		const conversation = await getAccessibleGroupConversation(conversationId, userId);
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
+		}
+
+		const existingPoll = await prisma.groupPoll.findFirst({
+			where: {
+				id: pollId,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+				options: {
+					include: {
+						votes: {
+							select: {
+								userId: true,
+							},
+						},
+					},
+					orderBy: { position: "asc" },
+				},
+			},
+		});
+
+		if (!existingPoll) {
+			return res.status(404).json({ error: "Poll not found" });
+		}
+
+		const normalizedOptions = options.slice(0, 8);
+		const existingOptions = [...(existingPoll.options || [])].sort(
+			(leftOption, rightOption) => leftOption.position - rightOption.position
+		);
+		const shouldResetVotes =
+			existingPoll.allowsMultiple !== allowsMultiple ||
+			existingOptions.length !== normalizedOptions.length ||
+			existingOptions.some((option, index) => option.label !== normalizedOptions[index]);
+
+		await prisma.$transaction(async (transaction) => {
+			if (shouldResetVotes) {
+				await transaction.groupPollVote.deleteMany({
+					where: { pollId: existingPoll.id },
+				});
+				await transaction.groupPollOption.deleteMany({
+					where: { pollId: existingPoll.id },
+				});
+				await transaction.groupPoll.update({
+					where: { id: existingPoll.id },
+					data: {
+						question,
+						allowsMultiple,
+						closesAt: closesAt && !Number.isNaN(closesAt.getTime()) ? closesAt : null,
+						options: {
+							create: normalizedOptions.map((option, index) => ({
+								label: option,
+								position: index,
+							})),
+						},
+					},
+				});
+				return;
+			}
+
+			await transaction.groupPoll.update({
+				where: { id: existingPoll.id },
+				data: {
+					question,
+					allowsMultiple,
+					closesAt: closesAt && !Number.isNaN(closesAt.getTime()) ? closesAt : null,
+				},
+			});
+
+			for (const [index, option] of existingOptions.entries()) {
+				await transaction.groupPollOption.update({
+					where: { id: option.id },
+					data: {
+						label: normalizedOptions[index],
+						position: index,
+					},
+				});
+			}
+		});
+
+		const updatedPoll = await prisma.groupPoll.findFirst({
+			where: {
+				id: existingPoll.id,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+				options: {
+					include: {
+						votes: {
+							select: {
+								userId: true,
+							},
+						},
+					},
+				},
+			},
+		});
+
+		if (updatedPoll) {
+			await updateGroupPollSystemMessage({
+				conversation,
+				poll: updatedPoll,
+			});
+		}
+
+		await emitGroupConversationUpsert(
+			conversation.id,
+			conversation.members.map((member) => member.userId)
+		);
+
+		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "polls");
+		return res.status(200).json(workspace);
+	} catch (error) {
+		console.error("Error in updateGroupPoll:", error.message);
+		if (isPrismaConnectionError(error)) {
+			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
+		}
+		return res.status(500).json({ error: "Internal server error" });
+	}
+};
+
+export const deleteGroupPoll = async (req, res) => {
+	try {
+		const userId = req.user._id;
+		const { id: conversationId, pollId } = req.params;
+		const conversation = await getAccessibleGroupConversation(conversationId, userId);
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
+		}
+
+		const existingPoll = await prisma.groupPoll.findFirst({
+			where: {
+				id: pollId,
+				conversationId: conversation.id,
+			},
+			include: {
+				createdBy: {
+					select: userSelect,
+				},
+				options: {
+					include: {
+						votes: {
+							select: {
+								userId: true,
+							},
+						},
+					},
+				},
+			},
+		});
+
+		if (!existingPoll) {
+			return res.status(404).json({ error: "Poll not found" });
+		}
+
+		const existingPollMessage = await findPollSystemMessage(conversation.id, existingPoll);
+		await prisma.groupPoll.delete({
+			where: { id: existingPoll.id },
+		});
+
+		if (existingPollMessage) {
+			await deleteMessageEverywhere(existingPollMessage);
+		}
+
+		await emitGroupConversationUpsert(
+			conversation.id,
+			conversation.members.map((member) => member.userId)
+		);
+
+		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "polls");
+		return res.status(200).json(workspace);
+	} catch (error) {
+		console.error("Error in deleteGroupPoll:", error.message);
 		if (isPrismaConnectionError(error)) {
 			return res.status(503).json({ error: DATABASE_UNAVAILABLE_MESSAGE });
 		}
@@ -819,9 +1649,9 @@ export const createGroupInviteLink = async (req, res) => {
 				: 7;
 
 		const conversation = await getAccessibleGroupConversation(conversationId, userId);
-		const moderationCheck = requireGroupModerator(conversation, userId);
-		if (!moderationCheck.ok) {
-			return res.status(moderationCheck.status).json({ error: moderationCheck.error });
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
 		}
 
 		await prisma.groupInviteLink.create({
@@ -834,6 +1664,7 @@ export const createGroupInviteLink = async (req, res) => {
 		});
 
 		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "invite-links");
 		return res.status(201).json(workspace);
 	} catch (error) {
 		console.error("Error in createGroupInviteLink:", error.message);
@@ -849,9 +1680,9 @@ export const revokeGroupInviteLink = async (req, res) => {
 		const userId = req.user._id;
 		const { id: conversationId, linkId } = req.params;
 		const conversation = await getAccessibleGroupConversation(conversationId, userId);
-		const moderationCheck = requireGroupModerator(conversation, userId);
-		if (!moderationCheck.ok) {
-			return res.status(moderationCheck.status).json({ error: moderationCheck.error });
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
 		}
 
 		await prisma.groupInviteLink.updateMany({
@@ -866,6 +1697,7 @@ export const revokeGroupInviteLink = async (req, res) => {
 		});
 
 		const workspace = await buildGroupWorkspacePayload(conversation, userId);
+		emitGroupWorkspaceUpdated(conversation, "invite-links");
 		return res.status(200).json(workspace);
 	} catch (error) {
 		console.error("Error in revokeGroupInviteLink:", error.message);
@@ -941,6 +1773,8 @@ export const joinGroupByInviteLink = async (req, res) => {
 						status: "PENDING",
 					},
 				});
+
+				emitGroupWorkspaceUpdated(conversation, "join-requests");
 			}
 
 			return res.status(200).json({ status: "REQUESTED" });
@@ -981,9 +1815,9 @@ export const respondToGroupJoinRequest = async (req, res) => {
 		}
 
 		const conversation = await getAccessibleGroupConversation(conversationId, userId);
-		const moderationCheck = requireGroupModerator(conversation, userId);
-		if (!moderationCheck.ok) {
-			return res.status(moderationCheck.status).json({ error: moderationCheck.error });
+		const managerCheck = requireGroupManager(conversation, userId);
+		if (!managerCheck.ok) {
+			return res.status(managerCheck.status).json({ error: managerCheck.error });
 		}
 
 		const joinRequest = await prisma.groupJoinRequest.findFirst({
@@ -1040,6 +1874,7 @@ export const respondToGroupJoinRequest = async (req, res) => {
 
 		const refreshedConversation = await getAccessibleGroupConversation(conversation.id, userId);
 		const workspace = await buildGroupWorkspacePayload(refreshedConversation, userId);
+		emitGroupWorkspaceUpdated(refreshedConversation, "join-requests");
 		return res.status(200).json(workspace);
 	} catch (error) {
 		console.error("Error in respondToGroupJoinRequest:", error.message);

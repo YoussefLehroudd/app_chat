@@ -315,6 +315,7 @@ const DeveloperDashboard = () => {
 	const canDeleteMessages = hasDeveloperPermission(authUser, "deleteMessages");
 	const canDeleteReports = hasDeveloperPermission(authUser, "deleteReports");
 	const canManageDeveloperPermissions = Boolean(authUser?.isPrimaryDeveloper);
+	const canDeleteUsers = Boolean(authUser?.isPrimaryDeveloper);
 
 	const handleRefresh = async () => {
 		await loadDashboard({ silent: true });
@@ -418,6 +419,35 @@ const DeveloperDashboard = () => {
 			toast.success(data.message);
 		} catch (error) {
 			toast.error(error.message);
+		} finally {
+			setActionKey("");
+		}
+	};
+
+	const handleDeleteUser = async (user) => {
+		if (!user?._id || actionKey) return false;
+
+		setActionKey(`delete-user-${user._id}`);
+
+		try {
+			const data = await fetchDeveloperJson(`/api/developer/users/${user._id}`, {
+				method: "DELETE",
+			});
+
+			setUsers((currentUsers) => currentUsers.filter((currentUser) => currentUser._id !== user._id));
+			if (selectedUserInsights?.user?._id === user._id || selectedUserInsights?.data?.user?._id === user._id) {
+				setSelectedUserInsights(null);
+			}
+
+			await loadDashboard({ silent: true });
+			if (selectedGroupId) {
+				await loadGroupDetails(selectedGroupId, { silent: true });
+			}
+			toast.success(data.message || "User deleted");
+			return true;
+		} catch (error) {
+			toast.error(error.message);
+			return false;
 		} finally {
 			setActionKey("");
 		}
@@ -981,6 +1011,14 @@ const DeveloperDashboard = () => {
 		});
 	};
 
+	const openDeleteUserPopup = (user) => {
+		if (!user || actionKey) return;
+		setConfirmState({
+			type: "delete-user",
+			user,
+		});
+	};
+
 	const closeConfirmPopup = () => {
 		if (actionKey) return;
 		setConfirmState(null);
@@ -1004,6 +1042,14 @@ const DeveloperDashboard = () => {
 		if (confirmState.type === "delete-report") {
 			await handleDeleteReport(confirmState.report);
 			setConfirmState(null);
+			return;
+		}
+
+		if (confirmState.type === "delete-user") {
+			const succeeded = await handleDeleteUser(confirmState.user);
+			if (succeeded) {
+				setConfirmState(null);
+			}
 		}
 	};
 
@@ -1231,6 +1277,8 @@ const DeveloperDashboard = () => {
 				? `delete-group-message-${confirmState.message._id}`
 				: confirmState?.type === "delete-report"
 					? `delete-report-${confirmState.report._id}`
+					: confirmState?.type === "delete-user"
+						? `delete-user-${confirmState.user._id}`
 				: "";
 	const isConfirmBusy = Boolean(confirmActionKey && actionKey === confirmActionKey);
 
@@ -1530,9 +1578,11 @@ const DeveloperDashboard = () => {
 										openEditUserModal={openEditUserModal}
 										openUserInsightsModal={openUserInsightsModal}
 										openDeveloperPermissionsModal={openDeveloperPermissionsModal}
+										openDeleteUserPopup={openDeleteUserPopup}
 										canManageUsers={canManageUsers}
 										canEditUserData={canEditUserData}
 										canManageDeveloperPermissions={canManageDeveloperPermissions}
+										canDeleteUsers={canDeleteUsers}
 									/>
 								) : null}
 
@@ -1660,7 +1710,9 @@ const DeveloperDashboard = () => {
 								? "Delete group"
 								: confirmState.type === "delete-group-message"
 									? "Delete group message"
-									: "Delete report"}
+									: confirmState.type === "delete-report"
+										? "Delete report"
+										: "Permanent user delete"}
 						</p>
 
 						<h3 className='mt-3 text-2xl font-semibold text-white'>
@@ -1668,7 +1720,9 @@ const DeveloperDashboard = () => {
 								? `Delete ${confirmState.group.title}?`
 								: confirmState.type === "delete-group-message"
 									? "Delete this message for everyone?"
-									: "Delete this report?"}
+									: confirmState.type === "delete-report"
+										? "Delete this report?"
+										: `Delete ${confirmState.user.fullName} forever?`}
 						</h3>
 
 						<p className='mt-3 text-sm leading-7 text-slate-400'>
@@ -1676,7 +1730,9 @@ const DeveloperDashboard = () => {
 								? "This will permanently remove the whole group, all members, and all saved group messages."
 								: confirmState.type === "delete-group-message"
 									? "This will permanently remove the selected message from the group conversation for every member."
-									: "This will permanently remove the report from the moderation queue."}
+									: confirmState.type === "delete-report"
+										? "This will permanently remove the report from the moderation queue."
+										: "This permanently removes the account, clears its direct chats from contacts and invitations, and releases the username/email for reuse."}
 						</p>
 
 						{confirmState.type === "delete-group" ? (
@@ -1695,10 +1751,20 @@ const DeveloperDashboard = () => {
 									{confirmState.message.previewText || confirmState.message.message || "Message"}
 								</p>
 							</div>
-						) : (
+						) : confirmState.type === "delete-report" ? (
 							<div className='mt-5 rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-4 text-sm text-slate-300'>
 								<p className='font-semibold text-white'>{confirmState.report.targetLabel}</p>
 								<p className='mt-1 text-slate-400'>{confirmState.report.reason}</p>
+							</div>
+						) : (
+							<div className='mt-5 rounded-[22px] border border-rose-300/14 bg-rose-500/[0.07] px-4 py-4 text-sm text-rose-100'>
+								<p className='font-semibold text-white'>@{confirmState.user.username}</p>
+								<p className='mt-1 text-rose-100/80'>
+									{confirmState.user.isArchived ? "Archived" : "Active"} · {confirmState.user.isBanned ? "Banned" : "Not banned"}
+								</p>
+								<p className='mt-3 text-rose-100/85'>
+									Only the primary developer can do this action, and it cannot be restored.
+								</p>
 							</div>
 						)}
 
@@ -1723,7 +1789,9 @@ const DeveloperDashboard = () => {
 										? "Delete group"
 										: confirmState.type === "delete-group-message"
 											? "Delete message"
-											: "Delete report"}
+											: confirmState.type === "delete-report"
+												? "Delete report"
+												: "Delete forever"}
 							</button>
 						</div>
 					</div>

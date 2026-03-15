@@ -24,10 +24,16 @@ import {
 	createGroupEvent,
 	createGroupInviteLink,
 	createGroupPoll,
+	deleteGroupAnnouncement,
+	deleteGroupEvent,
+	deleteGroupPoll,
 	getGroupWorkspace,
 	joinGroupByInviteLink,
 	respondToGroupJoinRequest,
 	revokeGroupInviteLink,
+	updateGroupAnnouncement,
+	updateGroupEvent,
+	updateGroupPoll,
 	updateGroupWorkspaceSettings,
 	voteGroupPoll,
 } from "../controllers/groupWorkspace.controller.js";
@@ -46,8 +52,14 @@ router.patch("/groups/:id", protectRoute, avatarUpload.single("profilePic"), upd
 router.get("/groups/:id/workspace", protectRoute, getGroupWorkspace);
 router.patch("/groups/:id/workspace/settings", protectRoute, updateGroupWorkspaceSettings);
 router.post("/groups/:id/announcements", protectRoute, createGroupAnnouncement);
+router.patch("/groups/:id/announcements/:announcementId", protectRoute, updateGroupAnnouncement);
+router.delete("/groups/:id/announcements/:announcementId", protectRoute, deleteGroupAnnouncement);
 router.post("/groups/:id/events", protectRoute, createGroupEvent);
+router.patch("/groups/:id/events/:eventId", protectRoute, updateGroupEvent);
+router.delete("/groups/:id/events/:eventId", protectRoute, deleteGroupEvent);
 router.post("/groups/:id/polls", protectRoute, createGroupPoll);
+router.patch("/groups/:id/polls/:pollId", protectRoute, updateGroupPoll);
+router.delete("/groups/:id/polls/:pollId", protectRoute, deleteGroupPoll);
 router.post("/groups/:id/polls/:pollId/votes", protectRoute, voteGroupPoll);
 router.post("/groups/:id/invite-links", protectRoute, createGroupInviteLink);
 router.delete("/groups/:id/invite-links/:linkId", protectRoute, revokeGroupInviteLink);

@@ -8,6 +8,9 @@ export const GROUP_SYSTEM_MESSAGE_TYPES = {
 	OWNER_LEFT: "OWNER_LEFT",
 	MEMBER_REMOVED: "MEMBER_REMOVED",
 	MEMBER_JOINED_BY_INVITE: "MEMBER_JOINED_BY_INVITE",
+	GROUP_ANNOUNCEMENT: "GROUP_ANNOUNCEMENT",
+	GROUP_POLL_CREATED: "GROUP_POLL_CREATED",
+	GROUP_EVENT_CREATED: "GROUP_EVENT_CREATED",
 };
 
 export const GROUP_INVITE_STATUSES = {
@@ -17,6 +20,44 @@ export const GROUP_INVITE_STATUSES = {
 };
 
 const normalizeText = (value) => (typeof value === "string" ? value.trim() : "");
+const truncateText = (value, maxLength = 180) => {
+	const normalizedValue = normalizeText(value).replace(/\s+/g, " ");
+	if (normalizedValue.length <= maxLength) {
+		return normalizedValue;
+	}
+
+	return `${normalizedValue.slice(0, Math.max(maxLength - 3, 0)).trimEnd()}...`;
+};
+const normalizeIsoDate = (value) => {
+	if (!value) return null;
+	const normalizedDate = new Date(value);
+	return Number.isFinite(normalizedDate.getTime()) ? normalizedDate.toISOString() : null;
+};
+
+const normalizePollOptions = (options) =>
+	Array.isArray(options)
+		? options
+				.map((option, index) => {
+					const label = normalizeText(option?.label);
+					const id = typeof option?.id === "string" ? option.id : "";
+					if (!label || !id) {
+						return null;
+					}
+
+					const voterIds = Array.isArray(option?.voterIds)
+						? [...new Set(option.voterIds.filter((voterId) => typeof voterId === "string" && voterId.trim()))]
+						: [];
+
+					return {
+						id,
+						label,
+						position: Number.isFinite(option?.position) ? option.position : index,
+						voterIds,
+					};
+				})
+				.filter(Boolean)
+				.sort((leftOption, rightOption) => leftOption.position - rightOption.position)
+		: [];
 
 const buildSystemMessageContent = (payload) => `${SYSTEM_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
 const buildGroupInviteMessageContent = (payload) => `${GROUP_INVITE_MESSAGE_PREFIX}${JSON.stringify(payload)}`;
@@ -41,6 +82,21 @@ export const parseSystemMessageContent = (value) => {
 		return {
 			type,
 			text,
+			previewText: normalizeText(parsedValue?.previewText) || text,
+			actorName: normalizeText(parsedValue?.actorName),
+			announcementId: typeof parsedValue?.announcementId === "string" ? parsedValue.announcementId : null,
+			content: normalizeText(parsedValue?.content),
+			eventId: typeof parsedValue?.eventId === "string" ? parsedValue.eventId : null,
+			title: normalizeText(parsedValue?.title),
+			description: normalizeText(parsedValue?.description),
+			location: normalizeText(parsedValue?.location),
+			startsAt: normalizeIsoDate(parsedValue?.startsAt),
+			pollId: typeof parsedValue?.pollId === "string" ? parsedValue.pollId : null,
+			question: normalizeText(parsedValue?.question),
+			allowsMultiple: parsedValue?.allowsMultiple === true,
+			closesAt: normalizeIsoDate(parsedValue?.closesAt),
+			totalVotes: Number.isFinite(parsedValue?.totalVotes) ? parsedValue.totalVotes : 0,
+			options: normalizePollOptions(parsedValue?.options),
 		};
 	} catch {
 		return null;
@@ -144,6 +200,51 @@ export const buildGroupMemberJoinedByInviteSystemMessage = ({ actorName, targetN
 		type: GROUP_SYSTEM_MESSAGE_TYPES.MEMBER_JOINED_BY_INVITE,
 		text: `${normalizeText(actorName) || "A member"} invited ${normalizeText(targetName) || "a member"}`,
 	});
+
+export const buildGroupAnnouncementSystemMessage = ({ actorName, announcementId, content }) =>
+	buildSystemMessageContent({
+		type: GROUP_SYSTEM_MESSAGE_TYPES.GROUP_ANNOUNCEMENT,
+		text: `${normalizeText(actorName) || "An admin"} posted an announcement`,
+		previewText: `Announcement: ${truncateText(content, 84)}`,
+		actorName: normalizeText(actorName) || "An admin",
+		announcementId: typeof announcementId === "string" ? announcementId : null,
+		content: normalizeText(content),
+	});
+
+export const buildGroupPollCreatedSystemMessage = ({
+	actorName,
+	pollId,
+	question,
+	allowsMultiple = false,
+	closesAt = null,
+	options = [],
+}) =>
+	buildSystemMessageContent({
+		type: GROUP_SYSTEM_MESSAGE_TYPES.GROUP_POLL_CREATED,
+		text: `${normalizeText(actorName) || "An admin"} created a poll`,
+		previewText: `Poll: ${truncateText(question, 84)}`,
+		actorName: normalizeText(actorName) || "An admin",
+		pollId: typeof pollId === "string" ? pollId : null,
+		question: normalizeText(question),
+		allowsMultiple: allowsMultiple === true,
+		closesAt: normalizeIsoDate(closesAt),
+		totalVotes: normalizePollOptions(options).reduce((sum, option) => sum + option.voterIds.length, 0),
+		options: normalizePollOptions(options),
+	});
+
+export const buildGroupEventCreatedSystemMessage = ({ actorName, eventId, title, description, startsAt, location }) => {
+	return buildSystemMessageContent({
+		type: GROUP_SYSTEM_MESSAGE_TYPES.GROUP_EVENT_CREATED,
+		text: `${normalizeText(actorName) || "An admin"} scheduled an event`,
+		previewText: `Event: ${truncateText(title, 84)}`,
+		actorName: normalizeText(actorName) || "An admin",
+		eventId: typeof eventId === "string" ? eventId : null,
+		title: normalizeText(title),
+		description: normalizeText(description),
+		startsAt: normalizeIsoDate(startsAt),
+		location: normalizeText(location),
+	});
+};
 
 export const buildCallMessage = (payload) =>
 	buildCallMessageContent({

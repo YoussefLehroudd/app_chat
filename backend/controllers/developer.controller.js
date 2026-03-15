@@ -15,7 +15,11 @@ import {
 	emitSessionUserUpdated,
 } from "../utils/realtime.js";
 import { toConversationMemberDto, toMessageDto, toUserDto } from "../utils/formatters.js";
-import { CONVERSATION_MEMBER_ROLES, CONVERSATION_TYPES } from "../utils/conversations.js";
+import {
+	CONVERSATION_MEMBER_ROLES,
+	CONVERSATION_TYPES,
+	DIRECT_CONVERSATION_STATUSES,
+} from "../utils/conversations.js";
 import { deleteMessageEverywhere } from "../utils/messageModeration.js";
 import { DEVELOPER_ROLE, USER_ROLE } from "../utils/roles.js";
 import { createSecurityEvent } from "../utils/securityEvents.js";
@@ -270,6 +274,67 @@ const emitDeveloperConversationRemoved = (conversationId, userIds) => {
 
 const emitDeveloperPublicGroupsChanged = () => {
 	io.emit("publicGroupsChanged");
+};
+
+const emitDeveloperDirectInvitationsChanged = (userIds) => {
+	[...new Set(userIds.filter(Boolean))].forEach((userId) => {
+		getUserSocketIds(userId).forEach((socketId) => {
+			io.to(socketId).emit("directInvitationsChanged", {
+				updatedAt: new Date().toISOString(),
+			});
+		});
+	});
+};
+
+const getDirectCounterpartId = (conversation, userId) => {
+	if (!conversation || !userId) return null;
+	if (conversation.userOneId === userId) {
+		return conversation.userTwoId ?? null;
+	}
+	if (conversation.userTwoId === userId) {
+		return conversation.userOneId ?? null;
+	}
+	return null;
+};
+
+const getUserDirectConversations = async (userId) =>
+	prisma.conversation.findMany({
+		where: {
+			type: CONVERSATION_TYPES.DIRECT,
+			OR: [{ userOneId: userId }, { userTwoId: userId }],
+		},
+		select: {
+			id: true,
+			directStatus: true,
+			userOneId: true,
+			userTwoId: true,
+		},
+	});
+
+const notifyDirectRelationshipAvailability = (userId, directConversations, options = {}) => {
+	const removeAcceptedConversations = options.removeAcceptedConversations === true;
+	const counterpartIds = [...new Set(
+		(directConversations || [])
+			.map((conversation) => getDirectCounterpartId(conversation, userId))
+			.filter(Boolean)
+	)];
+
+	if (removeAcceptedConversations) {
+		(directConversations || [])
+			.filter((conversation) => conversation.directStatus === DIRECT_CONVERSATION_STATUSES.ACCEPTED)
+			.forEach((conversation) => {
+				const counterpartId = getDirectCounterpartId(conversation, userId);
+				if (!counterpartId) return;
+				emitDeveloperConversationRemoved(conversation.id, [counterpartId]);
+			});
+	}
+
+	if (counterpartIds.length === 0) {
+		return;
+	}
+
+	emitConversationsRefreshRequired(counterpartIds);
+	emitDeveloperDirectInvitationsChanged(counterpartIds);
 };
 
 const mapDeveloperGroup = (conversation, { includeMessages = false } = {}) => {
@@ -817,6 +882,8 @@ export const updateDeveloperUserBan = async (req, res) => {
 			});
 		}
 
+		const directConversations = await getUserDirectConversations(id);
+
 		const updatedUser = await prisma.user.update({
 			where: { id },
 			data: shouldBan
@@ -835,6 +902,9 @@ export const updateDeveloperUserBan = async (req, res) => {
 		if (shouldBan) {
 			disconnectUserSockets(id, "banned");
 		}
+		notifyDirectRelationshipAvailability(id, directConversations, {
+			removeAcceptedConversations: shouldBan,
+		});
 
 		await logDeveloperAudit(req.user, {
 			action: shouldBan ? "USER_BANNED" : "USER_UNBANNED",
@@ -958,7 +1028,11 @@ export const updateDeveloperUserArchive = async (req, res) => {
 			return res.status(400).json({ error: "Invalid archive status" });
 		}
 
+		const directConversations = await getUserDirectConversations(req.params.id);
 		const result = await setDeveloperUserArchiveState(req.user, req.params.id, isArchived);
+		notifyDirectRelationshipAvailability(req.params.id, directConversations, {
+			removeAcceptedConversations: isArchived,
+		});
 		await logDeveloperAudit(req.user, {
 			action: isArchived ? "USER_ARCHIVED" : "USER_RESTORED",
 			entityType: "USER",
@@ -991,24 +1065,200 @@ export const updateDeveloperUserArchive = async (req, res) => {
 
 export const deleteDeveloperUser = async (req, res) => {
 	try {
-		ensureDeveloperPermission(req.user, "manageUsers", "You do not have permission to archive users");
-		const result = await setDeveloperUserArchiveState(req.user, req.params.id, true);
+		if (req.user?.role !== DEVELOPER_ROLE || !req.user?.isPrimaryDeveloper) {
+			return res.status(403).json({ error: "Only the primary developer can permanently delete users" });
+		}
+
+		const { id } = req.params;
+		if (id === req.user._id) {
+			return res.status(400).json({ error: "You cannot permanently delete your own account from the developer console." });
+		}
+
+		const existingUser = await prisma.user.findUnique({
+			where: { id },
+			select: {
+				...developerUserSelect,
+				email: true,
+			},
+		});
+
+		if (!existingUser) {
+			return res.status(404).json({ error: "User not found" });
+		}
+
+		if (existingUser.isPrimaryDeveloper) {
+			return res.status(400).json({ error: "This primary developer account cannot be permanently deleted." });
+		}
+
+		if (existingUser.role === DEVELOPER_ROLE) {
+			return res.status(400).json({ error: "Developer accounts cannot be permanently deleted from this panel." });
+		}
+
+		if (!existingUser.isArchived && !existingUser.isBanned) {
+			return res.status(400).json({ error: "Archive or ban the account before permanently deleting it." });
+		}
+
+		const [directConversations, relatedGroups] = await Promise.all([
+			getUserDirectConversations(id),
+			prisma.conversation.findMany({
+				where: {
+					type: CONVERSATION_TYPES.GROUP,
+					OR: [
+						{
+							members: {
+								some: { userId: id },
+							},
+						},
+						{
+							createdById: id,
+						},
+					],
+				},
+				select: {
+					id: true,
+					isPrivate: true,
+					createdById: true,
+					members: {
+						select: {
+							userId: true,
+							role: true,
+							joinedAt: true,
+						},
+					},
+				},
+			}),
+		]);
+
+		const groupPlans = relatedGroups.map((group) => {
+			const remainingMembers = (group.members || []).filter((member) => member.userId !== id);
+			const remainingOwner =
+				remainingMembers.find((member) => member.role === CONVERSATION_MEMBER_ROLES.OWNER) ?? null;
+			const shouldDeleteGroup = remainingMembers.length === 0;
+			const nextOwner =
+				remainingOwner ?? [...remainingMembers].sort(sortDeveloperConversationMembers)[0] ?? null;
+
+			return {
+				id: group.id,
+				isPrivate: Boolean(group.isPrivate),
+				createdById: group.createdById ?? null,
+				remainingMemberIds: remainingMembers.map((member) => member.userId),
+				nextOwnerUserId: !shouldDeleteGroup && !remainingOwner && nextOwner?.userId ? nextOwner.userId : null,
+				nextCreatedById: shouldDeleteGroup
+					? null
+					: group.createdById === id
+						? nextOwner?.userId ?? remainingMembers[0]?.userId ?? null
+						: group.createdById,
+				shouldDeleteGroup,
+			};
+		});
+
+		const directConversationIds = directConversations.map((conversation) => conversation.id);
+		const deletedGroupIds = groupPlans.filter((plan) => plan.shouldDeleteGroup).map((plan) => plan.id);
+		const survivingGroupPlans = groupPlans.filter((plan) => !plan.shouldDeleteGroup);
+		const shouldRefreshPublicGroups = groupPlans.some((plan) => !plan.isPrivate);
+
+		await prisma.$transaction(async (tx) => {
+			for (const plan of survivingGroupPlans) {
+				if (plan.nextOwnerUserId) {
+					await tx.conversationMember.update({
+						where: {
+							conversationId_userId: {
+								conversationId: plan.id,
+								userId: plan.nextOwnerUserId,
+							},
+						},
+						data: {
+							role: CONVERSATION_MEMBER_ROLES.OWNER,
+						},
+					});
+				}
+
+				if (plan.createdById !== plan.nextCreatedById) {
+					await tx.conversation.update({
+						where: { id: plan.id },
+						data: {
+							createdById: plan.nextCreatedById,
+						},
+					});
+				}
+			}
+
+			if (directConversationIds.length > 0) {
+				await tx.conversation.deleteMany({
+					where: {
+						id: {
+							in: directConversationIds,
+						},
+					},
+				});
+			}
+
+			await tx.message.deleteMany({
+				where: {
+					senderId: id,
+					conversation: {
+						type: CONVERSATION_TYPES.GROUP,
+					},
+				},
+			});
+
+			if (deletedGroupIds.length > 0) {
+				await tx.conversation.deleteMany({
+					where: {
+						id: {
+							in: deletedGroupIds,
+						},
+					},
+				});
+			}
+
+			await tx.user.delete({
+				where: { id },
+			});
+		});
+
+		disconnectUserSockets(id, "deleted");
+		notifyDirectRelationshipAvailability(id, directConversations, {
+			removeAcceptedConversations: true,
+		});
+		survivingGroupPlans.forEach((plan) => {
+			if (plan.remainingMemberIds.length === 0) return;
+			emitConversationsRefreshRequired(plan.remainingMemberIds, { conversationId: plan.id });
+		});
+		groupPlans
+			.filter((plan) => plan.shouldDeleteGroup && plan.remainingMemberIds.length > 0)
+			.forEach((plan) => {
+				emitDeveloperConversationRemoved(plan.id, plan.remainingMemberIds);
+			});
+		if (shouldRefreshPublicGroups) {
+			emitDeveloperPublicGroupsChanged();
+		}
+
 		await logDeveloperAudit(req.user, {
-			action: "USER_ARCHIVED",
+			action: "USER_DELETED",
 			entityType: "USER",
-			entityId: req.params.id,
-			entityLabel: `${result.user.fullName} (@${result.user.username})`,
-			summary: `${req.user.fullName} archived a user from developer control`,
+			entityId: id,
+			entityLabel: `${existingUser.fullName} (@${existingUser.username})`,
+			summary: `${req.user.fullName} permanently deleted a user account`,
 			details: {
-				viaDeleteAction: true,
+				releasedUsername: existingUser.username,
+				releasedEmail: existingUser.email || null,
+				deletedDirectConversationCount: directConversationIds.length,
+				updatedGroupCount: survivingGroupPlans.length,
+				deletedGroupCount: deletedGroupIds.length,
 			},
 		});
 		emitDeveloperWorkspaceRefresh({
-			action: "USER_ARCHIVED",
+			action: "USER_DELETED",
 			entityType: "USER",
-			entityId: req.params.id,
+			entityId: id,
 		});
-		return res.status(200).json(result);
+		return res.status(200).json({
+			message: "User permanently deleted and login details released",
+			userId: id,
+			releasedUsername: existingUser.username,
+			releasedEmail: existingUser.email || null,
+		});
 	} catch (error) {
 		if (error.statusCode) {
 			return res.status(error.statusCode).json({ error: error.message });
